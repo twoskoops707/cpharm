@@ -30,7 +30,7 @@ echo  [+] Python OK
 :: ── Step 2: Python packages ─────────────────────────────────────────────────
 echo  [2/4] Installing required packages...
 python -m pip install --quiet --upgrade pip
-python -m pip install --quiet customtkinter
+python -m pip install --quiet customtkinter pynput
 echo  [+] Packages OK
 
 :: ── Step 3: LDPlayer check ──────────────────────────────────────────────────

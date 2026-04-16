@@ -10,9 +10,21 @@ Run:      python gui/cpharm_gui.py
 """
 
 import customtkinter as ctk
-import subprocess, threading, time, socket, os, webbrowser, sys, json, datetime
+import subprocess, threading, time, socket, os, webbrowser, sys, json, datetime, ctypes, ctypes.wintypes
 from pathlib import Path
 import tkinter.filedialog as fd
+
+# ── Auto-install pynput if missing ─────────────────────────────────────────────
+try:
+    from pynput import mouse as _pynput_mouse, keyboard as _pynput_keyboard
+    _PYNPUT_OK = True
+except ImportError:
+    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "pynput"], check=False)
+    try:
+        from pynput import mouse as _pynput_mouse, keyboard as _pynput_keyboard
+        _PYNPUT_OK = True
+    except ImportError:
+        _PYNPUT_OK = False
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 LDPLAYER    = r"C:\LDPlayer\LDPlayer9\ldconsole.exe"
@@ -519,7 +531,26 @@ class PhoneControlDialog(ctk.CTkToplevel):
 
     # ─── Sequences tab ────────────────────────────────────────────────────────
     def _build_sequences(self, tab):
-        self._section(tab, "RECORD A SEQUENCE")
+        # ── Live recording (watch you use the phone) ──
+        live_f = ctk.CTkFrame(tab, fg_color=BG2, corner_radius=10)
+        live_f.pack(fill="x", padx=16, pady=(8, 4))
+        lf = ctk.CTkFrame(live_f, fg_color="transparent")
+        lf.pack(fill="x", padx=14, pady=10)
+        ctk.CTkLabel(lf,
+                     text="🔴  Live Recording  —  just use the phone!",
+                     font=ctk.CTkFont("Segoe UI", 12, "bold"),
+                     text_color=R).pack(side="left")
+        btn(lf, "Open Live Recorder",
+            lambda: LiveRecordDialog(self, self._phone),
+            fg=R, hover="#d32f2f", tc="#fff", width=160, height=32, bold=True).pack(side="right")
+        ctk.CTkLabel(live_f,
+                     text="  Watch mode: interact with the LDPlayer window and every tap,\n"
+                          "  swipe, and button press is captured automatically.",
+                     font=ctk.CTkFont("Segoe UI", 10), text_color=T2,
+                     justify="left").pack(anchor="w", padx=14, pady=(0, 8))
+
+        separator(tab, BD).pack(fill="x", padx=16, pady=4)
+        self._section(tab, "MANUAL STEP BUILDER")
         rec_f = ctk.CTkFrame(tab, fg_color=BG2, corner_radius=8)
         rec_f.pack(fill="x", padx=16, pady=6)
         rf = ctk.CTkFrame(rec_f, fg_color="transparent")
@@ -1743,6 +1774,392 @@ class CPharmApp(ctk.CTk):
     def _on_close(self):
         if dashboard_running():
             stop_dashboard()
+        self.destroy()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LIVE RECORDER  — watch the user use the phone, record every action
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Win32 helpers (ctypes — no extra install needed)
+_user32 = ctypes.windll.user32
+
+class _RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+def _find_ld_window(phone_index: int) -> tuple[int, int, int, int] | None:
+    """
+    Return (left, top, width, height) of the LDPlayer window for this phone.
+    LDPlayer titles:  index 0 → "LDPlayer"  /  index N → "LDPlayer-N"
+    Falls back to scanning all LDPlayer* windows sorted by creation order.
+    """
+    target_titles = {
+        0: ["LDPlayer", "LDPlayer 9", "LDPlayer-0"],
+    }
+    candidates = target_titles.get(phone_index, [f"LDPlayer-{phone_index}"])
+
+    found_hwnds: list[int] = []
+
+    def _enum(hwnd, _):
+        if not _user32.IsWindowVisible(hwnd):
+            return True
+        buf = ctypes.create_unicode_buffer(256)
+        _user32.GetWindowTextW(hwnd, buf, 256)
+        title = buf.value
+        # Match exact or prefix
+        if any(title == t or title.startswith(t + " ") for t in candidates):
+            found_hwnds.append(hwnd)
+        elif title.startswith("LDPlayer"):
+            found_hwnds.append(hwnd)   # fallback pool
+        return True
+
+    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+    _user32.EnumWindows(EnumWindowsProc(_enum), 0)
+
+    if not found_hwnds:
+        return None
+
+    # Prefer exact match; otherwise pick by index in the list
+    hwnd = found_hwnds[min(phone_index, len(found_hwnds) - 1)]
+    rect = _RECT()
+    _user32.GetClientRect(hwnd, ctypes.byref(rect))
+    # GetClientRect gives size relative to client; get screen position
+    pt = ctypes.wintypes.POINT(0, 0)
+    _user32.ClientToScreen(hwnd, ctypes.byref(pt))
+    w = rect.right - rect.left
+    h = rect.bottom - rect.top
+    return (pt.x, pt.y, w, h) if w > 0 and h > 0 else None
+
+
+class LiveRecordDialog(ctk.CTkToplevel):
+    """
+    Watches the user interact with the LDPlayer window for a specific phone
+    and records every tap, swipe, and key press as a replayable sequence.
+    """
+
+    SWIPE_THRESHOLD_PX = 12   # px of movement to count as swipe vs tap
+    MAX_WAIT_S         = 5.0  # cap recorded waits at this many seconds
+    MIN_WAIT_S         = 0.3  # waits shorter than this are ignored
+
+    def __init__(self, parent, phone: dict):
+        super().__init__(parent)
+        self._phone  = phone
+        self._idx    = phone["index"]
+        self._name   = phone["name"]
+
+        # Phone screen resolution (used for coordinate mapping)
+        self._phone_w = 540
+        self._phone_h = 960
+
+        self._steps: list[dict]  = []
+        self._recording          = False
+        self._mouse_listener     = None
+        self._kb_listener        = None
+        self._press_pos          = None   # (x,y) where mouse went down
+        self._press_time         = None
+        self._last_action_time   = None
+        self._win_rect           = None   # (left, top, w, h) of LDPlayer window
+
+        self.title(f"Live Record — {self._name}")
+        self.geometry("500x560")
+        self.resizable(False, False)
+        self.configure(fg_color=BG1)
+        self.lift()
+        self.focus_force()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        self._build()
+
+    # ── UI ────────────────────────────────────────────────────────────────────
+    def _build(self):
+        # Header
+        hdr = ctk.CTkFrame(self, fg_color=BG0, corner_radius=0, height=44)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        label(hdr, f"  🔴  Live Action Recorder — {self._name}",
+              size=12, weight="bold", color=R, mono=True).pack(side="left", pady=10)
+
+        # Instructions card
+        info = ctk.CTkFrame(self, fg_color=BG2, corner_radius=10)
+        info.pack(fill="x", padx=16, pady=(14, 8))
+        ctk.CTkLabel(info,
+                     text=(
+                         "How it works:\n\n"
+                         "1. Click  ▶ Start Recording  below\n"
+                         "2. Switch to the LDPlayer window (click on it)\n"
+                         "3. Use the phone normally — tap, swipe, press buttons\n"
+                         "4. Every action is recorded automatically\n"
+                         "5. Click  ⏹ Stop & Save  when done\n\n"
+                         "Then replay the sequence on any phone — once or thousands of times."
+                     ),
+                     font=ctk.CTkFont("Segoe UI", 12),
+                     text_color=T1, justify="left", wraplength=430).pack(padx=16, pady=14)
+
+        # Resolution hint
+        res_f = ctk.CTkFrame(self, fg_color="transparent")
+        res_f.pack(fill="x", padx=16, pady=4)
+        label(res_f, "Phone resolution (for coord mapping):", size=10, color=T2).pack(side="left")
+        self._res_w = ctk.CTkEntry(res_f, width=56, height=28, fg_color=BG3,
+                                    border_color=BD, text_color=T0,
+                                    font=ctk.CTkFont("Courier New", 11), justify="center")
+        self._res_w.insert(0, "540")
+        self._res_w.pack(side="left", padx=6)
+        label(res_f, "×", size=12, color=T1).pack(side="left")
+        self._res_h = ctk.CTkEntry(res_f, width=56, height=28, fg_color=BG3,
+                                    border_color=BD, text_color=T0,
+                                    font=ctk.CTkFont("Courier New", 11), justify="center")
+        self._res_h.insert(0, "960")
+        self._res_h.pack(side="left", padx=6)
+
+        # Status
+        self._status_lbl = label(self, "Ready — press Start Recording", size=12, color=T2)
+        self._status_lbl.pack(pady=(10, 4))
+
+        # Big recording indicator
+        self._rec_dot = label(self, "⏺", size=32, color=T2)
+        self._rec_dot.pack()
+        self._count_lbl = label(self, "0 actions recorded", size=14, weight="bold", color=T1)
+        self._count_lbl.pack(pady=4)
+
+        # Live feed of last few actions
+        separator(self, BD).pack(fill="x", padx=16, pady=8)
+        label(self, "Recent actions:", size=10, color=T2, mono=True).pack(anchor="w", padx=20)
+        self._feed = ctk.CTkTextbox(self, fg_color=BG0, text_color=G,
+                                     font=ctk.CTkFont("Courier New", 10),
+                                     border_width=0, corner_radius=6, height=90)
+        self._feed.pack(fill="x", padx=16, pady=4)
+        self._feed.configure(state="disabled")
+
+        # Name entry
+        name_f = ctk.CTkFrame(self, fg_color="transparent")
+        name_f.pack(fill="x", padx=16, pady=8)
+        label(name_f, "Save as:", size=11, color=T1).pack(side="left")
+        self._seq_name = ctk.CTkEntry(name_f, fg_color=BG3, border_color=BD, text_color=T0,
+                                       font=ctk.CTkFont("Segoe UI", 12),
+                                       placeholder_text="my_recording", height=32, width=200)
+        self._seq_name.pack(side="left", padx=10)
+
+        # Buttons
+        btn_f = ctk.CTkFrame(self, fg_color="transparent")
+        btn_f.pack(pady=8)
+        self._start_btn = btn(btn_f, "▶  Start Recording", self._toggle_recording,
+                               fg=G, hover=G2, tc="#000", width=180, height=42, bold=True)
+        self._start_btn.pack(side="left", padx=6)
+        btn(btn_f, "✕  Cancel", self._on_close,
+            fg=BG3, hover=BD, tc=T1, width=100, height=42).pack(side="left", padx=6)
+
+    # ── Recording control ─────────────────────────────────────────────────────
+    def _toggle_recording(self):
+        if not _PYNPUT_OK:
+            self._set_status("pynput not installed — run: pip install pynput", R)
+            return
+
+        if not self._recording:
+            self._start()
+        else:
+            self._stop_and_save()
+
+    def _start(self):
+        try:
+            self._phone_w = int(self._res_w.get())
+            self._phone_h = int(self._res_h.get())
+        except ValueError:
+            self._phone_w, self._phone_h = 540, 960
+
+        self._win_rect = _find_ld_window(self._idx)
+        if not self._win_rect:
+            self._set_status(
+                f"LDPlayer window not found for phone #{self._idx}.\n"
+                "Make sure the phone is running.", R)
+            return
+
+        lx, ly, lw, lh = self._win_rect
+        self._set_status(
+            f"Watching LDPlayer window  ({lw}×{lh} px)\n"
+            f"Switch to it and start using the phone!", G)
+
+        self._steps            = []
+        self._recording        = True
+        self._last_action_time = time.time()
+        self._press_pos        = None
+
+        self._rec_dot.configure(text_color=R)
+        self._start_btn.configure(text="⏹  Stop & Save",
+                                   fg_color=Y, hover_color="#f9a825", text_color="#000")
+        self._count_lbl.configure(text="0 actions recorded", text_color=G)
+
+        # Start listeners
+        self._mouse_listener = _pynput_mouse.Listener(
+            on_click=self._on_click,
+            on_move=self._on_move,
+        )
+        self._mouse_listener.start()
+
+        self._kb_listener = _pynput_keyboard.Listener(
+            on_press=self._on_key_press
+        )
+        self._kb_listener.start()
+
+        log(f"Live recording started for {self._name}")
+
+    def _stop_and_save(self):
+        self._recording = False
+
+        if self._mouse_listener:
+            self._mouse_listener.stop()
+            self._mouse_listener = None
+        if self._kb_listener:
+            self._kb_listener.stop()
+            self._kb_listener = None
+
+        self._rec_dot.configure(text_color=T2)
+        self._start_btn.configure(text="▶  Start Recording",
+                                   fg_color=G, hover_color=G2, text_color="#000")
+
+        if not self._steps:
+            self._set_status("Nothing recorded.", T2)
+            return
+
+        name = self._seq_name.get().strip() or "live_recording"
+        _sequences[name] = self._steps
+        save_sequences(_sequences)
+
+        self._set_status(f"✓ Saved '{name}' — {len(self._steps)} steps", G)
+        log(f"Live recording saved: '{name}' ({len(self._steps)} steps)")
+        self._count_lbl.configure(text=f"{len(self._steps)} steps saved as '{name}'")
+
+    # ── Mouse / keyboard handlers ─────────────────────────────────────────────
+    def _in_window(self, sx: int, sy: int) -> tuple[int, int] | None:
+        """
+        Return (phone_x, phone_y) if screen point is inside the LDPlayer window,
+        else None.
+        """
+        if not self._win_rect:
+            return None
+        lx, ly, lw, lh = self._win_rect
+        if lx <= sx <= lx + lw and ly <= sy <= ly + lh:
+            wx = sx - lx
+            wy = sy - ly
+            # Map window pixels → phone resolution
+            px = int(wx * self._phone_w / lw)
+            py = int(wy * self._phone_h / lh)
+            return (px, py)
+        return None
+
+    def _record_wait(self):
+        """Insert a wait step for the gap since the last action."""
+        if self._last_action_time is None:
+            return
+        gap = time.time() - self._last_action_time
+        if self.MIN_WAIT_S < gap < self.MAX_WAIT_S:
+            self._add_step({"type": "wait", "seconds": round(gap, 2)})
+        self._last_action_time = time.time()
+
+    def _add_step(self, step: dict):
+        if not self._recording:
+            return
+        self._steps.append(step)
+        n = len(self._steps)
+        self.after(0, lambda s=step, c=n: self._update_ui(s, c))
+
+    def _update_ui(self, step: dict, count: int):
+        self._count_lbl.configure(text=f"{count} actions recorded")
+        # Feed
+        readable = self._step_to_text(step)
+        self._feed.configure(state="normal")
+        self._feed.insert("end", f"  {readable}\n")
+        self._feed.see("end")
+        self._feed.configure(state="disabled")
+
+    def _step_to_text(self, step: dict) -> str:
+        t = step.get("type")
+        if t == "tap":
+            return f"Tap  ({step['x']}, {step['y']})"
+        if t == "swipe":
+            return f"Swipe  ({step['x1']},{step['y1']}) → ({step['x2']},{step['y2']})  {step.get('dur',400)}ms"
+        if t == "wait":
+            return f"Wait  {step['seconds']}s"
+        if t == "keyevent":
+            return f"Key  {step['key']}"
+        return str(step)
+
+    def _on_click(self, sx, sy, button, pressed):
+        if not self._recording:
+            return False  # stop listener
+
+        phone_pos = self._in_window(int(sx), int(sy))
+        if phone_pos is None:
+            return  # click outside LDPlayer window — ignore
+
+        px, py = phone_pos
+
+        if pressed:
+            self._press_pos  = (px, py)
+            self._press_time = time.time()
+            self._record_wait()   # gap since last action
+        else:
+            if self._press_pos is None:
+                return
+            rx, ry = self._press_pos
+            dur_ms = int((time.time() - self._press_time) * 1000)
+            dist = ((px - rx) ** 2 + (py - ry) ** 2) ** 0.5
+
+            if dist < self.SWIPE_THRESHOLD_PX:
+                # TAP (or long press)
+                if dur_ms > 600:
+                    self._add_step({"type": "swipe",
+                                    "x1": rx, "y1": ry,
+                                    "x2": rx, "y2": ry,
+                                    "dur": dur_ms})
+                else:
+                    self._add_step({"type": "tap", "x": rx, "y": ry})
+            else:
+                # SWIPE
+                self._add_step({"type": "swipe",
+                                "x1": rx, "y1": ry,
+                                "x2": px, "y2": py,
+                                "dur": max(200, dur_ms)})
+
+            self._press_pos  = None
+            self._last_action_time = time.time()
+
+    def _on_move(self, sx, sy):
+        pass  # movement tracked via click up/down positions only
+
+    _KEY_MAP = {
+        # pynput Key → ADB keyevent name
+        "Key.esc":        "Back",
+        "Key.backspace":  "Delete",
+        "Key.enter":      "Enter",
+        "Key.home":       "Home",
+        "Key.page_up":    "Volume Up",
+        "Key.page_down":  "Volume Down",
+        "Key.f1":         "Back",
+        "Key.f2":         "Home",
+        "Key.f3":         "Recent Apps",
+    }
+
+    def _on_key_press(self, key):
+        if not self._recording:
+            return False
+
+        key_str = str(key)
+        adb_key = self._KEY_MAP.get(key_str)
+        if adb_key:
+            self._record_wait()
+            self._add_step({"type": "keyevent", "key": adb_key})
+            self._last_action_time = time.time()
+
+    def _set_status(self, msg: str, color=T2):
+        self.after(0, lambda: self._status_lbl.configure(text=msg, text_color=color))
+
+    def _on_close(self):
+        self._recording = False
+        if self._mouse_listener:
+            self._mouse_listener.stop()
+        if self._kb_listener:
+            self._kb_listener.stop()
         self.destroy()
 
 

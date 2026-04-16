@@ -141,6 +141,34 @@ def take_screenshot(index: int) -> str | None:
         return out_path
     return None
 
+def adb(index: int, command: str) -> str:
+    """Run an adb shell command on a specific phone via ldconsole."""
+    return ld("adb", "--index", str(index), "--command", command)
+
+def adb_shell(index: int, cmd: str) -> str:
+    return adb(index, f"shell {cmd}")
+
+def get_packages(index: int) -> list[str]:
+    """Return list of user-installed package names."""
+    raw = adb_shell(index, "pm list packages -3")
+    pkgs = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if line.startswith("package:"):
+            pkgs.append(line[8:])
+    return sorted(pkgs)
+
+def get_current_app(index: int) -> str:
+    """Return package name of the foreground app."""
+    raw = adb_shell(index, "dumpsys activity activities | grep ResumedActivity")
+    for line in raw.splitlines():
+        if "ResumedActivity" in line and "/" in line:
+            parts = line.strip().split()
+            for p in parts:
+                if "/" in p and "." in p:
+                    return p.split("/")[0].lstrip("{")
+    return ""
+
 def open_adb_shell(index: int):
     """Open ADB shell in a new PowerShell window."""
     port = 5554 + index * 2
@@ -207,6 +235,681 @@ def setting_row(parent, label_text):
     f.pack(fill="x", padx=16, pady=4)
     label(f, label_text, size=9, color=T2, mono=True).pack(anchor="w")
     return f
+
+# ── Keyevent constants ─────────────────────────────────────────────────────────
+KEYEVENTS = {
+    "Home":         "3",
+    "Back":         "4",
+    "Recent Apps":  "187",
+    "Menu":         "82",
+    "Power":        "26",
+    "Volume Up":    "24",
+    "Volume Down":  "25",
+    "Mute":         "164",
+    "Enter":        "66",
+    "Delete":       "67",
+    "Screenshot":   "120",
+    "Brightness+":  "221",
+    "Brightness-":  "220",
+}
+
+# ── Sequences storage (in-memory + JSON file) ──────────────────────────────────
+SEQ_FILE = Path(__file__).parent.parent / "sequences.json"
+
+def load_sequences() -> dict:
+    if SEQ_FILE.exists():
+        try:
+            return json.loads(SEQ_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+def save_sequences(seqs: dict):
+    SEQ_FILE.write_text(json.dumps(seqs, indent=2))
+
+_sequences: dict = load_sequences()   # {name: [{"type":..., ...}]}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHONE CONTROL DIALOG
+# ══════════════════════════════════════════════════════════════════════════════
+class PhoneControlDialog(ctk.CTkToplevel):
+    """Full ADB control panel for a single phone."""
+
+    def __init__(self, parent, phone: dict):
+        super().__init__(parent)
+        self._phone  = phone
+        self._idx    = phone["index"]
+        self._name   = phone["name"]
+        self._pkg    = ctk.StringVar(value="")
+        self._status = ctk.StringVar(value="Ready")
+        self._seq_recording = False
+        self._rec_steps: list[dict] = []
+        self._running_seq = False
+
+        self.title(f"Control — {self._name}")
+        self.geometry("620x720")
+        self.minsize(580, 600)
+        self.configure(fg_color=BG1)
+        self.lift()
+        self.focus_force()
+
+        self._build()
+        # Load packages in background
+        threading.Thread(target=self._load_packages, daemon=True).start()
+
+    def _build(self):
+        # ── Title bar ──
+        hdr = ctk.CTkFrame(self, fg_color=BG0, corner_radius=0, height=44)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        label(hdr, f"  ⊞  {self._name}", size=13, weight="bold", color=G, mono=True).pack(side="left", pady=10)
+        self._status_lbl = label(hdr, "", size=10, color=T2, mono=True)
+        self._status_lbl.pack(side="right", padx=12)
+        self._pkg_var_lbl = label(hdr, "", size=9, color=B, mono=True)
+        self._pkg_var_lbl.pack(side="right", padx=4)
+
+        # ── Tabs ──
+        self._tabs = ctk.CTkTabview(self, fg_color=BG1,
+                                     segmented_button_fg_color=BG3,
+                                     segmented_button_selected_color=G,
+                                     segmented_button_selected_hover_color=G2,
+                                     segmented_button_unselected_color=BG3,
+                                     segmented_button_unselected_hover_color=BD,
+                                     text_color=T0, text_color_disabled=T2)
+        self._tabs.pack(fill="both", expand=True, padx=8, pady=4)
+
+        for tab in ["Navigation", "Tap & Swipe", "App Control", "System", "Sequences"]:
+            self._tabs.add(tab)
+
+        self._build_navigation(self._tabs.tab("Navigation"))
+        self._build_tap_swipe(self._tabs.tab("Tap & Swipe"))
+        self._build_app_control(self._tabs.tab("App Control"))
+        self._build_system(self._tabs.tab("System"))
+        self._build_sequences(self._tabs.tab("Sequences"))
+
+        # ── Status bar ──
+        separator(self, BD).pack(fill="x")
+        foot = ctk.CTkFrame(self, fg_color=BG0, height=28, corner_radius=0)
+        foot.pack(fill="x")
+        foot.pack_propagate(False)
+        self._out_lbl = label(foot, "—", size=9, color=T2, mono=True)
+        self._out_lbl.pack(side="left", padx=10, pady=5)
+
+    # ─── Navigation tab ───────────────────────────────────────────────────────
+    def _build_navigation(self, tab):
+        self._section(tab, "QUICK NAVIGATION")
+
+        row1 = ctk.CTkFrame(tab, fg_color="transparent")
+        row1.pack(pady=6)
+        for txt, key in [("⌂ Home", "Home"), ("← Back", "Back"), ("⊟ Recent", "Recent Apps"), ("≡ Menu", "Menu")]:
+            self._abtn(row1, txt, lambda k=key: self._keyevent(k)).pack(side="left", padx=4)
+
+        row2 = ctk.CTkFrame(tab, fg_color="transparent")
+        row2.pack(pady=4)
+        for txt, key in [("🔊 Vol+", "Volume Up"), ("🔉 Vol-", "Volume Down"), ("🔇 Mute", "Mute"), ("⏻ Power", "Power")]:
+            self._abtn(row2, txt, lambda k=key: self._keyevent(k), fg=BG3).pack(side="left", padx=4)
+
+        self._section(tab, "SCREEN")
+        row3 = ctk.CTkFrame(tab, fg_color="transparent")
+        row3.pack(pady=4)
+        self._abtn(row3, "📷 Screenshot", self._screenshot, fg=B, hover="#2979ff", tc="#fff").pack(side="left", padx=4)
+        self._abtn(row3, "🔒 Lock Screen", lambda: self._keyevent("Power"), fg=BG3).pack(side="left", padx=4)
+        self._abtn(row3, "💡 Wake Screen",
+                   lambda: (self._keyevent("Power"), time.sleep(0.3), self._swipe_cmd(300, 800, 300, 300)),
+                   fg=BG3).pack(side="left", padx=4)
+
+        self._section(tab, "TYPE TEXT")
+        txt_f = ctk.CTkFrame(tab, fg_color="transparent")
+        txt_f.pack(fill="x", padx=16, pady=4)
+        self._type_entry = ctk.CTkEntry(txt_f, fg_color=BG3, border_color=BD, text_color=T0,
+                                         font=ctk.CTkFont("Segoe UI", 12),
+                                         placeholder_text="Text to type…", height=34)
+        self._type_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._abtn(txt_f, "Send", self._send_text, fg=G, hover=G2, tc="#000", w=70).pack(side="left")
+
+    # ─── Tap & Swipe tab ──────────────────────────────────────────────────────
+    def _build_tap_swipe(self, tab):
+        self._section(tab, "TAP ON SCREEN  (pixels, 0,0 = top-left)")
+        tap_f = ctk.CTkFrame(tab, fg_color=BG2, corner_radius=8)
+        tap_f.pack(fill="x", padx=16, pady=6)
+        tf = ctk.CTkFrame(tap_f, fg_color="transparent")
+        tf.pack(padx=12, pady=10)
+        label(tf, "X:", size=11, color=T1).pack(side="left")
+        self._tap_x = self._coord_entry(tf)
+        self._tap_x.pack(side="left", padx=4)
+        label(tf, "Y:", size=11, color=T1).pack(side="left", padx=(12,0))
+        self._tap_y = self._coord_entry(tf)
+        self._tap_y.pack(side="left", padx=4)
+        self._abtn(tf, "Tap ✦", self._do_tap, fg=G, hover=G2, tc="#000", w=80).pack(side="left", padx=(16,0))
+
+        self._section(tab, "SWIPE")
+        sw_f = ctk.CTkFrame(tab, fg_color=BG2, corner_radius=8)
+        sw_f.pack(fill="x", padx=16, pady=6)
+        swf = ctk.CTkFrame(sw_f, fg_color="transparent")
+        swf.pack(padx=12, pady=10)
+        label(swf, "From:", size=11, color=T1).pack(side="left")
+        self._sw_x1 = self._coord_entry(swf); self._sw_x1.pack(side="left", padx=2)
+        self._sw_y1 = self._coord_entry(swf); self._sw_y1.pack(side="left", padx=2)
+        label(swf, "→ To:", size=11, color=T1).pack(side="left", padx=(8,0))
+        self._sw_x2 = self._coord_entry(swf); self._sw_x2.pack(side="left", padx=2)
+        self._sw_y2 = self._coord_entry(swf); self._sw_y2.pack(side="left", padx=2)
+        self._abtn(swf, "Swipe", self._do_swipe, fg=B, hover="#2979ff", tc="#fff", w=70).pack(side="left", padx=(12,0))
+
+        self._section(tab, "SWIPE PRESETS")
+        pre_f = ctk.CTkFrame(tab, fg_color="transparent")
+        pre_f.pack(pady=4)
+        presets = [
+            ("↑ Scroll Up",    lambda: self._swipe_cmd(270, 700, 270, 200)),
+            ("↓ Scroll Down",  lambda: self._swipe_cmd(270, 200, 270, 700)),
+            ("← Swipe Left",   lambda: self._swipe_cmd(480, 400, 100, 400)),
+            ("→ Swipe Right",  lambda: self._swipe_cmd(100, 400, 480, 400)),
+            ("Pull Notif",     lambda: self._swipe_cmd(270, 0, 270, 400)),
+        ]
+        for txt, fn in presets:
+            self._abtn(pre_f, txt, fn, fg=BG3, w=100).pack(side="left", padx=3)
+
+        self._section(tab, "LONG PRESS")
+        lp_f = ctk.CTkFrame(tab, fg_color="transparent")
+        lp_f.pack(pady=4)
+        label(lp_f, "X:", size=11, color=T1).pack(side="left")
+        self._lp_x = self._coord_entry(lp_f); self._lp_x.pack(side="left", padx=4)
+        label(lp_f, "Y:", size=11, color=T1).pack(side="left", padx=(8,0))
+        self._lp_y = self._coord_entry(lp_f); self._lp_y.pack(side="left", padx=4)
+        label(lp_f, "ms:", size=11, color=T1).pack(side="left", padx=(8,0))
+        self._lp_dur = self._coord_entry(lp_f, w=60, default="1000"); self._lp_dur.pack(side="left", padx=4)
+        self._abtn(lp_f, "Long Press", self._do_long_press, fg=Y, hover="#f9a825", tc="#000", w=90).pack(side="left", padx=(12,0))
+
+    # ─── App Control tab ──────────────────────────────────────────────────────
+    def _build_app_control(self, tab):
+        self._section(tab, "TARGET APP")
+        pkg_f = ctk.CTkFrame(tab, fg_color=BG2, corner_radius=8)
+        pkg_f.pack(fill="x", padx=16, pady=6)
+        pf = ctk.CTkFrame(pkg_f, fg_color="transparent")
+        pf.pack(fill="x", padx=12, pady=8)
+
+        self._pkg_entry = ctk.CTkEntry(pf, textvariable=self._pkg,
+                                        fg_color=BG3, border_color=BD, text_color=T0,
+                                        font=ctk.CTkFont("Courier New", 11),
+                                        placeholder_text="com.example.app", height=32)
+        self._pkg_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._abtn(pf, "Get Current", self._get_current_app, fg=BG3, w=110).pack(side="left", padx=(0,4))
+
+        label(pkg_f, "  or pick from installed:", size=9, color=T2, mono=True).pack(anchor="w", padx=12)
+        self._pkg_om = ctk.CTkOptionMenu(pkg_f, values=["Loading…"],
+                                          fg_color=BG3, button_color=BD,
+                                          button_hover_color=BG3, text_color=T0,
+                                          font=ctk.CTkFont("Courier New", 10),
+                                          dynamic_resizing=False,
+                                          command=lambda v: self._pkg.set(v))
+        self._pkg_om.pack(fill="x", padx=12, pady=(2, 10))
+
+        self._section(tab, "APP ACTIONS")
+        row1 = ctk.CTkFrame(tab, fg_color="transparent")
+        row1.pack(pady=4)
+        self._abtn(row1, "▶ Launch App",   self._launch_app,  fg=G,   hover=G2,       tc="#000", w=110, bold=True).pack(side="left", padx=4)
+        self._abtn(row1, "⏹ Force Stop",   self._force_stop,  fg=R,   hover="#d32f2f", tc="#fff", w=110, bold=True).pack(side="left", padx=4)
+        self._abtn(row1, "↩ Restart App",  self._restart_app, fg=BG3, hover=BD,        tc=T0,    w=110).pack(side="left", padx=4)
+
+        row2 = ctk.CTkFrame(tab, fg_color="transparent")
+        row2.pack(pady=4)
+        self._abtn(row2, "🗑 Clear Cache",  self._clear_cache, fg=Y,   hover="#f9a825", tc="#000", w=120).pack(side="left", padx=4)
+        self._abtn(row2, "🗑 Clear Data",   self._clear_data,  fg=R,   hover="#d32f2f", tc="#fff", w=120).pack(side="left", padx=4)
+        self._abtn(row2, "🗑 Cache + Data", self._clear_all,   fg=R,   hover="#b71c1c", tc="#fff", w=120, bold=True).pack(side="left", padx=4)
+
+        row3 = ctk.CTkFrame(tab, fg_color="transparent")
+        row3.pack(pady=4)
+        self._abtn(row3, "📤 Uninstall",    self._uninstall,   fg=BG3, hover=BD,        tc=R,     w=110).pack(side="left", padx=4)
+        self._abtn(row3, "ℹ App Info",      self._open_app_info, fg=BG3, hover=BD,      tc=T0,    w=110).pack(side="left", padx=4)
+
+        self._section(tab, "INSTALL APK")
+        apk_f = ctk.CTkFrame(tab, fg_color="transparent")
+        apk_f.pack(fill="x", padx=16, pady=4)
+        self._apk_lbl2 = label(apk_f, "no apk selected", size=10, color=T2, mono=True)
+        self._apk_lbl2.pack(side="left", fill="x", expand=True)
+        self._abtn(apk_f, "Browse", self._pick_apk2, fg=BG3, w=80).pack(side="right", padx=(8,0))
+        self._abtn(apk_f, "Install", self._install_apk2, fg=B, hover="#2979ff", tc="#fff", w=80).pack(side="right", padx=4)
+        self._apk2_path = None
+
+    # ─── System tab ──────────────────────────────────────────────────────────
+    def _build_system(self, tab):
+        self._section(tab, "PHONE CONTROL")
+        row1 = ctk.CTkFrame(tab, fg_color="transparent")
+        row1.pack(pady=6)
+        self._abtn(row1, "↺ Restart Phone",  self._restart_phone, fg=Y,   hover="#f9a825", tc="#000", w=130, bold=True).pack(side="left", padx=4)
+        self._abtn(row1, "⚙ Settings",        lambda: self._am_start("android.settings.SETTINGS"), fg=BG3, w=110).pack(side="left", padx=4)
+        self._abtn(row1, "🏠 Home Screen",     lambda: self._keyevent("Home"), fg=BG3, w=110).pack(side="left", padx=4)
+
+        self._section(tab, "CONNECTIVITY")
+        row2 = ctk.CTkFrame(tab, fg_color="transparent")
+        row2.pack(pady=4)
+        self._abtn(row2, "WiFi ON",      lambda: self._run_cmd("svc wifi enable"),   fg=G,   hover=G2,       tc="#000", w=100).pack(side="left", padx=4)
+        self._abtn(row2, "WiFi OFF",     lambda: self._run_cmd("svc wifi disable"),  fg=BG3, hover=BD,       tc=T0,    w=100).pack(side="left", padx=4)
+        self._abtn(row2, "Data ON",      lambda: self._run_cmd("svc data enable"),   fg=G,   hover=G2,       tc="#000", w=100).pack(side="left", padx=4)
+        self._abtn(row2, "Data OFF",     lambda: self._run_cmd("svc data disable"),  fg=BG3, hover=BD,       tc=T0,    w=100).pack(side="left", padx=4)
+
+        row3 = ctk.CTkFrame(tab, fg_color="transparent")
+        row3.pack(pady=4)
+        self._abtn(row3, "✈ Airplane ON",
+                   lambda: self._run_cmd("settings put global airplane_mode_on 1 ; am broadcast -a android.intent.action.AIRPLANE_MODE"),
+                   fg=BG3, w=120).pack(side="left", padx=4)
+        self._abtn(row3, "✈ Airplane OFF",
+                   lambda: self._run_cmd("settings put global airplane_mode_on 0 ; am broadcast -a android.intent.action.AIRPLANE_MODE"),
+                   fg=BG3, w=120).pack(side="left", padx=4)
+
+        self._section(tab, "DISPLAY")
+        row4 = ctk.CTkFrame(tab, fg_color="transparent")
+        row4.pack(pady=4)
+        self._abtn(row4, "Brightness Max",  lambda: self._run_cmd("settings put system screen_brightness 255"), fg=BG3, w=120).pack(side="left", padx=4)
+        self._abtn(row4, "Brightness Mid",  lambda: self._run_cmd("settings put system screen_brightness 128"), fg=BG3, w=120).pack(side="left", padx=4)
+        self._abtn(row4, "Brightness Min",  lambda: self._run_cmd("settings put system screen_brightness 10"),  fg=BG3, w=120).pack(side="left", padx=4)
+
+        self._section(tab, "SYSTEM INFO")
+        row5 = ctk.CTkFrame(tab, fg_color="transparent")
+        row5.pack(pady=4)
+        self._abtn(row5, "Show Battery",    lambda: self._query("dumpsys battery | grep level"), fg=BG3, w=120).pack(side="left", padx=4)
+        self._abtn(row5, "Show IP",         lambda: self._query("ifconfig wlan0 | grep inet"), fg=BG3, w=120).pack(side="left", padx=4)
+        self._abtn(row5, "Show Android Ver",lambda: self._query("getprop ro.build.version.release"), fg=BG3, w=120).pack(side="left", padx=4)
+
+        self._section(tab, "RESET")
+        row6 = ctk.CTkFrame(tab, fg_color="transparent")
+        row6.pack(pady=4)
+        self._abtn(row6, "Clear ALL App Caches",  self._clear_all_caches,  fg=Y, hover="#f9a825", tc="#000", w=160).pack(side="left", padx=4)
+        self._abtn(row6, "Kill Background Apps",  self._kill_bg_apps,      fg=BG3, w=150).pack(side="left", padx=4)
+
+    # ─── Sequences tab ────────────────────────────────────────────────────────
+    def _build_sequences(self, tab):
+        self._section(tab, "RECORD A SEQUENCE")
+        rec_f = ctk.CTkFrame(tab, fg_color=BG2, corner_radius=8)
+        rec_f.pack(fill="x", padx=16, pady=6)
+        rf = ctk.CTkFrame(rec_f, fg_color="transparent")
+        rf.pack(fill="x", padx=12, pady=8)
+
+        label(rf, "Name:", size=11, color=T1).pack(side="left")
+        self._seq_name = ctk.CTkEntry(rf, fg_color=BG3, border_color=BD, text_color=T0,
+                                       font=ctk.CTkFont("Segoe UI", 11),
+                                       placeholder_text="my_sequence", height=30, width=140)
+        self._seq_name.pack(side="left", padx=8)
+        self._rec_btn = btn(rf, "⏺ Start Recording", self._toggle_recording,
+                             fg=R, hover="#d32f2f", tc="#fff", width=150, height=30)
+        self._rec_btn.pack(side="left", padx=4)
+        self._rec_count = label(rf, "0 steps", size=10, color=T2, mono=True)
+        self._rec_count.pack(side="left", padx=8)
+
+        # Recording quick-add buttons (only useful while recording)
+        self._section(tab, "ADD STEP WHILE RECORDING")
+        quick_f = ctk.CTkFrame(tab, fg_color="transparent")
+        quick_f.pack(fill="x", padx=16, pady=4)
+        steps_row1 = ctk.CTkFrame(quick_f, fg_color="transparent")
+        steps_row1.pack(pady=2)
+        for txt, key in [("Home", "Home"), ("Back", "Back"), ("Recent", "Recent Apps"), ("Power", "Power")]:
+            self._abtn(steps_row1, txt,
+                       lambda k=key: self._record_step({"type": "keyevent", "key": k}),
+                       fg=BG3, w=80).pack(side="left", padx=3)
+
+        steps_row2 = ctk.CTkFrame(quick_f, fg_color="transparent")
+        steps_row2.pack(pady=2)
+        label(steps_row2, "Tap X:", size=10, color=T1).pack(side="left")
+        self._rsx = self._coord_entry(steps_row2); self._rsx.pack(side="left", padx=2)
+        label(steps_row2, "Y:", size=10, color=T1).pack(side="left")
+        self._rsy = self._coord_entry(steps_row2); self._rsy.pack(side="left", padx=2)
+        self._abtn(steps_row2, "+ Tap", lambda: self._record_step({"type": "tap", "x": self._rsx.get(), "y": self._rsy.get()}),
+                   fg=G, hover=G2, tc="#000", w=70).pack(side="left", padx=6)
+
+        steps_row3 = ctk.CTkFrame(quick_f, fg_color="transparent")
+        steps_row3.pack(pady=2)
+        label(steps_row3, "Wait (s):", size=10, color=T1).pack(side="left")
+        self._rwait = self._coord_entry(steps_row3, w=60, default="1"); self._rwait.pack(side="left", padx=4)
+        self._abtn(steps_row3, "+ Wait", lambda: self._record_step({"type": "wait", "seconds": self._rwait.get()}),
+                   fg=Y, hover="#f9a825", tc="#000", w=70).pack(side="left", padx=4)
+        self._abtn(steps_row3, "+ Clear Cache", lambda: self._record_step({"type": "clear_cache", "pkg": self._pkg.get()}),
+                   fg=BG3, w=110).pack(side="left", padx=4)
+        self._abtn(steps_row3, "+ Clear Data", lambda: self._record_step({"type": "clear_data", "pkg": self._pkg.get()}),
+                   fg=BG3, w=110).pack(side="left", padx=4)
+
+        self._section(tab, "SAVED SEQUENCES")
+        seq_ctrl = ctk.CTkFrame(tab, fg_color="transparent")
+        seq_ctrl.pack(fill="x", padx=16, pady=4)
+
+        self._seq_om_var = ctk.StringVar(value="")
+        self._seq_om = ctk.CTkOptionMenu(seq_ctrl, variable=self._seq_om_var,
+                                          values=self._seq_names(),
+                                          fg_color=BG3, button_color=BD,
+                                          button_hover_color=BG3, text_color=T0,
+                                          font=ctk.CTkFont("Segoe UI", 11),
+                                          dynamic_resizing=False, width=200)
+        self._seq_om.pack(side="left", padx=(0, 8))
+
+        label(seq_ctrl, "Repeat:", size=10, color=T1).pack(side="left")
+        self._seq_repeat = self._coord_entry(seq_ctrl, w=50, default="1"); self._seq_repeat.pack(side="left", padx=4)
+        label(seq_ctrl, "x  Delay between (s):", size=10, color=T1).pack(side="left")
+        self._seq_delay = self._coord_entry(seq_ctrl, w=50, default="0"); self._seq_delay.pack(side="left", padx=4)
+
+        seq_run_f = ctk.CTkFrame(tab, fg_color="transparent")
+        seq_run_f.pack(pady=6)
+        self._run_seq_btn = btn(seq_run_f, "▶ Run on This Phone", self._run_sequence,
+                                 fg=G, hover=G2, tc="#000", width=160, bold=True)
+        self._run_seq_btn.pack(side="left", padx=4)
+        btn(seq_run_f, "▶▶ Run on ALL Phones", self._run_sequence_all,
+            fg=B, hover="#2979ff", tc="#fff", width=160).pack(side="left", padx=4)
+        btn(seq_run_f, "🗑 Delete", self._delete_sequence,
+            fg=BG3, hover=BD, tc=R, width=80).pack(side="left", padx=4)
+
+        # Steps preview
+        self._section(tab, "SEQUENCE STEPS PREVIEW")
+        self._steps_txt = ctk.CTkTextbox(tab, fg_color=BG0, text_color=T2,
+                                          font=ctk.CTkFont("Courier New", 9),
+                                          border_width=0, corner_radius=6, height=80)
+        self._steps_txt.pack(fill="x", padx=16, pady=4)
+        self._steps_txt.configure(state="disabled")
+        self._seq_om.configure(command=self._preview_sequence)
+
+    # ─── Helpers ─────────────────────────────────────────────────────────────
+    def _section(self, parent, title):
+        f = ctk.CTkFrame(parent, fg_color="transparent")
+        f.pack(fill="x", padx=16, pady=(10, 2))
+        label(f, f"── {title} ──", size=8, color=T2, mono=True).pack(anchor="w")
+
+    def _abtn(self, parent, text, command, fg=BG2, hover=BD, tc=T0, w=100, bold=False):
+        return btn(parent, text, command, fg=fg, hover=hover, tc=tc,
+                    width=w, height=30, bold=bold)
+
+    def _coord_entry(self, parent, w=68, default="0"):
+        e = ctk.CTkEntry(parent, width=w, height=30, fg_color=BG3,
+                          border_color=BD, text_color=T0,
+                          font=ctk.CTkFont("Courier New", 12), justify="center")
+        e.insert(0, default)
+        return e
+
+    def _out(self, msg: str):
+        self.after(0, lambda: self._out_lbl.configure(text=str(msg)[:90]))
+        log(f"[{self._name}] {msg}")
+
+    def _run_bg(self, fn):
+        threading.Thread(target=fn, daemon=True).start()
+
+    def _run_cmd(self, cmd: str):
+        self._run_bg(lambda: self._out(adb_shell(self._idx, cmd) or "✓"))
+
+    def _query(self, cmd: str):
+        def _do():
+            result = adb_shell(self._idx, cmd)
+            self._out(result.strip() or "(no output)")
+        self._run_bg(_do)
+
+    def _keyevent(self, key: str):
+        code = KEYEVENTS.get(key, key)
+        self._run_bg(lambda: self._out(adb_shell(self._idx, f"input keyevent {code}") or f"⌨ {key}"))
+
+    def _swipe_cmd(self, x1, y1, x2, y2, dur=400):
+        self._run_bg(lambda: adb_shell(self._idx, f"input swipe {x1} {y1} {x2} {y2} {dur}"))
+
+    def _screenshot(self):
+        self._run_bg(lambda: (
+            self._out("Taking screenshot…"),
+            (lambda p=take_screenshot(self._idx): (
+                self._out(f"Saved: {Path(p).name}") if p else self._out("Screenshot failed"),
+                os.startfile(p) if p else None
+            ))()
+        ))
+
+    def _send_text(self):
+        txt = self._type_entry.get().strip().replace(" ", "%s")
+        if txt:
+            self._run_bg(lambda: self._out(adb_shell(self._idx, f"input text {txt}") or "✓ Text sent"))
+
+    def _do_tap(self):
+        try:
+            x, y = int(self._tap_x.get()), int(self._tap_y.get())
+        except ValueError:
+            return
+        self._run_bg(lambda: self._out(adb_shell(self._idx, f"input tap {x} {y}") or f"✓ Tapped {x},{y}"))
+
+    def _do_swipe(self):
+        try:
+            x1,y1 = int(self._sw_x1.get()), int(self._sw_y1.get())
+            x2,y2 = int(self._sw_x2.get()), int(self._sw_y2.get())
+        except ValueError:
+            return
+        self._run_bg(lambda: (adb_shell(self._idx, f"input swipe {x1} {y1} {x2} {y2} 400"),
+                               self._out(f"✓ Swiped {x1},{y1}→{x2},{y2}")))
+
+    def _do_long_press(self):
+        try:
+            x,y = int(self._lp_x.get()), int(self._lp_y.get())
+            dur = int(self._lp_dur.get())
+        except ValueError:
+            return
+        self._run_bg(lambda: (adb_shell(self._idx, f"input swipe {x} {y} {x} {y} {dur}"),
+                               self._out(f"✓ Long press {x},{y} for {dur}ms")))
+
+    def _load_packages(self):
+        pkgs = get_packages(self._idx)
+        if pkgs:
+            self.after(0, lambda: self._pkg_om.configure(values=pkgs))
+        else:
+            self.after(0, lambda: self._pkg_om.configure(values=["(none found)"]))
+
+    def _get_current_app(self):
+        def _do():
+            pkg = get_current_app(self._idx)
+            if pkg:
+                self._pkg.set(pkg)
+                self._out(f"Current: {pkg}")
+            else:
+                self._out("Could not detect current app")
+        self._run_bg(_do)
+
+    def _launch_app(self):
+        pkg = self._pkg.get().strip()
+        if not pkg:
+            return
+        self._run_bg(lambda: self._out(
+            adb_shell(self._idx, f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1") or f"✓ Launched {pkg}"
+        ))
+
+    def _force_stop(self):
+        pkg = self._pkg.get().strip()
+        if not pkg:
+            return
+        self._run_bg(lambda: self._out(adb_shell(self._idx, f"am force-stop {pkg}") or f"✓ Stopped {pkg}"))
+
+    def _restart_app(self):
+        pkg = self._pkg.get().strip()
+        if not pkg:
+            return
+        def _do():
+            adb_shell(self._idx, f"am force-stop {pkg}")
+            time.sleep(1)
+            adb_shell(self._idx, f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1")
+            self._out(f"✓ Restarted {pkg}")
+        self._run_bg(_do)
+
+    def _clear_cache(self):
+        pkg = self._pkg.get().strip()
+        if not pkg:
+            return
+        self._run_bg(lambda: self._out(
+            adb_shell(self._idx, f"pm clear --cache-only {pkg}") or f"✓ Cache cleared: {pkg}"
+        ))
+
+    def _clear_data(self):
+        pkg = self._pkg.get().strip()
+        if not pkg:
+            return
+        self._run_bg(lambda: self._out(
+            adb_shell(self._idx, f"pm clear {pkg}") or f"✓ Data cleared: {pkg}"
+        ))
+
+    def _clear_all(self):
+        pkg = self._pkg.get().strip()
+        if not pkg:
+            return
+        def _do():
+            adb_shell(self._idx, f"am force-stop {pkg}")
+            adb_shell(self._idx, f"pm clear {pkg}")
+            self._out(f"✓ Stopped + cleared all: {pkg}")
+        self._run_bg(_do)
+
+    def _uninstall(self):
+        pkg = self._pkg.get().strip()
+        if not pkg:
+            return
+        self._run_bg(lambda: self._out(
+            adb_shell(self._idx, f"pm uninstall -k {pkg}") or f"✓ Uninstalled {pkg}"
+        ))
+
+    def _open_app_info(self):
+        pkg = self._pkg.get().strip()
+        if not pkg:
+            return
+        self._run_bg(lambda: adb_shell(
+            self._idx,
+            f"am start -a android.settings.APPLICATION_DETAILS_SETTINGS -d package:{pkg}"
+        ))
+
+    def _pick_apk2(self):
+        path = fd.askopenfilename(title="Select APK", filetypes=[("APK", "*.apk")])
+        if path:
+            self._apk2_path = path
+            self._apk_lbl2.configure(text=Path(path).name, text_color=G)
+
+    def _install_apk2(self):
+        if not self._apk2_path:
+            return
+        def _do():
+            self._out(f"Installing {Path(self._apk2_path).name}…")
+            ld("installapp", "--index", str(self._idx), "--filename", self._apk2_path)
+            self._out(f"✓ Installed")
+        self._run_bg(_do)
+
+    def _restart_phone(self):
+        def _do():
+            self._out("Restarting…")
+            ld("reboot", "--index", str(self._idx))
+            self._out("✓ Restarted")
+        self._run_bg(_do)
+
+    def _am_start(self, action: str):
+        self._run_bg(lambda: adb_shell(self._idx, f"am start -a android.settings.{action}"))
+
+    def _clear_all_caches(self):
+        def _do():
+            self._out("Clearing all app caches…")
+            pkgs = get_packages(self._idx)
+            for p in pkgs:
+                adb_shell(self._idx, f"pm clear --cache-only {p}")
+            self._out(f"✓ Cleared caches for {len(pkgs)} apps")
+        self._run_bg(_do)
+
+    def _kill_bg_apps(self):
+        self._run_bg(lambda: (
+            adb_shell(self._idx, "am kill-all"),
+            self._out("✓ Killed background apps")
+        ))
+
+    # ─── Sequence engine ──────────────────────────────────────────────────────
+    def _toggle_recording(self):
+        if not self._seq_recording:
+            self._seq_recording = True
+            self._rec_steps = []
+            self._rec_btn.configure(text="⏹ Stop Recording", fg_color=Y, text_color="#000")
+            self._out("Recording started — add steps above")
+        else:
+            self._seq_recording = False
+            name = self._seq_name.get().strip() or "sequence"
+            if self._rec_steps:
+                _sequences[name] = self._rec_steps
+                save_sequences(_sequences)
+                self._seq_om.configure(values=self._seq_names())
+                self._seq_om_var.set(name)
+                self._out(f"✓ Saved '{name}' ({len(self._rec_steps)} steps)")
+                log(f"Sequence saved: '{name}' with {len(self._rec_steps)} steps")
+            self._rec_btn.configure(text="⏺ Start Recording", fg_color=R, text_color="#fff")
+
+    def _record_step(self, step: dict):
+        if not self._seq_recording:
+            self._out("Press 'Start Recording' first")
+            return
+        self._rec_steps.append(step)
+        self._rec_count.configure(text=f"{len(self._rec_steps)} steps")
+        self._out(f"Recorded: {step}")
+
+    def _seq_names(self) -> list[str]:
+        names = list(_sequences.keys())
+        return names if names else ["(no sequences)"]
+
+    def _preview_sequence(self, name: str):
+        steps = _sequences.get(name, [])
+        self._steps_txt.configure(state="normal")
+        self._steps_txt.delete("1.0", "end")
+        for i, s in enumerate(steps, 1):
+            self._steps_txt.insert("end", f"{i:2}. {json.dumps(s)}\n")
+        self._steps_txt.configure(state="disabled")
+
+    def _run_sequence(self):
+        name = self._seq_om_var.get()
+        steps = _sequences.get(name)
+        if not steps:
+            return
+        try:
+            repeat = max(1, int(self._seq_repeat.get()))
+            delay  = max(0, float(self._seq_delay.get()))
+        except ValueError:
+            repeat, delay = 1, 0
+        self._run_bg(lambda: self._execute_sequence(steps, repeat, delay, [self._idx]))
+
+    def _run_sequence_all(self):
+        name = self._seq_om_var.get()
+        steps = _sequences.get(name)
+        if not steps:
+            return
+        try:
+            repeat = max(1, int(self._seq_repeat.get()))
+            delay  = max(0, float(self._seq_delay.get()))
+        except ValueError:
+            repeat, delay = 1, 0
+        # Get all running phone indexes from the parent
+        all_phones = getattr(self.master, "_phones", [])
+        idxs = [p["index"] for p in all_phones] if all_phones else [self._idx]
+        self._run_bg(lambda: self._execute_sequence(steps, repeat, delay, idxs))
+
+    def _execute_sequence(self, steps: list, repeat: int, delay: float, indexes: list[int]):
+        name_str = f"x{repeat}" if repeat > 1 else ""
+        self._out(f"Running sequence {name_str} on {len(indexes)} phone(s)…")
+        for r in range(repeat):
+            for idx in indexes:
+                for step in steps:
+                    t = step.get("type")
+                    if t == "keyevent":
+                        code = KEYEVENTS.get(step["key"], step["key"])
+                        adb_shell(idx, f"input keyevent {code}")
+                    elif t == "tap":
+                        adb_shell(idx, f"input tap {step.get('x',0)} {step.get('y',0)}")
+                    elif t == "swipe":
+                        adb_shell(idx, f"input swipe {step['x1']} {step['y1']} {step['x2']} {step['y2']} {step.get('dur',400)}")
+                    elif t == "wait":
+                        time.sleep(float(step.get("seconds", 1)))
+                    elif t == "clear_cache":
+                        adb_shell(idx, f"pm clear --cache-only {step.get('pkg','')}")
+                    elif t == "clear_data":
+                        adb_shell(idx, f"pm clear {step.get('pkg','')}")
+                    elif t == "text":
+                        adb_shell(idx, f"input text {step.get('text','').replace(' ','%s')}")
+                    time.sleep(0.1)
+            if delay > 0 and r < repeat - 1:
+                time.sleep(delay)
+        self._out(f"✓ Sequence done ({repeat}x on {len(indexes)} phones)")
+        log(f"Sequence complete: {repeat}x on phones {indexes}")
+
+    def _delete_sequence(self):
+        name = self._seq_om_var.get()
+        if name in _sequences:
+            del _sequences[name]
+            save_sequences(_sequences)
+            self._seq_om.configure(values=self._seq_names())
+            self._out(f"Deleted '{name}'")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PHONE FRAME VISUAL
@@ -730,11 +1433,11 @@ class FarmPanel(ctk.CTkFrame):
         toggle_btn.pack(side="left", padx=(0, 4))
         card._btn = toggle_btn
 
+        btn(bf, "⊞ Control", lambda i=phone["index"], p=phone: self._open_control(p),
+            fg=B, hover="#2979ff", tc="#fff", width=88, height=26, bold=True).pack(side="left", padx=(0, 4))
+
         btn(bf, "⌘", lambda i=phone["index"]: self._app._run_bg(lambda: self._do_screenshot(i)),
             fg=BG3, hover=BD, tc=T1, width=30, height=26).pack(side="left", padx=(0, 4))
-
-        btn(bf, "ADB", lambda i=phone["index"]: open_adb_shell(i),
-            fg=BG3, hover=BD, tc=B, width=44, height=26).pack(side="left", padx=(0, 4))
 
         btn(bf, "✕", lambda i=phone["index"]: self._confirm_delete(i),
             fg=BG3, hover="#3a1515", tc=R, width=28, height=26).pack(side="right")
@@ -772,6 +1475,9 @@ class FarmPanel(ctk.CTkFrame):
                      font=ctk.CTkFont("Courier New", 8),
                      fg_color=bg, text_color=fg,
                      corner_radius=4, padx=5, pady=1).pack(side="left", padx=(0, 3))
+
+    def _open_control(self, phone: dict):
+        PhoneControlDialog(self._app, phone)
 
     def _do_screenshot(self, index: int):
         self._app._set_status(f"Screenshotting phone #{index}…")

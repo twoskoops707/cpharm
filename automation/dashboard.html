@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>CPharm</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#00e676">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CPharm">
+<style>
+/* ── Reset & tokens ───────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --g:   #00e676;
+  --g2:  #00c853;
+  --r:   #ff5252;
+  --y:   #ffd740;
+  --bg0: #080b0f;
+  --bg1: #0d1117;
+  --bg2: #161b22;
+  --bg3: #1f2733;
+  --bd:  #2a3140;
+  --t0:  #e6edf3;
+  --t1:  #9198a1;
+  --t2:  #5a6270;
+  --mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  --sans: system-ui, -apple-system, sans-serif;
+  --rad: 10px;
+  --shadow: 0 4px 24px #0008;
+}
+
+html { font-size: 15px; }
+body {
+  background: var(--bg0);
+  color: var(--t0);
+  font-family: var(--sans);
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+/* ── Layout ───────────────────────────────────────────────── */
+#app { display: flex; flex-direction: column; min-height: 100dvh; }
+
+header {
+  position: sticky; top: 0; z-index: 100;
+  background: #080b0fcc;
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--bd);
+  padding: 0 16px;
+  height: 56px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+
+.logo {
+  font-family: var(--mono);
+  font-size: 1rem; font-weight: 700;
+  letter-spacing: .08em;
+  color: var(--g);
+  display: flex; align-items: center; gap: 8px;
+}
+.logo-bracket { color: var(--t2); font-weight: 300; }
+.logo svg { width: 18px; height: 18px; }
+
+.header-right { display: flex; align-items: center; gap: 10px; }
+
+.ip-badge {
+  font-family: var(--mono);
+  font-size: .7rem; color: var(--t1);
+  background: var(--bg2); border: 1px solid var(--bd);
+  border-radius: 6px; padding: 4px 8px;
+  cursor: pointer; user-select: all;
+}
+.ip-badge:hover { border-color: var(--g); color: var(--g); }
+
+.refresh-btn {
+  background: none; border: 1px solid var(--bd);
+  border-radius: 8px; padding: 6px 8px;
+  color: var(--t1); cursor: pointer;
+  display: flex; align-items: center;
+  transition: all .15s;
+}
+.refresh-btn:hover { border-color: var(--g); color: var(--g); }
+.refresh-btn svg { width: 16px; height: 16px; }
+.refresh-btn.spinning svg { animation: spin .6s linear infinite; }
+
+/* ── Stats bar ────────────────────────────────────────────── */
+#stats {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 1px; background: var(--bd);
+  border-bottom: 1px solid var(--bd);
+}
+.stat {
+  background: var(--bg1);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.stat-val {
+  font-family: var(--mono);
+  font-size: 1.25rem; font-weight: 700;
+  color: var(--t0); line-height: 1;
+}
+.stat-val.green { color: var(--g); }
+.stat-val.yellow { color: var(--y); }
+.stat-label { font-size: .65rem; color: var(--t2); text-transform: uppercase; letter-spacing: .06em; }
+
+/* ── Global controls ──────────────────────────────────────── */
+#controls {
+  padding: 14px 16px;
+  display: flex; gap: 10px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--bd);
+  background: var(--bg1);
+}
+
+button {
+  font-family: var(--sans);
+  font-size: .82rem; font-weight: 600;
+  border: none; border-radius: 8px;
+  padding: 9px 16px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: filter .15s, transform .1s;
+  white-space: nowrap;
+}
+button:active { transform: scale(.96); }
+button:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+.btn-green  { background: var(--g);  color: #000; }
+.btn-green:hover  { filter: brightness(1.1); }
+.btn-red    { background: var(--r);  color: #fff; }
+.btn-red:hover    { filter: brightness(1.15); }
+.btn-ghost  { background: var(--bg3); color: var(--t0); border: 1px solid var(--bd); }
+.btn-ghost:hover  { border-color: var(--t1); }
+
+/* ── Grid ─────────────────────────────────────────────────── */
+#grid {
+  padding: 14px 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  flex: 1;
+}
+
+/* ── Phone card ───────────────────────────────────────────── */
+.card {
+  background: var(--bg2);
+  border: 1px solid var(--bd);
+  border-radius: var(--rad);
+  overflow: hidden;
+  animation: slideIn .25s ease both;
+  transition: border-color .2s;
+}
+.card.running { border-color: #00e67630; }
+.card:hover   { border-color: var(--t2); }
+
+.card-top {
+  padding: 14px;
+  display: flex; align-items: center; gap: 12px;
+}
+
+.status-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--bd);
+  flex-shrink: 0;
+  transition: background .3s, box-shadow .3s;
+}
+.running .status-dot {
+  background: var(--g);
+  box-shadow: 0 0 0 0 #00e67640;
+  animation: pulse 2s ease infinite;
+}
+
+.card-info { flex: 1; min-width: 0; }
+.card-name {
+  font-family: var(--mono);
+  font-size: .88rem; font-weight: 600;
+  color: var(--t0);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.card-sub {
+  font-size: .7rem; color: var(--t2);
+  margin-top: 2px; font-family: var(--mono);
+}
+.running .card-sub { color: var(--g); }
+
+.card-actions { display: flex; gap: 6px; }
+.card-actions button {
+  padding: 7px 12px; font-size: .75rem; border-radius: 7px;
+}
+
+.card-bottom {
+  padding: 0 14px 12px;
+  display: flex; gap: 8px;
+}
+.pill {
+  font-family: var(--mono);
+  font-size: .65rem;
+  background: var(--bg3); color: var(--t2);
+  border-radius: 4px; padding: 3px 7px;
+}
+.pill.on { background: #00e67614; color: var(--g); }
+
+/* ── Countdown ring ───────────────────────────────────────── */
+.ring-wrap {
+  position: relative; width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+}
+.ring-wrap svg { position: absolute; top: 0; left: 0; transform: rotate(-90deg); }
+.ring-track { fill: none; stroke: var(--bd); stroke-width: 3; }
+.ring-fill  { fill: none; stroke: var(--g); stroke-width: 3; stroke-linecap: round;
+              stroke-dasharray: 94.25; transition: stroke-dashoffset .9s linear; }
+.ring-text  { font-family: var(--mono); font-size: .7rem; color: var(--t1); }
+
+/* ── FAB ──────────────────────────────────────────────────── */
+#fab {
+  position: fixed; bottom: 24px; right: 20px;
+  width: 52px; height: 52px; border-radius: 50%;
+  background: var(--g); color: #000;
+  font-size: 1.5rem; font-weight: 300;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 20px #00e67650;
+  cursor: pointer; border: none;
+  transition: transform .2s, box-shadow .2s;
+  z-index: 200;
+}
+#fab:hover { transform: scale(1.08); box-shadow: 0 6px 28px #00e67670; }
+#fab:active { transform: scale(.94); }
+
+/* ── Toast ────────────────────────────────────────────────── */
+#toast-wrap {
+  position: fixed; bottom: 88px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px;
+  z-index: 500; pointer-events: none;
+  width: min(340px, calc(100vw - 32px));
+}
+.toast {
+  background: var(--bg3); border: 1px solid var(--bd);
+  border-radius: 10px; padding: 10px 14px;
+  font-size: .82rem; color: var(--t0);
+  display: flex; align-items: center; gap: 10px;
+  box-shadow: var(--shadow);
+  animation: toastIn .2s ease both;
+  pointer-events: all;
+}
+.toast.ok   { border-color: var(--g); }
+.toast.err  { border-color: var(--r); }
+.toast-dot  { width: 8px; height: 8px; border-radius: 50%; background: var(--t2); flex-shrink:0; }
+.toast.ok  .toast-dot { background: var(--g); }
+.toast.err .toast-dot { background: var(--r); }
+
+/* ── Loading overlay ──────────────────────────────────────── */
+#overlay {
+  position: fixed; inset: 0; background: #080b0faa;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 999; display: none;
+}
+.spinner {
+  width: 36px; height: 36px;
+  border: 3px solid var(--bd);
+  border-top-color: var(--g);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+
+/* ── Empty state ──────────────────────────────────────────── */
+#empty {
+  display: none;
+  flex: 1; align-items: center; justify-content: center;
+  flex-direction: column; gap: 12px; padding: 48px 16px;
+  color: var(--t2); text-align: center;
+}
+#empty h2 { font-size: 1rem; font-weight: 600; color: var(--t1); }
+#empty p  { font-size: .82rem; line-height: 1.6; }
+
+/* ── Animations ───────────────────────────────────────────── */
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 #00e67640; }
+  70%  { box-shadow: 0 0 0 8px #00e67600; }
+  100% { box-shadow: 0 0 0 0 #00e67600; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(8px) scale(.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 400px) {
+  #stats { grid-template-columns: repeat(2, 1fr); }
+  .stat-val { font-size: 1.1rem; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="5" y="2" width="14" height="20" rx="2"/>
+        <line x1="12" y1="18" x2="12" y2="18.01"/>
+      </svg>
+      <span><span class="logo-bracket">[</span>C<span class="logo-bracket">·</span>PHARM<span class="logo-bracket">]</span></span>
+    </div>
+    <div class="header-right">
+      <div class="ip-badge" id="ip-badge" title="Click to copy">—.—.—.—</div>
+      <div class="ring-wrap" title="Auto-refresh countdown">
+        <svg width="36" height="36" viewBox="0 0 36 36">
+          <circle class="ring-track" cx="18" cy="18" r="15"/>
+          <circle class="ring-fill" id="ring" cx="18" cy="18" r="15"/>
+        </svg>
+        <span class="ring-text" id="ring-num">10</span>
+      </div>
+      <button class="refresh-btn" id="refresh-btn" onclick="fetchPhones(true)" title="Refresh now">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 12a9 9 0 0 1-15 6.7L3 16"/>
+          <polyline points="21 3 21 8 16 8"/>
+          <polyline points="3 21 3 16 8 16"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Stats -->
+  <div id="stats">
+    <div class="stat">
+      <span class="stat-val" id="s-total">—</span>
+      <span class="stat-label">Phones</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val green" id="s-running">—</span>
+      <span class="stat-label">Running</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val" id="s-stopped">—</span>
+      <span class="stat-label">Stopped</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val yellow" id="s-ram">—</span>
+      <span class="stat-label">RAM est.</span>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div id="controls">
+    <button class="btn-green" onclick="globalAction('start_all')">
+      ▶ Start All
+    </button>
+    <button class="btn-red" onclick="globalAction('stop_all')">
+      ■ Stop All
+    </button>
+    <button class="btn-ghost" onclick="globalAction('restart_all')">
+      ↺ Restart All
+    </button>
+  </div>
+
+  <!-- Phone grid -->
+  <div id="grid"></div>
+  <div id="empty">
+    <h2>No phones found</h2>
+    <p>Run <code>scripts\clone_phones.bat</code> to create<br>your first CPharm phone.</p>
+  </div>
+
+</div>
+
+<!-- FAB -->
+<button id="fab" onclick="clonePhone()" title="Clone new phone">+</button>
+
+<!-- Toast container -->
+<div id="toast-wrap"></div>
+
+<!-- Loading overlay -->
+<div id="overlay"><div class="spinner"></div></div>
+
+<script>
+// ── Mock data (replace with real API in production) ────────
+const DEMO_MODE = true; // set false when backed by dashboard.py
+
+let mockPhones = [
+  { index: 1, name: 'CPharm-1', running: true,  is_cpharm: true },
+  { index: 2, name: 'CPharm-2', running: true,  is_cpharm: true },
+  { index: 3, name: 'CPharm-3', running: false, is_cpharm: true },
+  { index: 4, name: 'CPharm-4', running: true,  is_cpharm: true },
+  { index: 5, name: 'CPharm-5', running: false, is_cpharm: true },
+];
+
+// ── State ──────────────────────────────────────────────────
+let phones = [];
+let countdown = 10;
+let ringInterval = null;
+let busy = false;
+
+// ── API ────────────────────────────────────────────────────
+async function api(path, method = 'GET') {
+  if (DEMO_MODE) return mockApi(path, method);
+  const res = await fetch(path, { method });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+function mockApi(path, method) {
+  return new Promise(res => setTimeout(() => {
+    if (path === '/api/phones') { res([...mockPhones]); return; }
+    if (path === '/api/start_all') {
+      mockPhones.forEach(p => { if (p.is_cpharm) p.running = true; });
+      res({ ok: true }); return;
+    }
+    if (path === '/api/stop_all') {
+      mockPhones.forEach(p => { if (p.is_cpharm) p.running = false; });
+      res({ ok: true }); return;
+    }
+    if (path === '/api/clone') {
+      const next = mockPhones.length + 1;
+      mockPhones.push({ index: next, name: `CPharm-${next}`, running: false, is_cpharm: true });
+      res({ ok: true }); return;
+    }
+    const startM = path.match(/^\/api\/phone\/start\/(\d+)$/);
+    if (startM) {
+      const p = mockPhones.find(x => x.index === +startM[1]);
+      if (p) p.running = true;
+      res({ ok: true }); return;
+    }
+    const stopM = path.match(/^\/api\/phone\/stop\/(\d+)$/);
+    if (stopM) {
+      const p = mockPhones.find(x => x.index === +stopM[1]);
+      if (p) p.running = false;
+      res({ ok: true }); return;
+    }
+    res({ ok: false });
+  }, 600));
+}
+
+// ── Fetch & render ─────────────────────────────────────────
+async function fetchPhones(manual = false) {
+  if (busy && !manual) return;
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  try {
+    phones = (await api('/api/phones')).filter(p => p.is_cpharm);
+    render();
+    resetCountdown();
+  } catch(e) {
+    toast('Could not reach server', 'err');
+  } finally {
+    btn.classList.remove('spinning');
+  }
+}
+
+function render() {
+  const grid  = document.getElementById('grid');
+  const empty = document.getElementById('empty');
+
+  // Stats
+  const running = phones.filter(p => p.running).length;
+  const stopped = phones.length - running;
+  const ram = (running * 1.5).toFixed(1);
+  document.getElementById('s-total').textContent   = phones.length;
+  document.getElementById('s-running').textContent = running;
+  document.getElementById('s-stopped').textContent = stopped;
+  document.getElementById('s-ram').textContent     = ram + 'G';
+
+  if (!phones.length) {
+    grid.style.display = 'none';
+    empty.style.display = 'flex';
+    return;
+  }
+  grid.style.display = '';
+  empty.style.display = 'none';
+
+  grid.innerHTML = phones.map((p, i) => `
+    <div class="card ${p.running ? 'running' : ''}" id="card-${p.index}"
+         style="animation-delay:${i * 40}ms">
+      <div class="card-top">
+        <div class="status-dot"></div>
+        <div class="card-info">
+          <div class="card-name">${p.name}</div>
+          <div class="card-sub">${p.running ? '● RUNNING' : '○ stopped'} &nbsp;·&nbsp; #${p.index}</div>
+        </div>
+        <div class="card-actions">
+          ${p.running
+            ? `<button class="btn-red"   onclick="phoneAction(${p.index},'stop')">Stop</button>`
+            : `<button class="btn-green" onclick="phoneAction(${p.index},'start')">Start</button>`
+          }
+        </div>
+      </div>
+      <div class="card-bottom">
+        <span class="pill ${p.running ? 'on' : ''}">ADB</span>
+        <span class="pill">idx ${p.index}</span>
+        <span class="pill">${p.running ? '~1.5 GB' : '—'}</span>
+      </div>
+    </div>`).join('');
+}
+
+// ── Actions ────────────────────────────────────────────────
+async function phoneAction(index, action) {
+  setBusy(true);
+  try {
+    await api(`/api/phone/${action}/${index}`, 'POST');
+    toast(`${action === 'start' ? 'Started' : 'Stopped'} CPharm-${index}`, 'ok');
+    await fetchPhones(true);
+  } catch(e) { toast('Action failed', 'err'); }
+  finally { setBusy(false); }
+}
+
+async function globalAction(action) {
+  setBusy(true);
+  const labels = { start_all: 'Starting all…', stop_all: 'Stopping all…', restart_all: 'Restarting…' };
+  toast(labels[action] || action, 'ok');
+  try {
+    if (action === 'restart_all') {
+      await api('/api/stop_all',  'POST');
+      await new Promise(r => setTimeout(r, 1200));
+      await api('/api/start_all', 'POST');
+    } else {
+      await api(`/api/${action}`, 'POST');
+    }
+    await fetchPhones(true);
+    toast('Done', 'ok');
+  } catch(e) { toast('Action failed', 'err'); }
+  finally { setBusy(false); }
+}
+
+async function clonePhone() {
+  setBusy(true);
+  try {
+    await api('/api/clone', 'POST');
+    toast('New phone cloned!', 'ok');
+    await fetchPhones(true);
+  } catch(e) { toast('Clone failed', 'err'); }
+  finally { setBusy(false); }
+}
+
+// ── Countdown ring ─────────────────────────────────────────
+const INTERVAL = 10;
+const CIRCUMFERENCE = 2 * Math.PI * 15; // r=15
+
+function resetCountdown() {
+  countdown = INTERVAL;
+  updateRing();
+  clearInterval(ringInterval);
+  ringInterval = setInterval(() => {
+    countdown--;
+    updateRing();
+    if (countdown <= 0) {
+      fetchPhones();
+      countdown = INTERVAL;
+    }
+  }, 1000);
+}
+
+function updateRing() {
+  const frac = countdown / INTERVAL;
+  const offset = CIRCUMFERENCE * (1 - frac);
+  document.getElementById('ring').style.strokeDashoffset = offset;
+  document.getElementById('ring-num').textContent = countdown;
+}
+
+// ── IP badge ───────────────────────────────────────────────
+async function detectIP() {
+  const badge = document.getElementById('ip-badge');
+  if (DEMO_MODE) {
+    badge.textContent = '192.168.x.x:8080';
+  } else {
+    try {
+      const r = await fetch('/api/ip');
+      const d = await r.json();
+      badge.textContent = d.url.replace('http://', '');
+    } catch { badge.textContent = location.host; }
+  }
+  badge.onclick = () => {
+    const url = DEMO_MODE ? location.href : `http://${badge.textContent}`;
+    navigator.clipboard?.writeText(url).then(() => toast('URL copied!', 'ok'));
+  };
+}
+
+// ── Toast ──────────────────────────────────────────────────
+function toast(msg, type = 'ok') {
+  const wrap = document.getElementById('toast-wrap');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `<div class="toast-dot"></div><span>${msg}</span>`;
+  wrap.appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+
+// ── Busy state ─────────────────────────────────────────────
+function setBusy(on) {
+  busy = on;
+  // Disable global buttons while busy
+  document.querySelectorAll('#controls button, #fab').forEach(b => b.disabled = on);
+}
+
+// ── PWA service worker ─────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+
+// ── Init ───────────────────────────────────────────────────
+detectIP();
+fetchPhones(true);
+</script>
+</body>
+</html>

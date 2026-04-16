@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableDelayedExpansion
 title CPharm - Install App
 color 0A
 
@@ -7,34 +8,33 @@ set APKDIR=%~dp0..\apks
 
 echo.
 echo  ==========================================
-echo   CPharm - Install App on All Phones
+echo   CPharm - Install App on Master Phone
 echo  ==========================================
 echo.
 
-:: Find APK
-for %%f in (%APKDIR%\*.apk) set APK=%%f
+if not exist %LDPLAYER% (
+    echo  [!] LDPlayer not found. Install from ldplayer.net
+    pause & exit /b 1
+)
+
+:: Find APK (BUG FIX: was missing 'do' keyword)
+set APK=
+for %%f in ("%APKDIR%\*.apk") do set APK=%%f
+
 if not defined APK (
     echo  [!] No APK found in apks\ folder.
-    echo  [!] Drop your .apk file in the apks\ folder and try again.
-    pause
-    exit /b 1
+    echo  [!] Drop your .apk file there and try again.
+    pause & exit /b 1
 )
 
-echo  [*] Found APK: %APK%
-echo.
-
-:: Get list of all instances
-for /f "tokens=1 delims=," %%i in ('%LDPLAYER% list2') do (
-    set INDEX=%%i
-    echo  [+] Installing on phone !INDEX!...
-    %LDPLAYER% installapp --index !INDEX! --filename "%APK%"
-    timeout /t 5 /nobreak >nul
-)
+echo  [*] Found: %APK%
+echo  [*] Installing on master phone (index 0)...
+%LDPLAYER% installapp --index 0 --filename "%APK%"
 
 echo.
 echo  ==========================================
-echo   App installed on all phones!
-echo   Next: Run scripts\launch_all.bat
+echo   Done! Now run scripts\clone_phones.bat
+echo   to copy this setup to all phones.
 echo  ==========================================
 echo.
 pause

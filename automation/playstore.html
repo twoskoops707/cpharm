@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>App Tester — CPharm</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=IBM+Plex+Mono:wght@400;600&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --g:#00e676;--g2:#00c853;--g-dim:#00e67618;--g-glow:#00e67640;
+  --r:#f43f5e;--y:#f59e0b;--b:#3b82f6;--p:#a855f7;
+  --bg0:#070a0d;--bg1:#0c1118;--bg2:#111822;--bg3:#18222e;
+  --bd:#1e2d3d;--bd2:#263447;
+  --t0:#e2e8f0;--t1:#94a3b8;--t2:#475569;
+  --font-head:'Syne',sans-serif;
+  --font-mono:'IBM Plex Mono',monospace;
+  --font-body:'DM Sans',sans-serif;
+  --rad:12px;--rad-sm:8px;
+  --shadow:0 8px 32px #00000060;
+}
+html{font-size:15px;scroll-behavior:smooth}
+body{background:var(--bg0);color:var(--t0);font-family:var(--font-body);min-height:100dvh;overflow-x:hidden}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+  opacity:.7;
+}
+#app{position:relative;z-index:1}
+
+header{
+  position:sticky;top:0;z-index:100;
+  background:#070a0dcc;backdrop-filter:blur(20px) saturate(180%);
+  border-bottom:1px solid var(--bd);
+  height:56px;padding:0 16px;
+  display:flex;align-items:center;justify-content:space-between;
+}
+.logo{
+  font-family:var(--font-head);font-size:1rem;font-weight:800;
+  color:var(--g);letter-spacing:.04em;
+  display:flex;align-items:center;gap:8px;
+}
+.logo-sub{font-size:.68rem;color:var(--t2);font-family:var(--font-mono);font-weight:400;letter-spacing:.08em}
+.back-link{
+  font-family:var(--font-mono);font-size:.68rem;color:var(--t1);
+  text-decoration:none;background:var(--bg2);border:1px solid var(--bd);
+  border-radius:6px;padding:5px 10px;transition:all .15s;display:flex;align-items:center;gap:6px;
+}
+.back-link:hover{border-color:var(--g);color:var(--g)}
+.ws-dot{width:7px;height:7px;border-radius:50%;background:var(--t2);transition:background .3s}
+.ws-dot.connected{background:var(--g);box-shadow:0 0 6px var(--g)}
+.ws-dot.error{background:var(--r)}
+
+/* Resource bar */
+#res-bar{
+  background:var(--bg1);border-bottom:1px solid var(--bd);
+  padding:10px 14px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;
+}
+.res-chip{
+  display:flex;flex-direction:column;gap:2px;min-width:90px;
+}
+.res-label{font-family:var(--font-mono);font-size:.58rem;color:var(--t2);text-transform:uppercase;letter-spacing:.1em}
+.res-val{font-family:var(--font-mono);font-size:.82rem;font-weight:600;color:var(--t0)}
+.res-val.warn{color:var(--y)}.res-val.danger{color:var(--r)}.res-val.ok{color:var(--g)}
+.res-track{height:3px;background:var(--bg3);border-radius:2px;margin-top:3px;width:100%}
+.res-fill{height:100%;border-radius:2px;background:var(--g);transition:width .5s ease}
+.res-fill.warn{background:var(--y)}.res-fill.danger{background:var(--r)}
+.res-note{font-family:var(--font-mono);font-size:.62rem;color:var(--t2);margin-left:auto;align-self:center;text-align:right;line-height:1.5}
+#phone-limit-note{
+  width:100%;background:#f59e0b18;border:1px solid #f59e0b40;border-radius:var(--rad-sm);
+  padding:8px 12px;font-size:.72rem;color:var(--y);font-family:var(--font-mono);
+  display:none;
+}
+
+.section{padding:14px;border-bottom:1px solid var(--bd)}
+.section-title{
+  font-family:var(--font-mono);font-size:.62rem;font-weight:600;
+  color:var(--t2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px;
+  display:flex;align-items:center;gap:8px;
+}
+.section-badge{
+  background:var(--bg3);border:1px solid var(--bd);border-radius:4px;
+  padding:2px 7px;font-size:.58rem;color:var(--t2);
+}
+
+button{
+  font-family:var(--font-body);font-size:.82rem;font-weight:600;
+  border:none;border-radius:var(--rad-sm);padding:10px 16px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;
+  transition:filter .15s,transform .1s,box-shadow .15s;white-space:nowrap;
+}
+button:active{transform:scale(.96)}
+button:disabled{opacity:.35;cursor:not-allowed;transform:none!important}
+.btn-g{background:var(--g);color:#000}
+.btn-g:hover{filter:brightness(1.1);box-shadow:0 0 20px var(--g-glow)}
+.btn-r{background:var(--r);color:#fff}.btn-r:hover{filter:brightness(1.1)}
+.btn-b{background:var(--b);color:#fff}.btn-b:hover{filter:brightness(1.1);box-shadow:0 0 18px #3b82f640}
+.btn-p{background:var(--p);color:#fff}.btn-p:hover{filter:brightness(1.1)}
+.btn-ghost{background:var(--bg3);color:var(--t0);border:1px solid var(--bd)}
+.btn-ghost:hover{border-color:var(--t1)}
+.btn-y{background:var(--y);color:#000}.btn-y:hover{filter:brightness(1.1)}
+.btn-sm{padding:7px 12px;font-size:.75rem;border-radius:7px}
+
+input[type=text],input[type=url],input[type=number],textarea{
+  background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad-sm);
+  padding:10px 12px;color:var(--t0);font-family:var(--font-mono);font-size:.82rem;
+  outline:none;transition:border-color .2s;width:100%;
+}
+input:focus,textarea:focus{border-color:var(--b)}
+input::placeholder,textarea::placeholder{color:var(--t2)}
+textarea{resize:vertical;min-height:72px;line-height:1.5}
+
+.row{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
+.row input,.row textarea{flex:1;min-width:140px}
+
+/* Phone target selector */
+.target-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+.target-lbl{font-size:.72rem;color:var(--t2);font-family:var(--font-mono);white-space:nowrap}
+.target-opt{
+  font-family:var(--font-mono);font-size:.68rem;padding:4px 10px;border-radius:5px;
+  cursor:pointer;background:var(--bg3);color:var(--t1);border:1px solid var(--bd);
+  transition:all .15s;user-select:none;
+}
+.target-opt.active{background:var(--g-dim);color:var(--g);border-color:#00e67640}
+
+/* Quick actions grid */
+.qa-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:7px}
+.qa-btn{
+  background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad-sm);
+  padding:10px 8px;text-align:center;cursor:pointer;transition:all .15s;
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+}
+.qa-btn:hover{border-color:var(--t1);background:var(--bg3)}
+.qa-btn:active{transform:scale(.97)}
+.qa-icon{font-size:1.2rem}
+.qa-lbl{font-family:var(--font-mono);font-size:.6rem;color:var(--t2)}
+
+/* Phone status grid */
+#phone-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;
+  margin-top:10px;
+}
+.phone-card{
+  background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad);
+  padding:12px;transition:border-color .2s;
+}
+.phone-card.active{border-color:#00e67628;box-shadow:0 0 0 1px #00e67610}
+.phone-card.busy{border-color:#f59e0b40}
+.pc-name{font-family:var(--font-mono);font-size:.78rem;color:var(--t0);font-weight:600}
+.pc-status{font-size:.65rem;color:var(--t2);margin-top:3px;font-family:var(--font-mono)}
+.pc-status.on{color:var(--g)}.pc-status.busy{color:var(--y)}
+.pc-bar{height:3px;background:var(--bg3);border-radius:2px;margin-top:8px}
+.pc-bar-fill{height:100%;border-radius:2px;background:var(--b);transition:width .4s}
+
+/* Stagger */
+.stagger-row{margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.stagger-lbl{font-size:.72rem;color:var(--t2);font-family:var(--font-mono);white-space:nowrap}
+.stagger-opts{display:flex;gap:4px;flex-wrap:wrap}
+.stagger-opt{
+  font-family:var(--font-mono);font-size:.68rem;padding:4px 10px;border-radius:5px;
+  cursor:pointer;background:var(--bg3);color:var(--t1);border:1px solid var(--bd);
+  transition:all .15s;user-select:none;
+}
+.stagger-opt.active{background:var(--g-dim);color:var(--g);border-color:#00e67640}
+.stagger-custom{display:none;margin-top:8px;gap:8px;align-items:center;font-size:.72rem;color:var(--t2);font-family:var(--font-mono)}
+.stagger-custom input{width:70px!important}
+
+/* Log */
+#log-feed{margin:0 14px 14px;background:var(--bg1);border:1px solid var(--bd);border-radius:var(--rad);overflow:hidden}
+.log-head{
+  padding:8px 12px;border-bottom:1px solid var(--bd);
+  font-family:var(--font-mono);font-size:.62rem;color:var(--t2);
+  text-transform:uppercase;letter-spacing:.1em;display:flex;justify-content:space-between;
+}
+#log-lines{padding:8px 12px;max-height:140px;overflow-y:auto;display:flex;flex-direction:column-reverse;gap:2px}
+.log-line{font-family:var(--font-mono);font-size:.68rem;color:var(--t2);line-height:1.5;animation:fadeIn .2s ease both}
+.log-ts{color:var(--t2);margin-right:6px}
+.log-msg{color:var(--t1)}
+.log-msg.ok{color:var(--g)}.log-msg.warn{color:var(--y)}
+
+/* Toast */
+#toasts{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:7px;z-index:500;pointer-events:none;width:min(340px,calc(100vw - 32px))}
+.toast{background:var(--bg3);border:1px solid var(--bd);border-radius:10px;padding:10px 14px;font-size:.82rem;color:var(--t0);display:flex;align-items:center;gap:9px;box-shadow:var(--shadow);animation:toastIn .2s ease both;pointer-events:all}
+.toast.ok{border-color:#00e67650}.toast.err{border-color:#f43f5e60}
+.toast-pip{width:7px;height:7px;border-radius:50%;background:var(--t2);flex-shrink:0}
+.toast.ok .toast-pip{background:var(--g);box-shadow:0 0 6px var(--g)}
+.toast.err .toast-pip{background:var(--r)}
+
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes toastIn{from{opacity:0;transform:translateY(6px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px}
+
+@media(max-width:420px){.qa-grid{grid-template-columns:repeat(3,1fr)}}
+</style>
+</head>
+<body>
+<div id="app">
+
+<header>
+  <div class="logo">
+    C·PHARM
+    <span class="logo-sub">/ APP TESTER</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <a href="/" class="back-link">← Dashboard</a>
+    <div class="ws-dot" id="ws-dot"></div>
+  </div>
+</header>
+
+<!-- Resource Bar -->
+<div id="res-bar">
+  <div class="res-chip">
+    <span class="res-label">System RAM</span>
+    <span class="res-val" id="ram-val">—</span>
+    <div class="res-track"><div class="res-fill" id="ram-fill" style="width:0%"></div></div>
+  </div>
+  <div class="res-chip">
+    <span class="res-label">Used</span>
+    <span class="res-val" id="ram-used">— GB</span>
+    <div class="res-track"><div style="width:0%"></div></div>
+  </div>
+  <div class="res-chip">
+    <span class="res-label">Free</span>
+    <span class="res-val ok" id="ram-free">— GB</span>
+    <div class="res-track"><div style="width:0%"></div></div>
+  </div>
+  <div class="res-chip">
+    <span class="res-label">Phones On</span>
+    <span class="res-val" id="phones-on-count">—</span>
+    <div class="res-track"><div class="res-fill" id="phones-fill" style="width:0%"></div></div>
+  </div>
+  <div class="res-note" id="res-note">Loading…</div>
+  <div id="phone-limit-note"></div>
+</div>
+
+<!-- Phone Status Mini-Grid -->
+<div class="section">
+  <div class="section-title">Phones <span class="section-badge" id="phone-count-badge">0</span></div>
+  <div id="phone-grid"></div>
+</div>
+
+<!-- Launch App -->
+<div class="section">
+  <div class="section-title">Launch App on Phones</div>
+  <div class="row" style="margin-bottom:8px">
+    <input type="text" id="pkg-input" placeholder="com.your.app.package" autocomplete="off" autocorrect="off" spellcheck="false">
+    <button class="btn-g" id="btn-launch">Launch</button>
+  </div>
+  <div class="stagger-row">
+    <span class="stagger-lbl">Delay between phones:</span>
+    <div class="stagger-opts" id="launch-stagger-opts">
+      <div class="stagger-opt active" data-val="0">All at once</div>
+      <div class="stagger-opt" data-val="30">30 sec</div>
+      <div class="stagger-opt" data-val="60">1 min</div>
+      <div class="stagger-opt" data-val="custom">Custom</div>
+    </div>
+  </div>
+  <div class="stagger-custom" id="launch-stagger-custom">
+    <span>Every</span>
+    <input type="number" id="launch-delay" value="10" min="1" max="3600" style="width:70px">
+    <span>seconds</span>
+  </div>
+</div>
+
+<!-- Keyboard Input -->
+<div class="section">
+  <div class="section-title">Type on Phones</div>
+  <div class="target-row">
+    <span class="target-lbl">Send to:</span>
+    <div class="target-opt active" data-target="all">All phones</div>
+    <div id="phone-targets"></div>
+  </div>
+  <div class="row" style="margin-bottom:8px">
+    <input type="text" id="type-input" placeholder="Type something…" autocomplete="off">
+    <button class="btn-b" id="btn-type">Send</button>
+  </div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+    <button class="btn-ghost btn-sm" onclick="sendKey(66)">Enter ↵</button>
+    <button class="btn-ghost btn-sm" onclick="sendKey(4)">Back ←</button>
+    <button class="btn-ghost btn-sm" onclick="sendKey(3)">Home ⌂</button>
+    <button class="btn-ghost btn-sm" onclick="sendKey(187)">Recents ⊡</button>
+    <button class="btn-ghost btn-sm" onclick="sendKey(67)">Delete ⌫</button>
+    <button class="btn-ghost btn-sm" onclick="sendKey(123)">End ⤓</button>
+  </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="section">
+  <div class="section-title">Quick Actions</div>
+  <div class="qa-grid">
+    <div class="qa-btn" onclick="quickAction('screenshot')"><span class="qa-icon">📸</span><span class="qa-lbl">Screenshot</span></div>
+    <div class="qa-btn" onclick="quickAction('swipe_up')"><span class="qa-icon">☝️</span><span class="qa-lbl">Swipe Up</span></div>
+    <div class="qa-btn" onclick="quickAction('swipe_down')"><span class="qa-icon">👇</span><span class="qa-lbl">Swipe Down</span></div>
+    <div class="qa-btn" onclick="quickAction('swipe_left')"><span class="qa-icon">👈</span><span class="qa-lbl">Swipe Left</span></div>
+    <div class="qa-btn" onclick="quickAction('swipe_right')"><span class="qa-icon">👉</span><span class="qa-lbl">Swipe Right</span></div>
+    <div class="qa-btn" onclick="quickAction('lock')"><span class="qa-icon">🔒</span><span class="qa-lbl">Lock Screen</span></div>
+    <div class="qa-btn" onclick="quickAction('wake')"><span class="qa-icon">💡</span><span class="qa-lbl">Wake Screen</span></div>
+    <div class="qa-btn" onclick="quickAction('clear_recents')"><span class="qa-icon">🧹</span><span class="qa-lbl">Clear Recents</span></div>
+    <div class="qa-btn" onclick="quickAction('home')"><span class="qa-icon">⌂</span><span class="qa-lbl">Go Home</span></div>
+  </div>
+</div>
+
+<!-- Test Loop: cycle between web + app -->
+<div class="section">
+  <div class="section-title">Test Loop <span class="section-badge">NEW</span></div>
+  <div style="background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad);padding:14px">
+    <p style="font-size:.78rem;color:var(--t1);line-height:1.6;margin-bottom:12px">
+      Each phone opens a website, then switches to your app, then repeats.<br>
+      Great for ad testing and app testing at the same time.
+    </p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div>
+        <div style="font-family:var(--font-mono);font-size:.65rem;color:var(--t2);margin-bottom:5px">Website to open</div>
+        <input type="url" id="loop-url" placeholder="https://yourwebsite.com" autocomplete="off" autocorrect="off" spellcheck="false">
+      </div>
+      <div>
+        <div style="font-family:var(--font-mono);font-size:.65rem;color:var(--t2);margin-bottom:5px">App package to test</div>
+        <input type="text" id="loop-pkg" placeholder="com.your.app.package" autocomplete="off" autocorrect="off" spellcheck="false">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <div style="font-family:var(--font-mono);font-size:.68rem;color:var(--t2)">Time on each (seconds):</div>
+        <input type="number" id="loop-time" value="30" min="5" max="600" style="width:80px">
+        <div style="font-family:var(--font-mono);font-size:.68rem;color:var(--t2)">Cycles:</div>
+        <input type="number" id="loop-cycles" value="3" min="1" max="50" style="width:70px">
+      </div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button class="btn-g" id="btn-loop-start">Start Loop</button>
+      <button class="btn-r btn-sm" id="btn-loop-stop" disabled>Stop</button>
+    </div>
+    <div style="margin-top:8px;font-family:var(--font-mono);font-size:.68rem;color:var(--t2)" id="loop-status"></div>
+  </div>
+</div>
+
+<!-- Pre-Launch Checklist (help get on Play Store) -->
+<div class="section">
+  <div class="section-title">Pre-Launch Checklist</div>
+  <div style="background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad);padding:14px">
+    <p style="font-size:.75rem;color:var(--t1);margin-bottom:12px;line-height:1.6">
+      These are the things Google checks before approving your app. Use this farm to test them on multiple phones at the same time.
+    </p>
+    <div id="checklist" style="display:flex;flex-direction:column;gap:6px"></div>
+    <div style="margin-top:12px;font-size:.7rem;color:var(--t2);font-family:var(--font-mono)">
+      Tap any item to mark it done. All items must be green before you submit to Google Play.
+    </div>
+  </div>
+</div>
+
+<!-- How to Use -->
+<div class="section">
+  <div class="section-title">How to Use This Tool</div>
+  <div style="background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad);padding:14px;display:flex;flex-direction:column;gap:14px">
+    <div>
+      <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--g);margin-bottom:5px">1. Launch App on Phones</div>
+      <p style="font-size:.75rem;color:var(--t1);line-height:1.6">Type your app's package name (like <span style="font-family:var(--font-mono);color:var(--t0)">com.yourname.app</span>) and tap Launch. The app opens on all phones at once or one by one if you pick a delay. You can find your package name in Android Studio or in your <span style="font-family:var(--font-mono);color:var(--t0)">build.gradle</span> file.</p>
+    </div>
+    <div>
+      <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--g);margin-bottom:5px">2. Type on Phones</div>
+      <p style="font-size:.75rem;color:var(--t1);line-height:1.6">Sends keyboard input to the phone. Use "Send to: All phones" to type the same thing everywhere, or pick a specific phone to type only on that one. The buttons (Enter, Back, Home, etc.) send a single key press.</p>
+    </div>
+    <div>
+      <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--g);margin-bottom:5px">3. Quick Actions</div>
+      <p style="font-size:.75rem;color:var(--t1);line-height:1.6">One-tap buttons for common things: take a screenshot, swipe the screen in any direction, lock/wake the phone, go home, clear recent apps. Screenshot files are saved to <span style="font-family:var(--font-mono);color:var(--t0)">/sdcard/</span> on each phone.</p>
+    </div>
+    <div>
+      <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--g);margin-bottom:5px">4. Test Loop</div>
+      <p style="font-size:.75rem;color:var(--t1);line-height:1.6">Phones automatically switch between a website and your app on a timer. This lets you test both at the same time — useful for checking how your app handles being interrupted by the browser, and for ad impression testing on your website.</p>
+    </div>
+    <div>
+      <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--y);margin-bottom:5px">RAM Warning</div>
+      <p style="font-size:.75rem;color:var(--t1);line-height:1.6">Each LDPlayer phone uses about 1.5 GB of RAM. The green bar at the top shows how much of your computer's memory is in use. If it turns yellow or red, close some phones from the main Dashboard before running tests — otherwise your computer will slow to a crawl.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Activity Log -->
+<div id="log-feed">
+  <div class="log-head">
+    <span>Activity Log</span>
+    <span id="log-clear" style="cursor:pointer">Clear</span>
+  </div>
+  <div id="log-lines"></div>
+</div>
+
+</div>
+<div id="toasts"></div>
+
+<script>
+'use strict';
+
+let phones = [];
+let targetPhone = 'all';
+let launchStagger = 0;
+
+// ── WebSocket ──────────────────────────────────────────────────────────
+const WS_URL = `ws://${location.hostname}:8081`;
+let ws, wsRetry = 0;
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen  = () => { wsRetry = 0; document.getElementById('ws-dot').className = 'ws-dot connected'; };
+  ws.onmessage = ({ data }) => {
+    const msg = JSON.parse(data);
+    if (msg.type === 'phones_update') { phones = msg.phones; renderPhones(); }
+    if (msg.type === 'log')           addLog(msg.msg);
+    if (msg.type === 'playstore_done') toast('All done!', 'ok');
+    if (msg.type === 'resources')     updateResources(msg);
+  };
+  ws.onclose = () => {
+    document.getElementById('ws-dot').className = 'ws-dot error';
+    setTimeout(connectWS, Math.min(1000 * 2 ** wsRetry++, 15000));
+  };
+  ws.onerror = () => ws.close();
+}
+
+// ── API ────────────────────────────────────────────────────────────────
+async function api(path, method = 'GET', body = null) {
+  const opts = { method, headers: {} };
+  if (body) { opts.body = JSON.stringify(body); opts.headers['Content-Type'] = 'application/json'; }
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+// ── Resources ──────────────────────────────────────────────────────────
+async function loadResources() {
+  try {
+    const r = await api('/api/resources');
+    updateResources(r);
+  } catch(e) {}
+}
+
+function updateResources(r) {
+  const ramPct  = Math.round(r.ram_used_pct || 0);
+  const usedGB  = (r.ram_used_gb || 0).toFixed(1);
+  const freeGB  = (r.ram_free_gb || 0).toFixed(1);
+  const totalGB = (r.ram_total_gb || 0).toFixed(1);
+
+  const fill  = document.getElementById('ram-fill');
+  const val   = document.getElementById('ram-val');
+  const used  = document.getElementById('ram-used');
+  const free  = document.getElementById('ram-free');
+  const note  = document.getElementById('res-note');
+  const limitNote = document.getElementById('phone-limit-note');
+
+  val.textContent  = ramPct + '%';
+  used.textContent = usedGB + ' GB';
+  free.textContent = freeGB + ' GB';
+  fill.style.width = ramPct + '%';
+
+  if (ramPct >= 90) {
+    val.className = 'res-val danger'; fill.className = 'res-fill danger';
+    free.className = 'res-val danger';
+  } else if (ramPct >= 75) {
+    val.className = 'res-val warn'; fill.className = 'res-fill warn';
+    free.className = 'res-val warn';
+  } else {
+    val.className = 'res-val ok'; fill.className = 'res-fill';
+    free.className = 'res-val ok';
+  }
+
+  const maxPhones = r.max_phones_recommended || 0;
+  note.textContent = totalGB + ' GB total · ~' + maxPhones + ' phones max at once';
+
+  if (maxPhones > 0 && phones.filter(p => p.running).length > maxPhones) {
+    limitNote.style.display = 'block';
+    limitNote.textContent = '⚠ Running more than the recommended ' + maxPhones + ' phones may slow your computer. Consider stopping some.';
+  } else {
+    limitNote.style.display = 'none';
+  }
+
+  // Phones on bar
+  const phonesOn = phones.filter(p => p.running).length;
+  const phonesPct = maxPhones ? Math.min(100, Math.round(phonesOn / maxPhones * 100)) : 0;
+  document.getElementById('phones-on-count').textContent = phonesOn;
+  document.getElementById('phones-fill').style.width = phonesPct + '%';
+}
+
+// ── Phone cards ────────────────────────────────────────────────────────
+function renderPhones() {
+  const grid = document.getElementById('phone-grid');
+  const badge = document.getElementById('phone-count-badge');
+  badge.textContent = phones.length;
+
+  // Update phone target pills
+  const targetsEl = document.getElementById('phone-targets');
+  targetsEl.textContent = '';
+  phones.forEach(p => {
+    const opt = document.createElement('div');
+    opt.className = 'target-opt' + (targetPhone === String(p.index) ? ' active' : '');
+    opt.textContent = p.name;
+    opt.dataset.target = String(p.index);
+    opt.addEventListener('click', () => setTarget(String(p.index)));
+    targetsEl.appendChild(opt);
+  });
+
+  // Mini phone cards
+  const existing = new Set(phones.map(p => 'pc-' + p.index));
+  Array.from(grid.children).forEach(c => { if (!existing.has(c.id)) c.remove(); });
+  phones.forEach(p => {
+    let card = document.getElementById('pc-' + p.index);
+    if (!card) {
+      card = document.createElement('div');
+      card.id = 'pc-' + p.index;
+      grid.appendChild(card);
+    }
+    card.className = 'phone-card' + (p.running ? ' active' : '');
+    card.textContent = '';
+    const name = document.createElement('div');
+    name.className = 'pc-name';
+    name.textContent = p.name;
+    const status = document.createElement('div');
+    status.className = 'pc-status' + (p.running ? ' on' : '');
+    status.textContent = p.running ? 'Running' : 'Off';
+    const bar = document.createElement('div');
+    bar.className = 'pc-bar';
+    const fill = document.createElement('div');
+    fill.className = 'pc-bar-fill';
+    fill.style.width = p.running ? '40%' : '0%';
+    bar.appendChild(fill);
+    card.appendChild(name);
+    card.appendChild(status);
+    card.appendChild(bar);
+  });
+
+  loadResources();
+}
+
+function setTarget(val) {
+  targetPhone = val;
+  document.querySelectorAll('.target-opt').forEach(o => {
+    o.classList.toggle('active', o.dataset.target === val);
+  });
+}
+
+// ── Launch ─────────────────────────────────────────────────────────────
+async function launchApp() {
+  const pkg = document.getElementById('pkg-input').value.trim();
+  if (!pkg) { toast('Enter a package name first', 'err'); return; }
+  let secs = launchStagger;
+  if (secs === -1) secs = +document.getElementById('launch-delay').value || 10;
+  try {
+    await api('/api/launch_app', 'POST', {
+      package: pkg,
+      stagger_secs: secs,
+      target: targetPhone,
+    });
+    toast('Launching ' + pkg, 'ok');
+  } catch(e) { toast('Could not launch app', 'err'); }
+}
+
+// ── Type / Keys ────────────────────────────────────────────────────────
+async function sendText() {
+  const text = document.getElementById('type-input').value;
+  if (!text) return;
+  try {
+    await api('/api/input_text', 'POST', { text, target: targetPhone });
+    toast('Sent to ' + (targetPhone === 'all' ? 'all phones' : 'Phone ' + targetPhone), 'ok');
+  } catch(e) { toast('Could not send text', 'err'); }
+}
+
+async function sendKey(code) {
+  try {
+    await api('/api/input_key', 'POST', { keycode: code, target: targetPhone });
+  } catch(e) { toast('Error', 'err'); }
+}
+
+// ── Quick Actions ──────────────────────────────────────────────────────
+async function quickAction(action) {
+  try {
+    await api('/api/quick_action', 'POST', { action, target: targetPhone });
+    addLog(action + ' → ' + (targetPhone === 'all' ? 'all phones' : 'Phone ' + targetPhone));
+  } catch(e) { toast('Error', 'err'); }
+}
+
+// ── Stagger opts ───────────────────────────────────────────────────────
+document.querySelectorAll('#launch-stagger-opts .stagger-opt').forEach(opt => {
+  opt.addEventListener('click', () => {
+    document.querySelectorAll('#launch-stagger-opts .stagger-opt').forEach(o => o.classList.remove('active'));
+    opt.classList.add('active');
+    const custom = document.getElementById('launch-stagger-custom');
+    if (opt.dataset.val === 'custom') {
+      custom.style.display = 'flex'; launchStagger = -1;
+    } else {
+      custom.style.display = 'none'; launchStagger = +opt.dataset.val;
+    }
+  });
+});
+
+// ── Log ────────────────────────────────────────────────────────────────
+function addLog(msg, type = '') {
+  const ts  = new Date().toLocaleTimeString('en-US', { hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const el  = document.getElementById('log-lines');
+  const row = document.createElement('div');
+  row.className = 'log-line';
+  const tsSpan = document.createElement('span');
+  tsSpan.className = 'log-ts';
+  tsSpan.textContent = ts;
+  const msgSpan = document.createElement('span');
+  msgSpan.className = 'log-msg' + (type ? ' ' + type : '');
+  msgSpan.textContent = msg;
+  row.appendChild(tsSpan);
+  row.appendChild(msgSpan);
+  el.prepend(row);
+  if (el.children.length > 100) el.lastChild.remove();
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────
+function toast(msg, type = '') {
+  const wrap = document.getElementById('toasts');
+  const el   = document.createElement('div');
+  el.className = 'toast ' + type;
+  const pip = document.createElement('div');
+  pip.className = 'toast-pip';
+  const txt = document.createElement('span');
+  txt.textContent = msg;
+  el.appendChild(pip);
+  el.appendChild(txt);
+  wrap.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+// ── Test Loop ──────────────────────────────────────────────────────────
+let loopRunning = false;
+let loopTimers  = [];
+
+async function startLoop() {
+  const url    = document.getElementById('loop-url').value.trim();
+  const pkg    = document.getElementById('loop-pkg').value.trim();
+  const timeSec = +document.getElementById('loop-time').value || 30;
+  const cycles  = +document.getElementById('loop-cycles').value || 3;
+  if (!url && !pkg) { toast('Enter a URL or package name', 'err'); return; }
+  loopRunning = true;
+  document.getElementById('btn-loop-start').disabled = true;
+  document.getElementById('btn-loop-stop').disabled  = false;
+  const statusEl = document.getElementById('loop-status');
+
+  for (let c = 1; c <= cycles && loopRunning; c++) {
+    statusEl.textContent = `Cycle ${c}/${cycles}: opening website…`;
+    if (url) {
+      await api('/api/open_url', 'POST', { url, stagger_secs: 0, target: targetPhone }).catch(() => {});
+    }
+    for (let t = 0; t < timeSec && loopRunning; t++) await sleep(1000);
+    if (!loopRunning) break;
+
+    if (pkg) {
+      statusEl.textContent = `Cycle ${c}/${cycles}: launching app…`;
+      await api('/api/launch_app', 'POST', { package: pkg, stagger_secs: 0, target: targetPhone }).catch(() => {});
+    }
+    for (let t = 0; t < timeSec && loopRunning; t++) await sleep(1000);
+  }
+
+  loopRunning = false;
+  document.getElementById('btn-loop-start').disabled = false;
+  document.getElementById('btn-loop-stop').disabled  = true;
+  statusEl.textContent = cycles > 0 ? 'Loop complete.' : '';
+  if (loopRunning === false && document.getElementById('loop-status').textContent !== 'Stopped.') {
+    toast('Test loop done!', 'ok');
+  }
+}
+
+function stopLoop() {
+  loopRunning = false;
+  document.getElementById('btn-loop-start').disabled = false;
+  document.getElementById('btn-loop-stop').disabled  = true;
+  document.getElementById('loop-status').textContent = 'Stopped.';
+  toast('Loop stopped', 'ok');
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── Checklist ──────────────────────────────────────────────────────────
+const CHECKLIST_ITEMS = [
+  'App opens without crashing on every phone',
+  'App works without an internet connection (or shows a clear offline message)',
+  'All buttons and taps work on small screens',
+  'No sensitive data visible in screenshots (for Google Play screenshot review)',
+  'App asks for permissions at the right time (not all at startup)',
+  'Privacy policy URL is live and accessible',
+  'App name and description match what the app actually does',
+  'App icon looks good at small sizes',
+  'Tested on at least 3 different screen sizes',
+  'No obvious crashes or freezes after 5 minutes of use',
+];
+
+const checkState = JSON.parse(localStorage.getItem('checklist') || '{}');
+
+function renderChecklist() {
+  const el = document.getElementById('checklist');
+  el.textContent = '';
+  CHECKLIST_ITEMS.forEach((item, i) => {
+    const done = !!checkState[i];
+    const row  = document.createElement('div');
+    row.style.cssText = `display:flex;align-items:flex-start;gap:10px;padding:8px 10px;
+      border-radius:6px;cursor:pointer;transition:background .15s;
+      background:${done ? 'var(--g-dim)' : 'var(--bg3)'};
+      border:1px solid ${done ? '#00e67640' : 'var(--bd)'};`;
+    row.addEventListener('click', () => {
+      checkState[i] = !checkState[i];
+      localStorage.setItem('checklist', JSON.stringify(checkState));
+      renderChecklist();
+    });
+    const dot = document.createElement('div');
+    dot.style.cssText = `width:14px;height:14px;border-radius:50%;flex-shrink:0;margin-top:1px;
+      background:${done ? 'var(--g)' : 'var(--bd2)'};
+      box-shadow:${done ? '0 0 6px var(--g)' : 'none'};transition:all .2s;`;
+    const text = document.createElement('div');
+    text.style.cssText = `font-size:.75rem;line-height:1.5;color:${done ? 'var(--g)' : 'var(--t1)'}`;
+    text.textContent = item;
+    row.appendChild(dot);
+    row.appendChild(text);
+    el.appendChild(row);
+  });
+}
+
+// ── Wiring ─────────────────────────────────────────────────────────────
+document.getElementById('btn-loop-start').addEventListener('click', startLoop);
+document.getElementById('btn-loop-stop').addEventListener('click', stopLoop);
+document.getElementById('btn-launch').addEventListener('click', launchApp);
+document.getElementById('btn-type').addEventListener('click', sendText);
+document.getElementById('type-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendText(); });
+document.querySelector('.target-opt[data-target="all"]').addEventListener('click', () => setTarget('all'));
+document.getElementById('log-clear').addEventListener('click', () => document.getElementById('log-lines').textContent = '');
+
+// ── Boot ───────────────────────────────────────────────────────────────
+connectWS();
+api('/api/phones').then(d => { phones = d; renderPhones(); }).catch(() => {});
+loadResources();
+setInterval(loadResources, 8000);
+renderChecklist();
+</script>
+</body>
+</html>

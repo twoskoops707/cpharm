@@ -1,33 +1,47 @@
-#!/usr/bin/env python3
-"""CPharm Web Dashboard — control LDPlayer phone farm from any browser."""
+"""
+CPharm v2 Dashboard — asyncio + WebSocket backend.
+Serves dashboard.html and handles all phone farm control.
+"""
 
-import http.server
+import asyncio
 import json
+import mimetypes
 import os
 import socket
 import subprocess
+import tempfile
 import time
+import threading
 import urllib.parse
 from pathlib import Path
-from socketserver import ThreadingMixIn
 
-LDPLAYER  = r"C:\LDPlayer\LDPlayer9\ldconsole.exe"
-PORT      = 8080
+import websockets
+from websockets.server import serve
+
+import tor_manager
+import teach as teach_mod
+
+LDPLAYER   = r"C:\LDPlayer\LDPlayer9\ldconsole.exe"
+PORT       = 8080
 SCRIPT_DIR = Path(__file__).parent
-APK_DIR   = SCRIPT_DIR.parent / "apks"
-HTML_FILE = SCRIPT_DIR / "dashboard.html"
+APK_DIR    = SCRIPT_DIR.parent / "apks"
+HTML_FILE  = SCRIPT_DIR / "dashboard.html"
+RAM_PER_PH = 1.5
 
-# ── Threading HTTP server (non-blocking per request) ─────────────────────────
-class ThreadedHTTPServer(ThreadingMixIn, http.server.HTTPServer):
-    daemon_threads = True
+_ws_clients: set = set()
+_stagger_task: asyncio.Task | None = None
+_teach_state = {"state": "idle", "file": None, "current_phone": None}
+
 
 # ── LDPlayer helpers ──────────────────────────────────────────────────────────
-def ld(*args: str) -> str:
+
+def ld(*args) -> str:
     try:
         r = subprocess.run([LDPLAYER, *args], capture_output=True, text=True, timeout=20)
         return r.stdout.strip()
     except Exception as e:
         return f"ERROR: {e}"
+
 
 def list_phones() -> list[dict]:
     raw = ld("list2")
@@ -37,14 +51,41 @@ def list_phones() -> list[dict]:
         if len(parts) < 2 or not parts[0].isdigit():
             continue
         idx, name = int(parts[0]), parts[1]
-        running_raw = ld("isrunning", "--index", str(idx))
+        running = "running" in ld("isrunning", "--index", str(idx)).lower()
         phones.append({
             "index":     idx,
             "name":      name,
-            "running":   "running" in running_raw.lower(),
+            "running":   running,
             "is_cpharm": name.lower().startswith("cpharm"),
+            "app":       _get_installed_app(idx),
         })
-    return phones
+    return [p for p in phones if p["is_cpharm"]]
+
+
+def _get_installed_app(idx: int) -> dict:
+    try:
+        raw = subprocess.run(
+            ["adb", "-s", f"emulator-{5554 + idx*2}", "shell",
+             "pm", "list", "packages", "-3"],
+            capture_output=True, text=True, timeout=8
+        ).stdout
+        pkgs = [l.strip().replace("package:", "") for l in raw.splitlines() if l.strip()]
+        if pkgs:
+            pkg = pkgs[0]
+            ver_raw = subprocess.run(
+                ["adb", "-s", f"emulator-{5554 + idx*2}", "shell",
+                 "dumpsys", "package", pkg],
+                capture_output=True, text=True, timeout=8
+            ).stdout
+            for line in ver_raw.splitlines():
+                if "versionName" in line:
+                    ver = line.strip().split("=")[-1]
+                    return {"package": pkg, "version": ver}
+            return {"package": pkg, "version": "?"}
+    except Exception:
+        pass
+    return {"package": "", "version": ""}
+
 
 def get_local_ip() -> str:
     try:
@@ -56,175 +97,321 @@ def get_local_ip() -> str:
     except Exception:
         return "unknown"
 
-# ── HTML loader ───────────────────────────────────────────────────────────────
-def load_html() -> str:
+
+def _adb(idx: int, *args) -> str:
+    device = f"emulator-{5554 + idx * 2}"
+    try:
+        return subprocess.run(
+            ["adb", "-s", device, *args],
+            capture_output=True, text=True, timeout=15
+        ).stdout.strip()
+    except Exception as e:
+        return f"ERROR: {e}"
+
+
+# ── WebSocket broadcast ───────────────────────────────────────────────────────
+
+async def broadcast(msg: dict):
+    if not _ws_clients:
+        return
+    data = json.dumps(msg)
+    await asyncio.gather(
+        *[ws.send(data) for ws in _ws_clients],
+        return_exceptions=True
+    )
+
+
+async def push_phones():
+    await broadcast({"type": "phones_update", "phones": list_phones()})
+
+
+# ── HTTP request handler ──────────────────────────────────────────────────────
+
+async def handle_http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    try:
+        raw = await asyncio.wait_for(reader.read(8192), timeout=5)
+        request = raw.decode("utf-8", errors="replace")
+        lines   = request.splitlines()
+        if not lines:
+            writer.close()
+            return
+
+        method, path_qs, *_ = lines[0].split(" ", 2)
+        parsed  = urllib.parse.urlparse(path_qs)
+        path    = parsed.path
+        body    = ""
+        if "\r\n\r\n" in request:
+            body = request.split("\r\n\r\n", 1)[1]
+
+        if method == "GET":
+            response = await handle_get(path)
+        elif method == "POST":
+            response = await handle_post(path, body)
+        elif method == "OPTIONS":
+            response = cors_ok()
+        else:
+            response = r404()
+
+        writer.write(response)
+        await writer.drain()
+    except Exception:
+        pass
+    finally:
+        writer.close()
+
+
+def _http_response(code: int, content_type: str, body: bytes, extra: str = "") -> bytes:
+    status = {200: "OK", 204: "No Content", 404: "Not Found", 400: "Bad Request"}.get(code, "OK")
+    headers = (
+        f"HTTP/1.1 {code} {status}\r\n"
+        f"Content-Type: {content_type}\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        f"Access-Control-Allow-Origin: *\r\n"
+        f"Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+        + extra +
+        "\r\n"
+    )
+    return headers.encode() + body
+
+
+def json_response(data: dict, code: int = 200) -> bytes:
+    body = json.dumps(data).encode()
+    return _http_response(code, "application/json", body)
+
+
+def html_response(html: str) -> bytes:
+    body = html.encode("utf-8")
+    return _http_response(200, "text/html; charset=utf-8", body)
+
+
+def file_response(fpath: Path) -> bytes:
+    if not fpath.exists():
+        return r404()
+    mime, _ = mimetypes.guess_type(str(fpath))
+    body = fpath.read_bytes()
+    return _http_response(200, mime or "application/octet-stream", body,
+                          "Cache-Control: max-age=3600\r\n")
+
+
+def cors_ok() -> bytes:
+    return _http_response(204, "text/plain", b"")
+
+
+def r404() -> bytes:
+    return _http_response(404, "text/plain", b"Not Found")
+
+
+def _load_html() -> str:
     if HTML_FILE.exists():
-        return HTML_FILE.read_text(encoding="utf-8").replace(
-            "const DEMO_MODE = true;", "const DEMO_MODE = false;"
-        )
+        return HTML_FILE.read_text(encoding="utf-8")
     return "<h1 style='color:#00e676;font-family:monospace'>dashboard.html not found</h1>"
 
-# ── HTTP handler ──────────────────────────────────────────────────────────────
-class Handler(http.server.BaseHTTPRequestHandler):
 
-    def log_message(self, fmt, *args):
-        print(f"  [{self.address_string()}] {fmt % args}")
+async def handle_get(path: str) -> bytes:
+    routes = {
+        "/":              lambda: html_response(_load_html()),
+        "/index.html":    lambda: html_response(_load_html()),
+        "/manifest.json": lambda: file_response(SCRIPT_DIR / "manifest.json"),
+        "/sw.js":         lambda: file_response(SCRIPT_DIR / "sw.js"),
+        "/icon-192.png":  lambda: file_response(SCRIPT_DIR / "icon-192.png"),
+        "/icon-512.png":  lambda: file_response(SCRIPT_DIR / "icon-512.png"),
+    }
 
-    # ── helpers ──
-    def send_json(self, data, code=200):
-        body = json.dumps(data).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
+    if path in routes:
+        return routes[path]()
 
-    def send_html(self, html: str):
-        body = html.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def send_file(self, fpath: Path, mime: str):
-        try:
-            body = fpath.read_bytes()
-        except FileNotFoundError:
-            self.send_error(404, f"File not found: {fpath.name}")
-            return
-        self.send_response(200)
-        self.send_header("Content-Type", mime)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "max-age=3600")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def send_404(self):
-        self.send_response(404)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    # ── GET ──
-    def do_GET(self):
-        path = urllib.parse.urlparse(self.path).path
-        routes = {
-            "/":             lambda: self.send_html(load_html()),
-            "/index.html":  lambda: self.send_html(load_html()),
-            "/manifest.json": lambda: self.send_file(SCRIPT_DIR / "manifest.json", "application/manifest+json"),
-            "/sw.js":        lambda: self.send_file(SCRIPT_DIR / "sw.js", "application/javascript"),
-            "/icon-192.png": lambda: self.send_file(SCRIPT_DIR / "icon-192.png", "image/png"),
-            "/icon-512.png": lambda: self.send_file(SCRIPT_DIR / "icon-512.png", "image/png"),
-            "/api/phones":   lambda: self.send_json(list_phones()),
-            "/api/ip":       lambda: self._api_ip(),
-        }
-        handler = routes.get(path)
-        if handler:
-            handler()
-        else:
-            self.send_404()
-
-    def _api_ip(self):
+    if path == "/api/phones":
+        return json_response(list_phones())
+    if path == "/api/ip":
         ip = get_local_ip()
-        self.send_json({"ip": ip, "url": f"http://{ip}:{PORT}"})
+        return json_response({"ip": ip, "url": f"http://{ip}:{PORT}"})
+    if path == "/api/recordings":
+        return json_response(teach_mod.list_recordings())
+    if path.startswith("/api/ram"):
+        try:
+            out = subprocess.check_output(
+                ["wmic", "OS", "get", "FreePhysicalMemory", "/Value"],
+                text=True, timeout=5
+            )
+            kb  = int([l for l in out.splitlines() if "=" in l][0].split("=")[1])
+            return json_response({"free_gb": round(kb / 1024 / 1024, 1)})
+        except Exception:
+            return json_response({"free_gb": 0})
 
-    # ── POST ──
-    def do_POST(self):
-        path = urllib.parse.urlparse(self.path).path
+    return r404()
 
-        if path.startswith("/api/phone/start/"):
-            idx = path.rsplit("/", 1)[-1]
-            if idx.isdigit():
-                ld("launch", "--index", idx)
-                self.send_json({"ok": True})
-            else:
-                self.send_json({"ok": False, "error": "invalid index"}, 400)
 
-        elif path.startswith("/api/phone/stop/"):
-            idx = path.rsplit("/", 1)[-1]
-            if idx.isdigit():
-                ld("quit", "--index", idx)
-                self.send_json({"ok": True})
-            else:
-                self.send_json({"ok": False, "error": "invalid index"}, 400)
+async def handle_post(path: str, body: str) -> bytes:
+    data = {}
+    if body:
+        try:
+            data = json.loads(body)
+        except Exception:
+            pass
 
-        elif path == "/api/start_all":
-            for p in list_phones():
-                if p["is_cpharm"] and not p["running"]:
-                    ld("launch", "--index", str(p["index"]))
-            self.send_json({"ok": True})
+    # ── Phone control ──
+    if path == "/api/start_all":
+        for p in list_phones():
+            if not p["running"]:
+                ld("launch", "--index", str(p["index"]))
+        await push_phones()
+        return json_response({"ok": True})
 
-        elif path == "/api/stop_all":
-            for p in list_phones():
-                if p["is_cpharm"] and p["running"]:
-                    ld("quit", "--index", str(p["index"]))
-            self.send_json({"ok": True})
+    if path == "/api/stop_all":
+        for p in list_phones():
+            if p["running"]:
+                ld("quit", "--index", str(p["index"]))
+        await push_phones()
+        return json_response({"ok": True})
 
-        elif path == "/api/restart_all":
-            phones = list_phones()
+    if path == "/api/clone":
+        phones = list_phones()
+        new_name = f"CPharm-{len(phones) + 1}"
+        ld("copy", "--name", new_name, "--from", "0")
+        await push_phones()
+        return json_response({"ok": True, "name": new_name})
+
+    start_m = path.removeprefix("/api/phone/start/")
+    if start_m != path and start_m.isdigit():
+        ld("launch", "--index", start_m)
+        await push_phones()
+        return json_response({"ok": True})
+
+    stop_m = path.removeprefix("/api/phone/stop/")
+    if stop_m != path and stop_m.isdigit():
+        ld("quit", "--index", stop_m)
+        await push_phones()
+        return json_response({"ok": True})
+
+    # ── APK install ──
+    if path == "/api/install":
+        apk_name = data.get("apk")
+        if not apk_name:
+            return json_response({"ok": False, "error": "no apk"}, 400)
+        apk_path = APK_DIR / apk_name
+        if not apk_path.exists():
+            return json_response({"ok": False, "error": "file not found"}, 400)
+
+        phones = list_phones()
+
+        async def install_all():
             for p in phones:
-                if p["is_cpharm"] and p["running"]:
-                    ld("quit", "--index", str(p["index"]))
-            time.sleep(3)
-            for p in phones:
-                if p["is_cpharm"]:
-                    ld("launch", "--index", str(p["index"]))
-            self.send_json({"ok": True})
-
-        elif path == "/api/clone":
-            phones = list_phones()
-            cpharm = [p for p in phones if p["is_cpharm"]]
-            new_name = f"CPharm-{len(cpharm) + 1}"
-            ld("copy", "--name", new_name, "--from", "0")
-            self.send_json({"ok": True, "name": new_name})
-
-        elif path == "/api/gpu_info":
-            # Returns how many phones the system can handle based on free RAM
-            try:
-                import ctypes
-                mem = ctypes.c_ulonglong(0)
-                ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(
-                    type('MEMORYSTATUSEX', (ctypes.Structure,), {
-                        '_fields_': [('dwLength', ctypes.c_ulong),
-                                     ('dwMemoryLoad', ctypes.c_ulong),
-                                     ('ullTotalPhys', ctypes.c_ulonglong),
-                                     ('ullAvailPhys', ctypes.c_ulonglong),
-                                     ('ullTotalPageFile', ctypes.c_ulonglong),
-                                     ('ullAvailPageFile', ctypes.c_ulonglong),
-                                     ('ullTotalVirtual', ctypes.c_ulonglong),
-                                     ('ullAvailVirtual', ctypes.c_ulonglong),
-                                     ('ullAvailExtendedVirtual', ctypes.c_ulonglong)]
-                    })()
-                ))
-            except Exception:
-                pass
-            # Simpler approach via wmic
-            try:
-                out = subprocess.check_output(
-                    ["wmic", "OS", "get", "FreePhysicalMemory", "/Value"],
-                    text=True, timeout=5
+                await broadcast({"type": "install_progress",
+                                 "phone_idx": p["index"], "status": "installing"})
+                device = f"emulator-{5554 + p['index'] * 2}"
+                subprocess.run(
+                    ["adb", "-s", device, "install", "-r", str(apk_path)],
+                    capture_output=True, timeout=120
                 )
-                free_kb = int([l for l in out.splitlines() if "=" in l][0].split("=")[1])
-                free_gb = free_kb / 1024 / 1024
-                max_phones = max(0, int(free_gb / 1.5))
-            except Exception:
-                free_gb = 0
-                max_phones = 0
-            self.send_json({"free_gb": round(free_gb, 1), "max_phones": max_phones})
+                await broadcast({"type": "install_progress",
+                                 "phone_idx": p["index"], "status": "done"})
+            await push_phones()
 
-        else:
-            self.send_404()
+        asyncio.create_task(install_all())
+        return json_response({"ok": True})
 
-    def do_OPTIONS(self):
-        """CORS preflight."""
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.end_headers()
+    # ── URL launcher ──
+    if path == "/api/open_url":
+        url     = data.get("url", "").strip()
+        stagger = int(data.get("stagger_secs", 0))
+        if not url:
+            return json_response({"ok": False, "error": "no url"}, 400)
+        phones = [p for p in list_phones() if p["running"]]
+
+        async def open_on_all():
+            for i, p in enumerate(phones):
+                if i > 0 and stagger > 0:
+                    await asyncio.sleep(stagger)
+                _adb(p["index"], "shell", "am", "start",
+                     "-a", "android.intent.action.VIEW",
+                     "-d", url)
+                await broadcast({"type": "log",
+                                 "msg": f"Opened {url} on {p['name']}"})
+
+        asyncio.create_task(open_on_all())
+        return json_response({"ok": True})
+
+    # ── Teach mode ──
+    if path == "/api/teach/start":
+        _teach_state["state"] = "recording"
+        rec_file = teach_mod.start_recording(1)
+        _teach_state["file"] = rec_file
+        await broadcast({"type": "teach_status", **_teach_state})
+        return json_response({"ok": True, "file": rec_file})
+
+    if path == "/api/teach/stop":
+        teach_mod.stop_recording()
+        _teach_state["state"] = "idle"
+        await broadcast({"type": "teach_status", **_teach_state})
+        return json_response({"ok": True, "file": _teach_state["file"]})
+
+    if path == "/api/teach/play":
+        rec   = data.get("file") or _teach_state.get("file")
+        delay = int(data.get("delay_secs", 60))
+        if not rec:
+            return json_response({"ok": False, "error": "no recording"}, 400)
+        phones = [p for p in list_phones() if p["index"] != 1]
+        _teach_state["state"] = "playing"
+        await broadcast({"type": "teach_status", **_teach_state})
+
+        def play():
+            teach_mod.replay_all(phones, rec, delay_secs=delay)
+
+        threading.Thread(target=play, daemon=True).start()
+        return json_response({"ok": True})
+
+    # ── Make phones look different (Tor + MAC) ──
+    if path == "/api/proxy/setup":
+        phones = list_phones()
+
+        async def setup_all():
+            await broadcast({"type": "log", "msg": "Setting up unique location per phone..."})
+            for p in phones:
+                identity = tor_manager.get_identity(p["index"])
+                socks_port = tor_manager.start_tor_for_phone(p["index"])
+                ld("modify", "--index", str(p["index"]),
+                   "--imei", identity["imei"])
+                ok = tor_manager.wait_for_tor(p["index"], timeout=30)
+                await broadcast({
+                    "type": "log",
+                    "msg": f"{p['name']}: {'ready' if ok else 'Tor timeout'} · port {socks_port}"
+                })
+            await broadcast({"type": "log", "msg": "All phones now look different!"})
+
+        asyncio.create_task(setup_all())
+        return json_response({"ok": True})
+
+    return r404()
+
+
+# ── WebSocket handler ─────────────────────────────────────────────────────────
+
+async def ws_handler(websocket):
+    _ws_clients.add(websocket)
+    try:
+        await push_phones()
+        async for _ in websocket:
+            pass
+    except Exception:
+        pass
+    finally:
+        _ws_clients.discard(websocket)
+
+
+# ── Auto-refresh loop ─────────────────────────────────────────────────────────
+
+async def auto_refresh():
+    while True:
+        await asyncio.sleep(10)
+        try:
+            await push_phones()
+        except Exception:
+            pass
+
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
+
+async def main():
     if not os.path.exists(LDPLAYER):
         print(f"\n  [!] LDPlayer not found at {LDPLAYER}")
         print("  [!] Install LDPlayer 9 from ldplayer.net\n")
@@ -232,14 +419,24 @@ if __name__ == "__main__":
         raise SystemExit(1)
 
     ip = get_local_ip()
-    server = ThreadedHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"\n  ╔══════════════════════════════════════╗")
-    print(f"  ║  CPharm Dashboard  •  port {PORT}       ║")
-    print(f"  ║  PC:    http://localhost:{PORT}        ║")
-    print(f"  ║  Phone: http://{ip}:{PORT}   ║")
-    print(f"  ╚══════════════════════════════════════╝")
-    print(f"\n  Ctrl+C to stop\n")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n  Dashboard stopped.")
+    ws_port = PORT + 1
+
+    http_server = await asyncio.start_server(handle_http, "0.0.0.0", PORT)
+    ws_server   = await serve(ws_handler, "0.0.0.0", ws_port)
+
+    print(f"\n  ╔══════════════════════════════════════════╗")
+    print(f"  ║   CPharm v2  ·  ready                    ║")
+    print(f"  ║   PC:    http://localhost:{PORT}           ║")
+    print(f"  ║   Phone: http://{ip}:{PORT}       ║")
+    print(f"  ╚══════════════════════════════════════════╝\n")
+
+    async with http_server, ws_server:
+        await asyncio.gather(
+            http_server.serve_forever(),
+            ws_server.wait_closed(),
+            auto_refresh(),
+        )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

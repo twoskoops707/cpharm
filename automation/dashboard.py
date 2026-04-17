@@ -360,19 +360,19 @@ async def handle_post(path: str, body: bytes) -> bytes:
         addr = data.get("address", "").strip()
         if not addr:
             return json_err("no address provided")
-        # Validate: IP:port or just IP (we append :5555)
         if ":" not in addr:
             addr = addr + ":5555"
-        if not re.match(r"^[\d.]+:\d{2,5}$", addr):
-            return json_err("invalid address — use format 192.168.x.x:5555")
+        # Allow IPv4, localhost, or simple hostnames with a port
+        if not re.match(r"^[a-zA-Z0-9._-]+:\d{2,5}$", addr):
+            return json_err("invalid address")
         out = _adb_global("connect", addr, timeout=10)
         await push_phones()
         return json_ok({"ok": True, "result": out})
 
     if path == "/api/devices/disconnect":
         serial = data.get("serial", "").strip()
-        if not serial:
-            return json_err("no serial provided")
+        if not serial or not re.match(r"^[a-zA-Z0-9._:\-]+$", serial):
+            return json_err("invalid serial")
         _adb_global("disconnect", serial, timeout=5)
         await push_phones()
         return json_ok({"ok": True})
@@ -456,12 +456,24 @@ async def handle_post(path: str, body: bytes) -> bytes:
 
     # ── URL launcher ──
     if path == "/api/open_url":
-        url     = data.get("url", "").strip()
-        stagger = int(data.get("stagger_secs", 0))
+        url          = data.get("url", "").strip()
+        stagger      = int(data.get("stagger_secs", 0))
+        auto_rotate  = bool(data.get("auto_rotate", False))
+        dwell_secs   = int(data.get("dwell_secs", 30))
         if not url.startswith(("http://", "https://")):
             return json_err("URL must start with http:// or https://")
         phones = [p for p in list_phones() if p["running"]]
         loop   = asyncio.get_event_loop()
+
+        def _rotate_after(p: dict, idx: int, delay: int):
+            time.sleep(delay)
+            _adb(p["serial"], "shell", "am", "force-stop", "com.android.browser")
+            _adb(p["serial"], "shell", "am", "force-stop", "com.chrome.beta")
+            _adb(p["serial"], "shell", "am", "force-stop", "com.android.chrome")
+            result = tor_manager.rotate_identity_adb(p["serial"], idx)
+            msg = (f"{p['name']}: identity rotated · "
+                   f"new Tor circuit={'yes' if result.get('circuit_rotated') else 'no'}")
+            asyncio.run_coroutine_threadsafe(broadcast({"type": "log", "msg": msg}), loop)
 
         async def open_all():
             for i, p in enumerate(phones):
@@ -470,6 +482,10 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 _adb(p["serial"], "shell", "am", "start",
                      "-a", "android.intent.action.VIEW", "-d", url)
                 await broadcast({"type": "log", "msg": f"Opened on {p['name']}"})
+                if auto_rotate:
+                    threading.Thread(
+                        target=_rotate_after, args=(p, i, dwell_secs), daemon=True
+                    ).start()
 
         asyncio.create_task(open_all())
         return json_ok({"ok": True})
@@ -529,6 +545,23 @@ async def handle_post(path: str, body: bytes) -> bytes:
             )
 
         threading.Thread(target=setup, daemon=True).start()
+        return json_ok({"ok": True})
+
+    if path == "/api/proxy/rotate":
+        phones = [p for p in list_phones() if p["running"]]
+        loop   = asyncio.get_event_loop()
+
+        def rotate_all():
+            for i, p in enumerate(phones):
+                result = tor_manager.rotate_identity_adb(p["serial"], i)
+                msg = (f"{p['name']}: rotated · "
+                       f"Tor={'yes' if result.get('circuit_rotated') else 'no'}")
+                asyncio.run_coroutine_threadsafe(broadcast({"type": "log", "msg": msg}), loop)
+            asyncio.run_coroutine_threadsafe(
+                broadcast({"type": "log", "msg": "All phones have new identities!"}), loop
+            )
+
+        threading.Thread(target=rotate_all, daemon=True).start()
         return json_ok({"ok": True})
 
     if path == "/api/proxy/teardown":

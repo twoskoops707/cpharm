@@ -348,7 +348,7 @@ button:disabled{opacity:.35;cursor:not-allowed;transform:none!important}
     <line x1="12" y1="18" x2="12.01" y2="18"/>
   </svg>
   <h3>No phones yet</h3>
-  <p>Tap <strong>New Phone</strong> to create your first one</p>
+  <p>Click <strong>Connect Device</strong> or <strong>Scan for Devices</strong> to add phones</p>
 </div>
 
 <div class="section">
@@ -384,6 +384,17 @@ button:disabled{opacity:.35;cursor:not-allowed;transform:none!important}
     <span class="stagger-lbl">Every</span>
     <input type="number" id="custom-delay" value="10" min="1" max="3600">
     <span class="stagger-lbl">minutes</span>
+  </div>
+  <div class="stagger-row" style="margin-top:.5rem;gap:.75rem;align-items:center">
+    <label style="display:flex;align-items:center;gap:.4rem;font-size:.8rem;color:var(--t2);cursor:pointer">
+      <input type="checkbox" id="auto-rotate-toggle" style="width:1rem;height:1rem">
+      Auto-rotate identity after session
+    </label>
+    <span id="dwell-wrap" style="display:none;align-items:center;gap:.4rem;font-size:.8rem;color:var(--t2)">
+      · dwell
+      <input type="number" id="dwell-secs" value="30" min="5" max="3600" style="width:4rem;padding:.2rem .4rem;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--t1);font-size:.8rem">
+      sec then rotate
+    </span>
   </div>
 </div>
 
@@ -741,10 +752,11 @@ function onInstallProgress(msg) {
   const pipId = 'pip-card-' + (msg.serial || '').replace(/[^a-zA-Z0-9]/g, '_');
   if (msg.status === 'done') {
     installDone++;
-    const pct = Math.round((installDone / Math.max(phones.length, 1)) * 100);
+    const runningCount = phones.filter(p => p.running).length;
+    const pct = Math.round((installDone / Math.max(runningCount, 1)) * 100);
     document.getElementById('progress-fill').style.width = pct + '%';
-    setText('progress-lbl', 'Installed on ' + installDone + ' of ' + phones.length + ' phones');
-    if (installDone >= phones.length) {
+    setText('progress-lbl', 'Installed on ' + installDone + ' of ' + runningCount + ' phones');
+    if (installDone >= runningCount) {
       setTimeout(() => { document.getElementById('install-progress').style.display = 'none'; toast('App installed on all phones!', 'ok'); }, 800);
     }
     const pip = document.getElementById(pipId);
@@ -770,14 +782,22 @@ document.querySelectorAll('.stagger-opt').forEach(opt => {
   });
 });
 
+document.getElementById('auto-rotate-toggle').addEventListener('change', function() {
+  document.getElementById('dwell-wrap').style.display = this.checked ? 'flex' : 'none';
+});
+
 async function launchUrl() {
   const url = document.getElementById('url-input').value.trim();
   if (!url) { toast('Paste a web address first', 'err'); return; }
   let secs = staggerSecs;
   if (secs === -1) secs = (+document.getElementById('custom-delay').value || 5) * 60;
+  const autoRotate = document.getElementById('auto-rotate-toggle').checked;
+  const dwellSecs  = +document.getElementById('dwell-secs').value || 30;
   try {
-    await api('/api/open_url', 'POST', { url, stagger_secs: secs });
-    toast(secs ? 'Opening on each phone, ' + secs + 's apart' : 'Opening on all phones', 'ok');
+    await api('/api/open_url', 'POST', { url, stagger_secs: secs, auto_rotate: autoRotate, dwell_secs: dwellSecs });
+    let msg = secs ? 'Opening on each phone, ' + secs + 's apart' : 'Opening on all phones';
+    if (autoRotate) msg += ' · identity rotates after ' + dwellSecs + 's';
+    toast(msg, 'ok');
   } catch(e) { toast('Could not open URL', 'err'); }
 }
 

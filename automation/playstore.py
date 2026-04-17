@@ -56,11 +56,32 @@ def _wake(idx: int):
 
 
 def open_store_page(idx: int, package: str) -> bool:
-    """Open the Play Store listing for a specific package."""
+    """Open the Play Store listing for a specific package (index-based)."""
     _wake(idx)
     out = _intent(idx, f"market://details?id={package}")
     time.sleep(2)
     return "Error" not in out
+
+
+def open_store_page_serial(serial: str, package: str) -> bool:
+    """Open the Play Store listing for a specific package (serial-based)."""
+    import subprocess
+    try:
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "input", "keyevent", "224"],
+            capture_output=True, timeout=5
+        )
+        time.sleep(0.4)
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "am", "start",
+             "-a", "android.intent.action.VIEW",
+             "-d", f"market://details?id={package}"],
+            capture_output=True, timeout=10
+        )
+        time.sleep(2)
+        return True
+    except Exception:
+        return False
 
 
 def search_store(idx: int, query: str) -> bool:

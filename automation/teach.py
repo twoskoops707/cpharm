@@ -1,5 +1,6 @@
 """
-Teach Mode — record taps on Phone 1, replay on all others staggered.
+Teach Mode — record taps on the first phone, replay on all others staggered.
+Uses ADB device serials — works with any connected Android device.
 """
 
 import json
@@ -18,22 +19,29 @@ _recording_thread: threading.Thread | None = None
 _current_file: Path | None = None
 
 
-def _device(phone_idx: int) -> str:
-    return f"emulator-{5554 + phone_idx * 2}"
+def _adb(serial: str, *args) -> str:
+    try:
+        r = subprocess.run(
+            ["adb", "-s", serial, *args],
+            capture_output=True, text=True, timeout=20
+        )
+        return r.stdout.strip()
+    except Exception:
+        return ""
 
 
-def start_recording(phone_idx: int = 1) -> str:
+def start_recording(serial: str) -> str:
     global _recording_active, _recording_thread, _current_file
 
     ts = int(time.time())
-    _current_file    = REC_DIR / f"session_{ts}.rec"
+    _current_file     = REC_DIR / f"session_{ts}.rec"
     _recording_active = True
     events: list[dict] = []
     start_time = time.time()
 
     def record():
         proc = subprocess.Popen(
-            ["adb", "-s", _device(phone_idx), "shell", "getevent", "-lt"],
+            ["adb", "-s", serial, "shell", "getevent", "-lt"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
         )
         try:
@@ -60,9 +68,8 @@ def stop_recording() -> str | None:
     return str(_current_file) if _current_file else None
 
 
-def replay_on_phone(phone_idx: int, recording_path: str):
+def replay_on_phone(serial: str, recording_path: str):
     data   = json.loads(Path(recording_path).read_text())
-    device = _device(phone_idx)
     prev_t = 0.0
     for entry in data:
         delay = entry["t"] - prev_t
@@ -73,7 +80,7 @@ def replay_on_phone(phone_idx: int, recording_path: str):
         if len(parts) >= 4:
             dev, etype, ecode, evalue = parts[0].rstrip(":"), parts[1], parts[2], parts[3]
             subprocess.run(
-                ["adb", "-s", device, "shell", "sendevent", dev, etype, ecode, evalue],
+                ["adb", "-s", serial, "shell", "sendevent", dev, etype, ecode, evalue],
                 capture_output=True, timeout=5
             )
 
@@ -88,7 +95,7 @@ def replay_all(
         for i, phone in enumerate(phones):
             if i > 0:
                 time.sleep(delay_secs)
-            replay_on_phone(phone["index"], recording_path)
+            replay_on_phone(phone["serial"], recording_path)
         if on_complete:
             on_complete()
 

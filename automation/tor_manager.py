@@ -111,6 +111,21 @@ def apply_proxy(phone_idx: int):
         "--proxy-port", str(port))
 
 
+def apply_identity_adb(serial: str, phone_idx: int) -> dict:
+    """ADB-based proxy setup — works without LDPlayer."""
+    import subprocess
+    port = BASE_PORT + phone_idx
+    try:
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "settings", "put", "global",
+             "http_proxy", f"127.0.0.1:{port}"],
+            capture_output=True, timeout=10
+        )
+    except Exception:
+        pass
+    return {"socks_port": port}
+
+
 def wait_for_tor(phone_idx: int, timeout: int = 30) -> bool:
     import socket
     port     = BASE_PORT + phone_idx

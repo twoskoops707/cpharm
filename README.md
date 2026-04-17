@@ -1,139 +1,211 @@
-# CPharm — Virtual Android Phone Farm
+# CPharm — Virtual Phone Farm
 
-Run many Android phones at once and test your app or website across all of them.
-Control everything from your PC browser or your phone.
-
----
-
-## What You Need
-
-- A Windows 10 or 11 PC **or** a Kali Linux machine
-- At least 8 GB RAM (16 GB+ for more phones)
-- Internet connection for the one-time setup
+Run a bunch of fake Android phones on your Windows PC and control them all from your browser — even from your real phone.
 
 ---
 
-## Step 1 — Get the Code
+## Before You Start — What You Need
 
-Open a terminal (or Command Prompt) and run:
+- A Windows 10 or 11 PC
+- At least 8 GB of RAM (16 GB is better — each fake phone uses about 1.5 GB)
+- An internet connection for the one-time setup
+
+---
+
+## Step 1 — Install Git (so you can download the code)
+
+1. Go to **git-scm.com/download/win**
+2. Click the big download button
+3. Run the installer — just keep clicking **Next** on every screen, don't change anything
+4. When it's done, close the installer
+
+---
+
+## Step 2 — Download CPharm
+
+1. Press the **Windows key** on your keyboard
+2. Type **cmd** and press **Enter** — a black window opens
+3. Copy and paste this exactly, then press **Enter**:
 
 ```
 git clone https://github.com/twoskoops707/cpharm.git
+```
+
+4. Wait for it to finish — you'll see files downloading
+5. Now type this and press **Enter**:
+
+```
 cd cpharm
-git checkout v2
 ```
 
-This downloads CPharm and switches to the latest version.
+You're now inside the CPharm folder.
 
 ---
 
-## Step 2 — Install LDPlayer (Windows only)
+## Step 3 — Install LDPlayer (the fake phone software)
 
-> Kali Linux users — skip to the Kali section below.
-
-1. Go to **ldplayer.net**
-2. Download **LDPlayer 9** and run the installer
-3. Open LDPlayer once, let it finish loading, then close it
+1. Open your browser and go to **ldplayer.net**
+2. Click the big green **Download** button — download **LDPlayer 9**
+3. Run the file that downloaded and click through the installer
+4. LDPlayer will open by itself — wait for it to finish loading (you'll see a home screen)
+5. Close LDPlayer — you don't need it open right now
 
 ---
 
-## Step 3 — Install Python
+## Step 4 — Install Python (runs the dashboard)
 
-**Windows:**
 1. Go to **python.org/downloads**
-2. Download Python 3.11 or newer
-3. Run the installer — check the box that says **"Add Python to PATH"**
-
-**Kali Linux:**
-```bash
-sudo apt update && sudo apt install python3 python3-pip -y
-```
+2. Click the big yellow **Download Python** button
+3. Run the installer
+4. **IMPORTANT:** Before clicking Install, check the box that says **"Add Python to PATH"** at the bottom — if you miss this, nothing will work
+5. Click **Install Now** and wait for it to finish
 
 ---
 
-## Step 4 — Install the Required Packages
+## Step 5 — Install the Required Pieces
 
-**Windows** — double-click `START_HERE.bat` and it handles this automatically.
+Still in that black cmd window from Step 2? Good.
 
-**Kali Linux:**
-```bash
-pip3 install -r requirements.txt
+Type this and press **Enter**:
+
 ```
+pip install -r requirements.txt
+```
+
+Wait for it to finish. You'll see a bunch of text scrolling — that's normal.
 
 ---
 
-## Step 5 — Set Up Tor (for the "look different" feature)
+## Step 6 — Set Up Tor (makes each phone look like a different person)
 
-You have two options — pick the easiest one:
+Pick ONE of these. Option A is easiest.
 
-### Option A — Use Tor Browser (easiest, already have it)
-If Tor Browser is already installed and open on your machine, CPharm will use it automatically. Nothing else needed.
+### Option A — Tor Browser (use this one)
 
-### Option B — Download Tor Expert Bundle (Windows, no Tor Browser)
-1. Go to **torproject.org/download** → scroll to **Tor Expert Bundle**
-2. Download and unzip it
-3. Copy the contents into the `automation\tor\` folder inside CPharm
+1. Go to **torproject.org**
+2. Download and install **Tor Browser**
+3. Open Tor Browser and click **Connect**
+4. Leave it open and running in the background — CPharm uses it automatically
 
-### Option C — Kali Linux (Tor is already installed)
-```bash
-sudo apt install tor -y
-sudo service tor start
-```
-CPharm will detect it automatically.
+### Option B — No browser? Use the Expert Bundle
+
+1. Go to **torproject.org/download**
+2. Scroll down to **Tor Expert Bundle** — download the Windows version
+3. Unzip the file
+4. Copy everything inside into the `automation\tor\` folder inside cpharm
+   - The file `tor.exe` should end up at `cpharm\automation\tor\tor.exe`
 
 ---
 
-## Step 6 — Start CPharm
+## Step 7 — Start CPharm
 
-**Windows:**
-```
-Double-click START_HERE.bat
-```
+In the black cmd window, type this and press **Enter**:
 
-**Kali Linux:**
-```bash
+```
 cd automation
-python3 dashboard.py
+python dashboard.py
 ```
+
+You'll see something like:
+
+```
+  ╔══════════════════════════════════════════╗
+  ║   CPharm  •  ready                       ║
+  ║                                          ║
+  ║   On this PC:  http://localhost:8080     ║
+  ║   On phone:    http://192.168.1.x:8080  ║
+  ╚══════════════════════════════════════════╝
+```
+
+**Do not close this window.** It needs to stay open the whole time CPharm is running.
 
 ---
 
-## Step 7 — Open the Dashboard
+## Step 8 — Open the Dashboard
 
-Once it's running, open your browser and go to:
+Open any browser (Chrome, Edge, Firefox) and go to:
 
-- **On this PC:** `http://localhost:8080`
-- **On your phone:** `http://YOUR-PC-IP:8080`
+```
+http://localhost:8080
+```
 
-To find your PC's IP address: run `scripts\find_my_ip.bat` on Windows, or run `ip a` on Kali.
+You'll see the CPharm dashboard.
+
+**From your phone:** Connect your phone to the same WiFi as your PC, then open your phone's browser and type the address shown on the "On phone:" line in the cmd window.
 
 ---
 
 ## What You Can Do
 
-### Your Phones
-All your virtual phones appear as cards. Green = on, grey = off.
-Tap **Start** or **Stop** on any card. Use **New Phone** to clone another one.
+### Create Phones
+Tap **New Phone** to add a virtual phone. Each one shows as a card.
+Green = on. Grey = off. Tap **Start** / **Stop** to control each one.
 
 ### Install an App
-Drop an APK file onto the box (or tap to pick one). Tap **Install All** — it uploads the file and installs it on every phone. The dashboard tracks which version is on each phone.
+Drop your `.apk` file onto the box (or tap it to pick a file), then tap **Install All**.
+The app installs on every phone. The dashboard tracks which version each phone has.
 
-### Open a Website
-Paste any web address and tap **Open**. Choose:
+### Open a Website on All Phones
+Paste a web address and tap **Open**. Choose:
 - **All at once** — every phone opens it at the same time
-- **1 min / 5 min / Custom** — phones open it one by one with a gap between each
+- **1 min / 5 min / Custom** — phones open it one by one with a gap in between
 
-### Teach Mode
-Show the farm what to do by doing it once on Phone 1:
-1. Tap **Start Recording**
-2. Do your steps on Phone 1 (open a site, tap around, fill in forms, anything)
-3. Tap **Stop**
-4. Tap **Play on All Phones** — every other phone copies those steps one after another
-
-Set how many seconds to wait between each phone.
+### Teach Mode — Show it Once, it Does the Rest
+1. Make sure Phone 1 is on
+2. Tap **Start Recording**
+3. Do your steps on Phone 1 — tap around, fill in forms, open things
+4. Tap **Stop**
+5. Tap **Play on All Phones** — every other phone copies what you did, one at a time
 
 ### Make Each Phone Look Different
-Tap **Set Up Now** — each phone gets routed through Tor so every phone appears to come from a different country. Each phone also gets a unique device ID. To websites, they look like completely different people.
+Tap **Set Up Now** in the locations section.
+Each phone gets routed through Tor and gets a unique device ID — to websites, they look like completely different people from different countries.
+
+---
+
+## App Tester (Pre-Launch Testing)
+
+Tap **App Tester** in the top bar. This opens a separate page for testing your app before you publish it to the Play Store.
+
+**Launch App** — type your app's package name and open it on all phones at once.
+
+**Type on Phones** — send keyboard input to all phones or just one. Great for filling in forms, typing search queries, anything that needs a keyboard.
+
+**Quick Actions** — one-tap buttons: swipe up/down/left/right, take a screenshot, go home, lock/wake the screen, clear recent apps. Runs on all phones at once.
+
+**Test Loop** — phones automatically switch between your website and your app on a timer, repeating as many times as you want. Good for testing ad impressions and app behavior at the same time.
+
+**Pre-Launch Checklist** — a list of things Google checks before approving your app. Tap each item to mark it done. Your progress saves automatically.
+
+**RAM Bar** — shows how much of your computer's memory is in use. Yellow = getting full. Red = stop some phones now before your computer freezes.
+
+> **To find your package name:** Open Android Studio and look in your `build.gradle` for `applicationId`. It looks like `com.yourname.app`.
+
+---
+
+## How Many Phones Can You Run?
+
+| PC RAM | Safe limit |
+|--------|-----------|
+| 8 GB   | 3 phones  |
+| 16 GB  | 8 phones  |
+| 32 GB  | 18 phones |
+
+The App Tester page shows a live RAM bar and tells you your exact safe limit. Stop some phones if it turns yellow.
+
+---
+
+## Every Time You Come Back
+
+You don't reinstall anything. Just do this:
+
+1. Open a cmd window
+2. Type:
+```
+cd cpharm\automation
+python dashboard.py
+```
+3. Open your browser to `http://localhost:8080`
 
 ---
 
@@ -141,44 +213,30 @@ Tap **Set Up Now** — each phone gets routed through Tor so every phone appears
 
 ```
 cpharm/
-  apks/              ← Drop APK files here (or use the dashboard)
+  apks/              ← Drop APK files here
   automation/
-    dashboard.py     ← The server
-    dashboard.html   ← The page you see in the browser
-    tor/             ← Tor Expert Bundle goes here (if using Option B above)
-    recordings/      ← Teach Mode recordings are saved here
-    config.py        ← Settings (LDPlayer path, ports)
-  setup/             ← First-time setup scripts
-  scripts/           ← Helper scripts (clone phones, find IP, etc.)
-  START_HERE.bat     ← Start here every time (Windows)
+    dashboard.py     ← The server — run this every time
+    dashboard.html   ← Main dashboard page
+    playstore.html   ← App Tester page
+    playstore.py     ← App testing backend
+    tor_manager.py   ← Tor and identity spoofing
+    teach.py         ← Teach Mode recording
+    config.py        ← Paths and ports
+    tor/             ← Tor Expert Bundle goes here (Option B only)
+    recordings/      ← Saved Teach Mode sessions
   requirements.txt   ← Python packages
+  README.md          ← This file
 ```
 
 ---
 
-## Kali Linux Notes
+## Something Went Wrong?
 
-LDPlayer does not run on Linux. On Kali, CPharm works as a **controller and test runner** — you point it at an Android device connected via ADB (USB or network) or use an Android emulator like **Waydroid**:
-
-```bash
-# Install Waydroid (Android on Linux)
-sudo apt install waydroid -y
-sudo waydroid init
-waydroid session start
-```
-
-Then ADB connects to it at `localhost:5555`:
-```bash
-adb connect localhost:5555
-```
-
-CPharm will detect and control it the same way it controls LDPlayer phones.
-
----
-
-## Branches
-
-| Branch | What it is |
-|--------|------------|
-| `master` | Original version |
-| `v2` | Current version — use this one |
+| Problem | Fix |
+|---------|-----|
+| `python` not found | Reinstall Python — check "Add Python to PATH" this time |
+| `pip` not found | Same fix as above |
+| Dashboard won't open in browser | Make sure `python dashboard.py` is still running in the cmd window |
+| No phones showing up | Open LDPlayer first, then refresh the dashboard |
+| Can't reach it from your phone | Your phone and PC must be on the same WiFi |
+| Everything is slow or freezing | Too many phones on — stop some from the dashboard |

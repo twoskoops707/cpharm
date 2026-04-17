@@ -2,609 +2,928 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>CPharm</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#00e676">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="CPharm">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=IBM+Plex+Mono:wght@400;600&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-/* ── Reset & tokens ───────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-:root {
-  --g:   #00e676;
-  --g2:  #00c853;
-  --r:   #ff5252;
-  --y:   #ffd740;
-  --bg0: #080b0f;
-  --bg1: #0d1117;
-  --bg2: #161b22;
-  --bg3: #1f2733;
-  --bd:  #2a3140;
-  --t0:  #e6edf3;
-  --t1:  #9198a1;
-  --t2:  #5a6270;
-  --mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-  --sans: system-ui, -apple-system, sans-serif;
-  --rad: 10px;
-  --shadow: 0 4px 24px #0008;
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --g:#00e676;--g2:#00c853;--g-dim:#00e67618;--g-glow:#00e67640;
+  --r:#f43f5e;--y:#f59e0b;--b:#3b82f6;
+  --bg0:#070a0d;--bg1:#0c1118;--bg2:#111822;--bg3:#18222e;
+  --bd:#1e2d3d;--bd2:#263447;
+  --t0:#e2e8f0;--t1:#94a3b8;--t2:#475569;
+  --font-head:'Syne',sans-serif;
+  --font-mono:'IBM Plex Mono',monospace;
+  --font-body:'DM Sans',sans-serif;
+  --rad:12px;--rad-sm:8px;
+  --shadow:0 8px 32px #00000060;
 }
-
-html { font-size: 15px; }
-body {
-  background: var(--bg0);
-  color: var(--t0);
-  font-family: var(--sans);
-  min-height: 100dvh;
-  overflow-x: hidden;
+html{font-size:15px;scroll-behavior:smooth}
+body{
+  background:var(--bg0);color:var(--t0);
+  font-family:var(--font-body);min-height:100dvh;overflow-x:hidden;
 }
-
-/* ── Layout ───────────────────────────────────────────────── */
-#app { display: flex; flex-direction: column; min-height: 100dvh; }
-
-header {
-  position: sticky; top: 0; z-index: 100;
-  background: #080b0fcc;
-  backdrop-filter: blur(16px);
-  border-bottom: 1px solid var(--bd);
-  padding: 0 16px;
-  height: 56px;
-  display: flex; align-items: center; justify-content: space-between;
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+  opacity:.7;
 }
+#app{position:relative;z-index:1}
 
-.logo {
-  font-family: var(--mono);
-  font-size: 1rem; font-weight: 700;
-  letter-spacing: .08em;
-  color: var(--g);
-  display: flex; align-items: center; gap: 8px;
+header{
+  position:sticky;top:0;z-index:100;
+  background:#070a0dcc;backdrop-filter:blur(20px) saturate(180%);
+  border-bottom:1px solid var(--bd);
+  height:56px;padding:0 16px;
+  display:flex;align-items:center;justify-content:space-between;
 }
-.logo-bracket { color: var(--t2); font-weight: 300; }
-.logo svg { width: 18px; height: 18px; }
+.logo{
+  font-family:var(--font-head);font-size:1.1rem;font-weight:800;
+  color:var(--g);letter-spacing:.04em;
+  display:flex;align-items:center;gap:10px;
+}
+.logo-dot{
+  width:8px;height:8px;border-radius:50%;background:var(--g);
+  box-shadow:0 0 8px var(--g);animation:pulse-dot 2s ease infinite;
+}
+@keyframes pulse-dot{
+  0%,100%{box-shadow:0 0 6px var(--g)}
+  50%{box-shadow:0 0 16px var(--g),0 0 28px var(--g-glow)}
+}
+.header-r{display:flex;align-items:center;gap:8px}
+.ip-chip{
+  font-family:var(--font-mono);font-size:.68rem;color:var(--t1);
+  background:var(--bg2);border:1px solid var(--bd);border-radius:6px;
+  padding:4px 10px;cursor:pointer;transition:all .15s;
+}
+.ip-chip:hover{border-color:var(--g);color:var(--g)}
+.ws-dot{width:7px;height:7px;border-radius:50%;background:var(--t2);transition:background .3s}
+.ws-dot.connected{background:var(--g);box-shadow:0 0 6px var(--g)}
+.ws-dot.error{background:var(--r)}
 
-.header-right { display: flex; align-items: center; gap: 10px; }
+#stats{
+  display:grid;grid-template-columns:repeat(4,1fr);
+  gap:1px;background:var(--bd);border-bottom:1px solid var(--bd);
+}
+.stat{background:var(--bg1);padding:12px 14px;display:flex;flex-direction:column;gap:3px}
+.stat-n{
+  font-family:var(--font-mono);font-size:1.4rem;font-weight:600;
+  color:var(--t0);line-height:1;transition:color .3s;
+}
+.stat-n.green{color:var(--g)}.stat-n.yellow{color:var(--y)}
+.stat-lbl{font-size:.6rem;color:var(--t2);text-transform:uppercase;letter-spacing:.1em;font-family:var(--font-mono)}
 
-.ip-badge {
-  font-family: var(--mono);
-  font-size: .7rem; color: var(--t1);
-  background: var(--bg2); border: 1px solid var(--bd);
-  border-radius: 6px; padding: 4px 8px;
-  cursor: pointer; user-select: all;
-}
-.ip-badge:hover { border-color: var(--g); color: var(--g); }
-
-.refresh-btn {
-  background: none; border: 1px solid var(--bd);
-  border-radius: 8px; padding: 6px 8px;
-  color: var(--t1); cursor: pointer;
-  display: flex; align-items: center;
-  transition: all .15s;
-}
-.refresh-btn:hover { border-color: var(--g); color: var(--g); }
-.refresh-btn svg { width: 16px; height: 16px; }
-.refresh-btn.spinning svg { animation: spin .6s linear infinite; }
-
-/* ── Stats bar ────────────────────────────────────────────── */
-#stats {
-  display: grid; grid-template-columns: repeat(4, 1fr);
-  gap: 1px; background: var(--bd);
-  border-bottom: 1px solid var(--bd);
-}
-.stat {
-  background: var(--bg1);
-  padding: 12px 14px;
-  display: flex; flex-direction: column; gap: 2px;
-}
-.stat-val {
-  font-family: var(--mono);
-  font-size: 1.25rem; font-weight: 700;
-  color: var(--t0); line-height: 1;
-}
-.stat-val.green { color: var(--g); }
-.stat-val.yellow { color: var(--y); }
-.stat-label { font-size: .65rem; color: var(--t2); text-transform: uppercase; letter-spacing: .06em; }
-
-/* ── Global controls ──────────────────────────────────────── */
-#controls {
-  padding: 14px 16px;
-  display: flex; gap: 10px; flex-wrap: wrap;
-  border-bottom: 1px solid var(--bd);
-  background: var(--bg1);
+.section{padding:14px;border-bottom:1px solid var(--bd)}
+.section-title{
+  font-family:var(--font-mono);font-size:.62rem;font-weight:600;
+  color:var(--t2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px;
 }
 
-button {
-  font-family: var(--sans);
-  font-size: .82rem; font-weight: 600;
-  border: none; border-radius: 8px;
-  padding: 9px 16px; cursor: pointer;
-  display: inline-flex; align-items: center; gap: 6px;
-  transition: filter .15s, transform .1s;
-  white-space: nowrap;
+button{
+  font-family:var(--font-body);font-size:.82rem;font-weight:600;
+  border:none;border-radius:var(--rad-sm);padding:10px 16px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;
+  transition:filter .15s,transform .1s,box-shadow .15s;white-space:nowrap;
 }
-button:active { transform: scale(.96); }
-button:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+button:active{transform:scale(.96)}
+button:disabled{opacity:.35;cursor:not-allowed;transform:none!important}
+.btn-g{background:var(--g);color:#000}
+.btn-g:hover{filter:brightness(1.1);box-shadow:0 0 20px var(--g-glow)}
+.btn-r{background:var(--r);color:#fff}.btn-r:hover{filter:brightness(1.1)}
+.btn-b{background:var(--b);color:#fff}
+.btn-b:hover{filter:brightness(1.1);box-shadow:0 0 18px #3b82f640}
+.btn-ghost{background:var(--bg3);color:var(--t0);border:1px solid var(--bd)}
+.btn-ghost:hover{border-color:var(--t1)}
+.btn-sm{padding:7px 12px;font-size:.75rem;border-radius:7px}
 
-.btn-green  { background: var(--g);  color: #000; }
-.btn-green:hover  { filter: brightness(1.1); }
-.btn-red    { background: var(--r);  color: #fff; }
-.btn-red:hover    { filter: brightness(1.15); }
-.btn-ghost  { background: var(--bg3); color: var(--t0); border: 1px solid var(--bd); }
-.btn-ghost:hover  { border-color: var(--t1); }
-
-/* ── Grid ─────────────────────────────────────────────────── */
-#grid {
-  padding: 14px 12px;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 10px;
-  flex: 1;
+#controls{
+  display:flex;gap:8px;flex-wrap:wrap;
+  padding:12px 14px;border-bottom:1px solid var(--bd);background:var(--bg1);
 }
 
-/* ── Phone card ───────────────────────────────────────────── */
-.card {
-  background: var(--bg2);
-  border: 1px solid var(--bd);
-  border-radius: var(--rad);
-  overflow: hidden;
-  animation: slideIn .25s ease both;
-  transition: border-color .2s;
+#grid{
+  padding:14px;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;
 }
-.card.running { border-color: #00e67630; }
-.card:hover   { border-color: var(--t2); }
+.card{
+  background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad);
+  overflow:hidden;animation:slideUp .3s ease both;
+  transition:border-color .25s,box-shadow .25s;
+}
+.card.on{border-color:#00e67628;box-shadow:0 0 0 1px #00e67610,inset 0 1px 0 #00e67618}
+.card:hover{border-color:var(--bd2)}
+.card-head{padding:14px;display:flex;align-items:center;gap:12px}
+.phone-icon{
+  width:32px;height:32px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  background:var(--bg3);border:1px solid var(--bd);border-radius:8px;
+}
+.phone-icon svg{width:16px;height:16px;color:var(--t1);transition:color .3s}
+.card.on .phone-icon svg{color:var(--g)}
+.card-info{flex:1;min-width:0}
+.card-name{
+  font-family:var(--font-mono);font-size:.85rem;font-weight:600;
+  color:var(--t0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.card-status{
+  font-size:.68rem;color:var(--t2);margin-top:2px;
+  font-family:var(--font-mono);display:flex;align-items:center;gap:5px;
+}
+.card.on .card-status{color:var(--g)}
+.status-ring{width:6px;height:6px;border-radius:50%;background:var(--t2);flex-shrink:0}
+.card.on .status-ring{background:var(--g);animation:ring-pulse 2s ease infinite}
+@keyframes ring-pulse{
+  0%{box-shadow:0 0 0 0 var(--g-glow)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}
+}
+.card-foot{padding:0 14px 12px;display:flex;gap:6px;align-items:center;justify-content:space-between}
+.app-chip{
+  font-family:var(--font-mono);font-size:.62rem;
+  background:var(--bg3);color:var(--t2);border:1px solid var(--bd);
+  border-radius:4px;padding:2px 7px;max-width:160px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.app-chip.has-app{background:var(--g-dim);color:var(--g);border-color:#00e67630}
 
-.card-top {
-  padding: 14px;
-  display: flex; align-items: center; gap: 12px;
+#drop-zone{
+  border:2px dashed var(--bd2);border-radius:var(--rad);padding:20px;
+  text-align:center;cursor:pointer;background:var(--bg1);
+  transition:border-color .2s,background .2s;
 }
+#drop-zone:hover,.drag-over{border-color:var(--g)!important;background:var(--g-dim)!important}
+#drop-zone p{font-size:.82rem;color:var(--t1);line-height:1.6}
+#drop-zone span{font-size:.7rem;color:var(--t2)}
+#apk-list{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.apk-row{
+  background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad-sm);
+  padding:10px 12px;display:flex;align-items:center;gap:10px;
+}
+.apk-info{flex:1;min-width:0}
+.apk-name{font-family:var(--font-mono);font-size:.78rem;color:var(--t0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.apk-meta{font-size:.65rem;color:var(--t2);margin-top:1px;font-family:var(--font-mono)}
 
-.status-dot {
-  width: 10px; height: 10px;
-  border-radius: 50%;
-  background: var(--bd);
-  flex-shrink: 0;
-  transition: background .3s, box-shadow .3s;
-}
-.running .status-dot {
-  background: var(--g);
-  box-shadow: 0 0 0 0 #00e67640;
-  animation: pulse 2s ease infinite;
-}
+.progress-wrap{margin-top:8px;display:none}
+.progress-track{height:4px;background:var(--bg3);border-radius:2px;overflow:hidden}
+.progress-fill{height:100%;background:var(--g);border-radius:2px;width:0%;transition:width .4s ease}
+.progress-lbl{font-family:var(--font-mono);font-size:.65rem;color:var(--t2);margin-top:4px}
 
-.card-info { flex: 1; min-width: 0; }
-.card-name {
-  font-family: var(--mono);
-  font-size: .88rem; font-weight: 600;
-  color: var(--t0);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+.url-row{display:flex;gap:8px;align-items:stretch}
+.url-row input{
+  flex:1;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad-sm);
+  padding:10px 12px;color:var(--t0);font-family:var(--font-mono);font-size:.82rem;
+  outline:none;transition:border-color .2s;
 }
-.card-sub {
-  font-size: .7rem; color: var(--t2);
-  margin-top: 2px; font-family: var(--mono);
+.url-row input:focus{border-color:var(--b)}
+.url-row input::placeholder{color:var(--t2)}
+.stagger-row{margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.stagger-lbl{font-size:.72rem;color:var(--t2);font-family:var(--font-mono);white-space:nowrap}
+.stagger-opts{display:flex;gap:4px;flex-wrap:wrap}
+.stagger-opt{
+  font-family:var(--font-mono);font-size:.68rem;padding:4px 10px;border-radius:5px;
+  cursor:pointer;background:var(--bg3);color:var(--t1);border:1px solid var(--bd);
+  transition:all .15s;user-select:none;
 }
-.running .card-sub { color: var(--g); }
+.stagger-opt.active{background:var(--g-dim);color:var(--g);border-color:#00e67640}
+.stagger-custom{display:none;margin-top:8px;gap:8px;align-items:center}
+.stagger-custom input{
+  width:80px;background:var(--bg2);border:1px solid var(--bd);border-radius:6px;
+  padding:6px 10px;color:var(--t0);font-family:var(--font-mono);font-size:.78rem;
+  outline:none;text-align:center;
+}
+.stagger-custom input:focus{border-color:var(--b)}
 
-.card-actions { display: flex; gap: 6px; }
-.card-actions button {
-  padding: 7px 12px; font-size: .75rem; border-radius: 7px;
+.teach-card{background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad);padding:14px}
+.teach-steps{display:flex;gap:6px;margin-bottom:12px;counter-reset:step}
+.teach-step{
+  flex:1;background:var(--bg3);border:1px solid var(--bd);border-radius:var(--rad-sm);
+  padding:10px;text-align:center;position:relative;transition:all .2s;
 }
+.teach-step::before{
+  counter-increment:step;content:counter(step);
+  font-family:var(--font-mono);font-size:.6rem;color:var(--t2);display:block;margin-bottom:4px;
+}
+.teach-step-icon{font-size:1.2rem;display:block;margin-bottom:4px}
+.teach-step-lbl{font-size:.68rem;color:var(--t1);line-height:1.4}
+.teach-step.active{border-color:var(--r);background:#f43f5e10}
+.teach-step.done{border-color:var(--g);background:var(--g-dim)}
+.rec-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--r);margin-right:5px}
+.teach-controls{display:flex;gap:8px;flex-wrap:wrap}
+.delay-row{
+  margin-top:10px;display:flex;align-items:center;gap:8px;
+  font-size:.72rem;color:var(--t2);font-family:var(--font-mono);
+}
+.delay-row input{
+  width:70px;background:var(--bg2);border:1px solid var(--bd);border-radius:6px;
+  padding:5px 8px;color:var(--t0);font-family:var(--font-mono);font-size:.78rem;
+  outline:none;text-align:center;
+}
+.delay-row input:focus{border-color:var(--g)}
 
-.card-bottom {
-  padding: 0 14px 12px;
-  display: flex; gap: 8px;
+.tor-card{background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad);padding:14px}
+.tor-head{display:flex;align-items:flex-start;gap:12px}
+.tor-icon{
+  width:40px;height:40px;flex-shrink:0;background:var(--bg3);border:1px solid var(--bd);
+  border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.3rem;
 }
-.pill {
-  font-family: var(--mono);
-  font-size: .65rem;
-  background: var(--bg3); color: var(--t2);
-  border-radius: 4px; padding: 3px 7px;
-}
-.pill.on { background: #00e67614; color: var(--g); }
+.tor-text h3{font-family:var(--font-body);font-weight:600;font-size:.9rem;color:var(--t0);margin-bottom:3px}
+.tor-text p{font-size:.75rem;color:var(--t1);line-height:1.6}
+.tor-status{margin-top:10px;display:flex;flex-direction:column;gap:4px;max-height:100px;overflow-y:auto}
+.tor-row{font-family:var(--font-mono);font-size:.65rem;color:var(--t2);padding:3px 0;border-bottom:1px solid var(--bd)}
+.tor-row:last-child{border-bottom:none}
 
-/* ── Countdown ring ───────────────────────────────────────── */
-.ring-wrap {
-  position: relative; width: 36px; height: 36px;
-  display: flex; align-items: center; justify-content: center;
+#log-feed{margin:0 14px 14px;background:var(--bg1);border:1px solid var(--bd);border-radius:var(--rad);overflow:hidden}
+.log-head{
+  padding:8px 12px;border-bottom:1px solid var(--bd);
+  font-family:var(--font-mono);font-size:.62rem;color:var(--t2);
+  text-transform:uppercase;letter-spacing:.1em;display:flex;justify-content:space-between;
 }
-.ring-wrap svg { position: absolute; top: 0; left: 0; transform: rotate(-90deg); }
-.ring-track { fill: none; stroke: var(--bd); stroke-width: 3; }
-.ring-fill  { fill: none; stroke: var(--g); stroke-width: 3; stroke-linecap: round;
-              stroke-dasharray: 94.25; transition: stroke-dashoffset .9s linear; }
-.ring-text  { font-family: var(--mono); font-size: .7rem; color: var(--t1); }
+#log-lines{padding:8px 12px;max-height:120px;overflow-y:auto;display:flex;flex-direction:column-reverse;gap:2px}
+.log-line{font-family:var(--font-mono);font-size:.68rem;color:var(--t2);line-height:1.5;animation:fadeIn .2s ease both}
+.log-ts{color:var(--t2);margin-right:6px}
+.log-msg{color:var(--t1)}
 
-/* ── FAB ──────────────────────────────────────────────────── */
-#fab {
-  position: fixed; bottom: 24px; right: 20px;
-  width: 52px; height: 52px; border-radius: 50%;
-  background: var(--g); color: #000;
-  font-size: 1.5rem; font-weight: 300;
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 20px #00e67650;
-  cursor: pointer; border: none;
-  transition: transform .2s, box-shadow .2s;
-  z-index: 200;
+#empty{
+  display:none;padding:48px 16px;text-align:center;color:var(--t2);
+  flex-direction:column;align-items:center;gap:10px;
 }
-#fab:hover { transform: scale(1.08); box-shadow: 0 6px 28px #00e67670; }
-#fab:active { transform: scale(.94); }
+#empty svg{opacity:.3;width:48px;height:48px}
+#empty h3{font-size:.95rem;color:var(--t1)}
+#empty p{font-size:.78rem;line-height:1.6}
 
-/* ── Toast ────────────────────────────────────────────────── */
-#toast-wrap {
-  position: fixed; bottom: 88px; left: 50%; transform: translateX(-50%);
-  display: flex; flex-direction: column; gap: 8px;
-  z-index: 500; pointer-events: none;
-  width: min(340px, calc(100vw - 32px));
+#toasts{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+  display:flex;flex-direction:column;gap:7px;z-index:500;pointer-events:none;
+  width:min(340px,calc(100vw - 32px));
 }
-.toast {
-  background: var(--bg3); border: 1px solid var(--bd);
-  border-radius: 10px; padding: 10px 14px;
-  font-size: .82rem; color: var(--t0);
-  display: flex; align-items: center; gap: 10px;
-  box-shadow: var(--shadow);
-  animation: toastIn .2s ease both;
-  pointer-events: all;
+.toast{
+  background:var(--bg3);border:1px solid var(--bd);border-radius:10px;
+  padding:10px 14px;font-size:.82rem;color:var(--t0);
+  display:flex;align-items:center;gap:9px;box-shadow:var(--shadow);
+  animation:toastIn .2s ease both;pointer-events:all;
 }
-.toast.ok   { border-color: var(--g); }
-.toast.err  { border-color: var(--r); }
-.toast-dot  { width: 8px; height: 8px; border-radius: 50%; background: var(--t2); flex-shrink:0; }
-.toast.ok  .toast-dot { background: var(--g); }
-.toast.err .toast-dot { background: var(--r); }
+.toast.ok{border-color:#00e67650}.toast.err{border-color:#f43f5e60}
+.toast-pip{width:7px;height:7px;border-radius:50%;background:var(--t2);flex-shrink:0}
+.toast.ok .toast-pip{background:var(--g);box-shadow:0 0 6px var(--g)}
+.toast.err .toast-pip{background:var(--r)}
 
-/* ── Loading overlay ──────────────────────────────────────── */
-#overlay {
-  position: fixed; inset: 0; background: #080b0faa;
-  display: flex; align-items: center; justify-content: center;
-  z-index: 999; display: none;
+#fab{
+  position:fixed;bottom:24px;right:20px;width:50px;height:50px;border-radius:50%;
+  background:var(--g);color:#000;font-size:1.5rem;font-weight:300;
+  display:flex;align-items:center;justify-content:center;padding:0;
+  box-shadow:0 4px 20px var(--g-glow);border:none;cursor:pointer;
+  transition:transform .2s,box-shadow .2s;z-index:200;
 }
-.spinner {
-  width: 36px; height: 36px;
-  border: 3px solid var(--bd);
-  border-top-color: var(--g);
-  border-radius: 50%;
-  animation: spin .7s linear infinite;
-}
+#fab:hover{transform:scale(1.08);box-shadow:0 6px 28px #00e67660}
 
-/* ── Empty state ──────────────────────────────────────────── */
-#empty {
-  display: none;
-  flex: 1; align-items: center; justify-content: center;
-  flex-direction: column; gap: 12px; padding: 48px 16px;
-  color: var(--t2); text-align: center;
-}
-#empty h2 { font-size: 1rem; font-weight: 600; color: var(--t1); }
-#empty p  { font-size: .82rem; line-height: 1.6; }
+@keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes toastIn{from{opacity:0;transform:translateY(6px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
 
-/* ── Animations ───────────────────────────────────────────── */
-@keyframes pulse {
-  0%   { box-shadow: 0 0 0 0 #00e67640; }
-  70%  { box-shadow: 0 0 0 8px #00e67600; }
-  100% { box-shadow: 0 0 0 0 #00e67600; }
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes slideIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-@keyframes toastIn {
-  from { opacity: 0; transform: translateY(8px) scale(.96); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px}
 
-/* ── Responsive ───────────────────────────────────────────── */
-@media (max-width: 400px) {
-  #stats { grid-template-columns: repeat(2, 1fr); }
-  .stat-val { font-size: 1.1rem; }
+@media(max-width:380px){
+  #stats{grid-template-columns:repeat(2,1fr)}
+  .stat-n{font-size:1.2rem}
+  #grid{grid-template-columns:1fr}
 }
 </style>
 </head>
 <body>
 <div id="app">
 
-  <!-- Header -->
-  <header>
-    <div class="logo">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="5" y="2" width="14" height="20" rx="2"/>
-        <line x1="12" y1="18" x2="12" y2="18.01"/>
-      </svg>
-      <span><span class="logo-bracket">[</span>C<span class="logo-bracket">·</span>PHARM<span class="logo-bracket">]</span></span>
+<header>
+  <div class="logo"><div class="logo-dot"></div>C·PHARM</div>
+  <div class="header-r">
+    <div class="ip-chip" id="ip-chip">—.—.—.—</div>
+    <div class="ws-dot" id="ws-dot"></div>
+  </div>
+</header>
+
+<div id="stats">
+  <div class="stat"><span class="stat-n" id="s-total">—</span><span class="stat-lbl">Phones</span></div>
+  <div class="stat"><span class="stat-n green" id="s-on">—</span><span class="stat-lbl">On</span></div>
+  <div class="stat"><span class="stat-n" id="s-off">—</span><span class="stat-lbl">Off</span></div>
+  <div class="stat"><span class="stat-n yellow" id="s-ram">—</span><span class="stat-lbl">Memory</span></div>
+</div>
+
+<div id="controls">
+  <button class="btn-g" id="btn-start-all">
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+    Start All
+  </button>
+  <button class="btn-r" id="btn-stop-all">
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>
+    Stop All
+  </button>
+  <button class="btn-ghost" id="btn-clone">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M3 16V3h13"/></svg>
+    New Phone
+  </button>
+  <a href="/playstore" style="text-decoration:none">
+    <button class="btn-ghost" style="gap:6px">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      App Tester
+    </button>
+  </a>
+</div>
+
+<div id="grid"></div>
+<div id="empty" style="display:flex">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+    <rect x="5" y="2" width="14" height="20" rx="2"/>
+    <line x1="12" y1="18" x2="12.01" y2="18"/>
+  </svg>
+  <h3>No phones yet</h3>
+  <p>Tap <strong>New Phone</strong> to create your first one</p>
+</div>
+
+<div class="section">
+  <div class="section-title">Install an App</div>
+  <div id="drop-zone">
+    <p>Drop your app file here</p>
+    <span>or tap to pick a file · .apk</span>
+  </div>
+  <input type="file" id="apk-input" accept=".apk" style="display:none">
+  <div id="apk-list"></div>
+  <div class="progress-wrap" id="install-progress">
+    <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-lbl" id="progress-lbl">Installing…</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Open a Website on All Phones</div>
+  <div class="url-row">
+    <input type="url" id="url-input" placeholder="Paste a web address…" autocomplete="off" autocorrect="off" spellcheck="false">
+    <button class="btn-b" id="btn-open-url">Open</button>
+  </div>
+  <div class="stagger-row">
+    <span class="stagger-lbl">Delay between phones:</span>
+    <div class="stagger-opts">
+      <div class="stagger-opt active" data-val="0">All at once</div>
+      <div class="stagger-opt" data-val="60">1 min</div>
+      <div class="stagger-opt" data-val="300">5 min</div>
+      <div class="stagger-opt" data-val="custom">Custom</div>
     </div>
-    <div class="header-right">
-      <div class="ip-badge" id="ip-badge" title="Click to copy">—.—.—.—</div>
-      <div class="ring-wrap" title="Auto-refresh countdown">
-        <svg width="36" height="36" viewBox="0 0 36 36">
-          <circle class="ring-track" cx="18" cy="18" r="15"/>
-          <circle class="ring-fill" id="ring" cx="18" cy="18" r="15"/>
-        </svg>
-        <span class="ring-text" id="ring-num">10</span>
+  </div>
+  <div class="stagger-custom" id="stagger-custom">
+    <span class="stagger-lbl">Every</span>
+    <input type="number" id="custom-delay" value="10" min="1" max="3600">
+    <span class="stagger-lbl">minutes</span>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Teach Mode — Show it once, it does the rest</div>
+  <div class="teach-card">
+    <div class="teach-steps">
+      <div class="teach-step" id="step-1">
+        <span class="teach-step-icon">📱</span>
+        <span class="teach-step-lbl">Open Phone 1 and get ready</span>
       </div>
-      <button class="refresh-btn" id="refresh-btn" onclick="fetchPhones(true)" title="Refresh now">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-          <path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 12a9 9 0 0 1-15 6.7L3 16"/>
-          <polyline points="21 3 21 8 16 8"/>
-          <polyline points="3 21 3 16 8 16"/>
-        </svg>
+      <div class="teach-step" id="step-2">
+        <span class="teach-step-icon">⏺</span>
+        <span class="teach-step-lbl">Record your steps</span>
+      </div>
+      <div class="teach-step" id="step-3">
+        <span class="teach-step-icon">▶</span>
+        <span class="teach-step-lbl">Play on all other phones</span>
+      </div>
+    </div>
+    <div class="teach-controls">
+      <button class="btn-r btn-sm" id="btn-record">
+        <span class="rec-dot" id="rec-dot"></span>Start Recording
       </button>
+      <button class="btn-ghost btn-sm" id="btn-stop-rec" disabled>■ Stop</button>
+      <button class="btn-g btn-sm" id="btn-play-teach" disabled>▶ Play on All Phones</button>
     </div>
-  </header>
-
-  <!-- Stats -->
-  <div id="stats">
-    <div class="stat">
-      <span class="stat-val" id="s-total">—</span>
-      <span class="stat-label">Phones</span>
+    <div class="delay-row">
+      <span>Wait</span>
+      <input type="number" id="teach-delay" value="60" min="0">
+      <span>seconds between each phone</span>
     </div>
-    <div class="stat">
-      <span class="stat-val green" id="s-running">—</span>
-      <span class="stat-label">Running</span>
-    </div>
-    <div class="stat">
-      <span class="stat-val" id="s-stopped">—</span>
-      <span class="stat-label">Stopped</span>
-    </div>
-    <div class="stat">
-      <span class="stat-val yellow" id="s-ram">—</span>
-      <span class="stat-label">RAM est.</span>
-    </div>
+    <div id="teach-status" style="margin-top:8px;font-family:var(--font-mono);font-size:.68rem;color:var(--t2)"></div>
   </div>
+</div>
 
-  <!-- Controls -->
-  <div id="controls">
-    <button class="btn-green" onclick="globalAction('start_all')">
-      ▶ Start All
-    </button>
-    <button class="btn-red" onclick="globalAction('stop_all')">
-      ■ Stop All
-    </button>
-    <button class="btn-ghost" onclick="globalAction('restart_all')">
-      ↺ Restart All
-    </button>
+<div class="section">
+  <div class="section-title">Make Each Phone Look Different</div>
+  <div class="tor-card">
+    <div class="tor-head">
+      <div class="tor-icon">🌍</div>
+      <div class="tor-text">
+        <h3>Different location per phone</h3>
+        <p>Each phone gets its own address on the internet so websites think they're separate people from different places around the world. Done automatically — no setup needed.</p>
+      </div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-ghost btn-sm" id="btn-tor">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/>
+        </svg>
+        Set Up Now
+      </button>
+      <button class="btn-ghost btn-sm" id="btn-tor-off">Turn Off</button>
+    </div>
+    <div class="tor-status" id="tor-status"></div>
   </div>
+</div>
 
-  <!-- Phone grid -->
-  <div id="grid"></div>
-  <div id="empty">
-    <h2>No phones found</h2>
-    <p>Run <code>scripts\clone_phones.bat</code> to create<br>your first CPharm phone.</p>
+<div id="log-feed">
+  <div class="log-head">
+    <span>Activity Log</span>
+    <span id="log-clear" style="cursor:pointer">Clear</span>
   </div>
+  <div id="log-lines"></div>
+</div>
 
 </div>
 
-<!-- FAB -->
-<button id="fab" onclick="clonePhone()" title="Clone new phone">+</button>
-
-<!-- Toast container -->
-<div id="toast-wrap"></div>
-
-<!-- Loading overlay -->
-<div id="overlay"><div class="spinner"></div></div>
+<button id="fab" title="New Phone">+</button>
+<div id="toasts"></div>
 
 <script>
-// ── Mock data (replace with real API in production) ────────
-const DEMO_MODE = true; // set false when backed by dashboard.py
+'use strict';
 
-let mockPhones = [
-  { index: 1, name: 'CPharm-1', running: true,  is_cpharm: true },
-  { index: 2, name: 'CPharm-2', running: true,  is_cpharm: true },
-  { index: 3, name: 'CPharm-3', running: false, is_cpharm: true },
-  { index: 4, name: 'CPharm-4', running: true,  is_cpharm: true },
-  { index: 5, name: 'CPharm-5', running: false, is_cpharm: true },
-];
-
-// ── State ──────────────────────────────────────────────────
-let phones = [];
-let countdown = 10;
-let ringInterval = null;
-let busy = false;
-
-// ── API ────────────────────────────────────────────────────
-async function api(path, method = 'GET') {
-  if (DEMO_MODE) return mockApi(path, method);
-  const res = await fetch(path, { method });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+// ── Safety: escape any string before putting in DOM ────────────────
+function esc(str) {
+  return String(str)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
 }
 
-function mockApi(path, method) {
-  return new Promise(res => setTimeout(() => {
-    if (path === '/api/phones') { res([...mockPhones]); return; }
-    if (path === '/api/start_all') {
-      mockPhones.forEach(p => { if (p.is_cpharm) p.running = true; });
-      res({ ok: true }); return;
-    }
-    if (path === '/api/stop_all') {
-      mockPhones.forEach(p => { if (p.is_cpharm) p.running = false; });
-      res({ ok: true }); return;
-    }
-    if (path === '/api/clone') {
-      const next = mockPhones.length + 1;
-      mockPhones.push({ index: next, name: `CPharm-${next}`, running: false, is_cpharm: true });
-      res({ ok: true }); return;
-    }
-    const startM = path.match(/^\/api\/phone\/start\/(\d+)$/);
-    if (startM) {
-      const p = mockPhones.find(x => x.index === +startM[1]);
-      if (p) p.running = true;
-      res({ ok: true }); return;
-    }
-    const stopM = path.match(/^\/api\/phone\/stop\/(\d+)$/);
-    if (stopM) {
-      const p = mockPhones.find(x => x.index === +stopM[1]);
-      if (p) p.running = false;
-      res({ ok: true }); return;
-    }
-    res({ ok: false });
-  }, 600));
+// ── State ──────────────────────────────────────────────────────────
+let phones      = [];
+let staggerSecs = 0;
+let teachFile   = null;
+let apkFiles    = [];
+let installDone = 0;
+
+// ── WebSocket ──────────────────────────────────────────────────────
+const WS_URL = `ws://${location.hostname}:8081`;
+let ws, wsRetry = 0;
+
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    wsRetry = 0;
+    document.getElementById('ws-dot').className = 'ws-dot connected';
+  };
+  ws.onmessage = ({ data }) => {
+    const msg = JSON.parse(data);
+    if (msg.type === 'phones_update')    onPhonesUpdate(msg.phones);
+    if (msg.type === 'install_progress') onInstallProgress(msg);
+    if (msg.type === 'teach_status')     onTeachStatus(msg);
+    if (msg.type === 'log')              addLog(msg.msg);
+  };
+  ws.onclose = () => {
+    document.getElementById('ws-dot').className = 'ws-dot error';
+    setTimeout(connectWS, Math.min(1000 * 2 ** wsRetry++, 15000));
+  };
+  ws.onerror = () => ws.close();
 }
 
-// ── Fetch & render ─────────────────────────────────────────
-async function fetchPhones(manual = false) {
-  if (busy && !manual) return;
-  const btn = document.getElementById('refresh-btn');
-  btn.classList.add('spinning');
-  try {
-    phones = (await api('/api/phones')).filter(p => p.is_cpharm);
-    render();
-    resetCountdown();
-  } catch(e) {
-    toast('Could not reach server', 'err');
-  } finally {
-    btn.classList.remove('spinning');
-  }
+// ── API ────────────────────────────────────────────────────────────
+async function api(path, method = 'GET', body = null) {
+  const opts = { method, headers: {} };
+  if (body) { opts.body = JSON.stringify(body); opts.headers['Content-Type'] = 'application/json'; }
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
 }
 
-function render() {
+// ── Phones ─────────────────────────────────────────────────────────
+function onPhonesUpdate(data) {
+  phones = data;
+  renderPhones();
+  updateStats();
+}
+
+function updateStats() {
+  const on = phones.filter(p => p.running).length;
+  setText('s-total', phones.length || '0');
+  setText('s-on', on);
+  setText('s-off', phones.length - on);
+  setText('s-ram', on ? (on * 1.5).toFixed(1) + 'G' : '0G');
+}
+
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+function renderPhones() {
   const grid  = document.getElementById('grid');
   const empty = document.getElementById('empty');
-
-  // Stats
-  const running = phones.filter(p => p.running).length;
-  const stopped = phones.length - running;
-  const ram = (running * 1.5).toFixed(1);
-  document.getElementById('s-total').textContent   = phones.length;
-  document.getElementById('s-running').textContent = running;
-  document.getElementById('s-stopped').textContent = stopped;
-  document.getElementById('s-ram').textContent     = ram + 'G';
-
   if (!phones.length) {
-    grid.style.display = 'none';
-    empty.style.display = 'flex';
-    return;
+    grid.style.display = 'none'; empty.style.display = 'flex'; return;
   }
-  grid.style.display = '';
-  empty.style.display = 'none';
+  grid.style.display = ''; empty.style.display = 'none';
 
-  grid.innerHTML = phones.map((p, i) => `
-    <div class="card ${p.running ? 'running' : ''}" id="card-${p.index}"
-         style="animation-delay:${i * 40}ms">
-      <div class="card-top">
-        <div class="status-dot"></div>
-        <div class="card-info">
-          <div class="card-name">${p.name}</div>
-          <div class="card-sub">${p.running ? '● RUNNING' : '○ stopped'} &nbsp;·&nbsp; #${p.index}</div>
-        </div>
-        <div class="card-actions">
-          ${p.running
-            ? `<button class="btn-red"   onclick="phoneAction(${p.index},'stop')">Stop</button>`
-            : `<button class="btn-green" onclick="phoneAction(${p.index},'start')">Start</button>`
-          }
-        </div>
-      </div>
-      <div class="card-bottom">
-        <span class="pill ${p.running ? 'on' : ''}">ADB</span>
-        <span class="pill">idx ${p.index}</span>
-        <span class="pill">${p.running ? '~1.5 GB' : '—'}</span>
-      </div>
-    </div>`).join('');
-}
+  // Remove cards that no longer exist
+  const existing = new Set(phones.map(p => 'card-' + p.index));
+  Array.from(grid.children).forEach(c => { if (!existing.has(c.id)) c.remove(); });
 
-// ── Actions ────────────────────────────────────────────────
-async function phoneAction(index, action) {
-  setBusy(true);
-  try {
-    await api(`/api/phone/${action}/${index}`, 'POST');
-    toast(`${action === 'start' ? 'Started' : 'Stopped'} CPharm-${index}`, 'ok');
-    await fetchPhones(true);
-  } catch(e) { toast('Action failed', 'err'); }
-  finally { setBusy(false); }
-}
-
-async function globalAction(action) {
-  setBusy(true);
-  const labels = { start_all: 'Starting all…', stop_all: 'Stopping all…', restart_all: 'Restarting…' };
-  toast(labels[action] || action, 'ok');
-  try {
-    if (action === 'restart_all') {
-      await api('/api/stop_all',  'POST');
-      await new Promise(r => setTimeout(r, 1200));
-      await api('/api/start_all', 'POST');
-    } else {
-      await api(`/api/${action}`, 'POST');
+  phones.forEach((p, i) => {
+    let card = document.getElementById('card-' + p.index);
+    if (!card) {
+      card = document.createElement('div');
+      card.id = 'card-' + p.index;
+      card.style.animationDelay = (i * 35) + 'ms';
+      grid.appendChild(card);
     }
-    await fetchPhones(true);
-    toast('Done', 'ok');
-  } catch(e) { toast('Action failed', 'err'); }
-  finally { setBusy(false); }
+
+    const hasApp  = !!(p.app && p.app.package);
+    const appText = hasApp
+      ? esc(p.app.package.split('.').pop()) + ' · v' + esc(p.app.version)
+      : 'No app installed';
+
+    card.className = 'card' + (p.running ? ' on' : '');
+
+    // Build card DOM safely
+    card.textContent = '';
+
+    const head = document.createElement('div');
+    head.className = 'card-head';
+
+    const icon = document.createElement('div');
+    icon.className = 'phone-icon';
+    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18" stroke-width="2"/></svg>';
+
+    const info = document.createElement('div');
+    info.className = 'card-info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'card-name';
+    nameEl.textContent = p.name;
+    const statusEl = document.createElement('div');
+    statusEl.className = 'card-status';
+    const ring = document.createElement('div');
+    ring.className = 'status-ring';
+    statusEl.appendChild(ring);
+    statusEl.append(' ' + (p.running ? 'On' : 'Off') + ' · #' + p.index);
+    info.appendChild(nameEl);
+    info.appendChild(statusEl);
+
+    const actBtn = document.createElement('button');
+    actBtn.className = p.running ? 'btn-r btn-sm' : 'btn-g btn-sm';
+    actBtn.textContent = p.running ? 'Stop' : 'Start';
+    actBtn.addEventListener('click', () => phoneAction(p.index, p.running ? 'stop' : 'start'));
+
+    head.appendChild(icon);
+    head.appendChild(info);
+    head.appendChild(actBtn);
+
+    const foot = document.createElement('div');
+    foot.className = 'card-foot';
+    const chip = document.createElement('div');
+    chip.className = 'app-chip' + (hasApp ? ' has-app' : '');
+    chip.textContent = hasApp
+      ? p.app.package.split('.').pop() + ' · v' + p.app.version
+      : 'No app installed';
+    chip.title = hasApp ? p.app.package : '';
+
+    const pip = document.createElement('div');
+    pip.id = 'pip-' + p.index;
+    pip.style.cssText = 'width:7px;height:7px;border-radius:50%;background:var(--bd);flex-shrink:0;display:none';
+
+    foot.appendChild(chip);
+    foot.appendChild(pip);
+
+    card.appendChild(head);
+    card.appendChild(foot);
+  });
+}
+
+async function phoneAction(idx, action) {
+  try {
+    await api('/api/phone/' + action + '/' + idx, 'POST');
+    toast((action === 'start' ? 'Starting' : 'Stopping') + ' Phone ' + idx, 'ok');
+  } catch(e) { toast('Something went wrong', 'err'); }
 }
 
 async function clonePhone() {
-  setBusy(true);
   try {
-    await api('/api/clone', 'POST');
-    toast('New phone cloned!', 'ok');
-    await fetchPhones(true);
-  } catch(e) { toast('Clone failed', 'err'); }
-  finally { setBusy(false); }
+    const r = await api('/api/clone', 'POST');
+    toast('Created ' + r.name, 'ok');
+  } catch(e) { toast('Could not create phone', 'err'); }
 }
 
-// ── Countdown ring ─────────────────────────────────────────
-const INTERVAL = 10;
-const CIRCUMFERENCE = 2 * Math.PI * 15; // r=15
+// ── APK ─────────────────────────────────────────────────────────────
+async function loadServerApks() {
+  try {
+    const files = await api('/api/apks');
+    files.forEach(f => {
+      if (!apkFiles.find(a => a.name === f.name))
+        apkFiles.push({ name: f.name, size: f.size_mb * 1024 * 1024, uploaded: true });
+    });
+    renderApkList();
+  } catch(e) {}
+}
 
-function resetCountdown() {
-  countdown = INTERVAL;
-  updateRing();
-  clearInterval(ringInterval);
-  ringInterval = setInterval(() => {
-    countdown--;
-    updateRing();
-    if (countdown <= 0) {
-      fetchPhones();
-      countdown = INTERVAL;
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.name.endsWith('.apk')) queueApk(file);
+  else toast('Please drop an .apk file', 'err');
+}
+
+document.getElementById('apk-input').addEventListener('change', function() {
+  if (this.files[0]) queueApk(this.files[0]);
+  this.value = '';
+});
+
+function queueApk(file) {
+  if (apkFiles.find(f => f.name === file.name)) { toast('Already added', 'err'); return; }
+  apkFiles.push(file);
+  renderApkList();
+}
+
+function renderApkList() {
+  const el = document.getElementById('apk-list');
+  el.textContent = '';
+  apkFiles.forEach((f, i) => {
+    const row = document.createElement('div');
+    row.className = 'apk-row';
+
+    const emoji = document.createElement('span');
+    emoji.textContent = '📦';
+    emoji.style.fontSize = '1.1rem';
+
+    const info = document.createElement('div');
+    info.className = 'apk-info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'apk-name';
+    nameEl.textContent = f.name;
+    const meta = document.createElement('div');
+    meta.className = 'apk-meta';
+    meta.textContent = f.uploaded
+      ? (f.size / 1024 / 1024).toFixed(1) + ' MB · on server'
+      : (f.size / 1024 / 1024).toFixed(1) + ' MB · ready to upload';
+    info.appendChild(nameEl);
+    info.appendChild(meta);
+
+    const installBtn = document.createElement('button');
+    installBtn.className = 'btn-g btn-sm';
+    installBtn.textContent = 'Install All';
+    installBtn.addEventListener('click', () => installApk(i));
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'btn-ghost btn-sm';
+    removeBtn.textContent = '✕';
+    removeBtn.style.padding = '7px';
+    removeBtn.addEventListener('click', () => { apkFiles.splice(i, 1); renderApkList(); });
+
+    row.appendChild(emoji);
+    row.appendChild(info);
+    row.appendChild(installBtn);
+    row.appendChild(removeBtn);
+    el.appendChild(row);
+  });
+}
+
+async function uploadAndInstall(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const b64 = btoa(String.fromCharCode(...new Uint8Array(reader.result)));
+      try {
+        await api('/api/upload', 'POST', { name: file.name, data: b64 });
+        resolve();
+      } catch(e) { reject(e); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+async function installApk(i) {
+  const file = apkFiles[i];
+  if (!file) return;
+  const prog = document.getElementById('install-progress');
+  prog.style.display = 'block';
+  document.getElementById('progress-fill').style.width = '5%';
+  installDone = 0;
+
+  try {
+    if (!file.uploaded) {
+      setText('progress-lbl', 'Uploading ' + file.name + '…');
+      await uploadAndInstall(file);
+      file.uploaded = true;
+      renderApkList();
     }
-  }, 1000);
-}
-
-function updateRing() {
-  const frac = countdown / INTERVAL;
-  const offset = CIRCUMFERENCE * (1 - frac);
-  document.getElementById('ring').style.strokeDashoffset = offset;
-  document.getElementById('ring-num').textContent = countdown;
-}
-
-// ── IP badge ───────────────────────────────────────────────
-async function detectIP() {
-  const badge = document.getElementById('ip-badge');
-  if (DEMO_MODE) {
-    badge.textContent = '192.168.x.x:8080';
-  } else {
-    try {
-      const r = await fetch('/api/ip');
-      const d = await r.json();
-      badge.textContent = d.url.replace('http://', '');
-    } catch { badge.textContent = location.host; }
+    setText('progress-lbl', 'Installing ' + file.name + ' on all phones…');
+    await api('/api/install', 'POST', { apk: file.name });
+    toast('Installing ' + file.name, 'ok');
+  } catch(e) {
+    toast('Install failed', 'err');
+    prog.style.display = 'none';
   }
-  badge.onclick = () => {
-    const url = DEMO_MODE ? location.href : `http://${badge.textContent}`;
-    navigator.clipboard?.writeText(url).then(() => toast('URL copied!', 'ok'));
-  };
 }
 
-// ── Toast ──────────────────────────────────────────────────
-function toast(msg, type = 'ok') {
-  const wrap = document.getElementById('toast-wrap');
-  const el = document.createElement('div');
-  el.className = `toast ${type}`;
-  el.innerHTML = `<div class="toast-dot"></div><span>${msg}</span>`;
+function onInstallProgress(msg) {
+  if (msg.status === 'done') {
+    installDone++;
+    const pct = Math.round((installDone / Math.max(phones.length, 1)) * 100);
+    document.getElementById('progress-fill').style.width = pct + '%';
+    setText('progress-lbl', 'Installed on ' + installDone + ' of ' + phones.length + ' phones');
+    if (installDone >= phones.length) {
+      setTimeout(() => { document.getElementById('install-progress').style.display = 'none'; toast('App installed on all phones!', 'ok'); }, 800);
+    }
+    const pip = document.getElementById('pip-' + msg.phone_idx);
+    if (pip) { pip.style.display = 'block'; pip.style.background = 'var(--g)'; }
+  }
+  if (msg.status === 'installing') {
+    const pip = document.getElementById('pip-' + msg.phone_idx);
+    if (pip) { pip.style.display = 'block'; pip.style.background = 'var(--y)'; }
+  }
+}
+
+// ── URL launcher ────────────────────────────────────────────────────
+document.querySelectorAll('.stagger-opt').forEach(opt => {
+  opt.addEventListener('click', () => {
+    document.querySelectorAll('.stagger-opt').forEach(o => o.classList.remove('active'));
+    opt.classList.add('active');
+    const custom = document.getElementById('stagger-custom');
+    if (opt.dataset.val === 'custom') {
+      custom.style.display = 'flex'; staggerSecs = -1;
+    } else {
+      custom.style.display = 'none'; staggerSecs = +opt.dataset.val;
+    }
+  });
+});
+
+async function launchUrl() {
+  const url = document.getElementById('url-input').value.trim();
+  if (!url) { toast('Paste a web address first', 'err'); return; }
+  let secs = staggerSecs;
+  if (secs === -1) secs = (+document.getElementById('custom-delay').value || 5) * 60;
+  try {
+    await api('/api/open_url', 'POST', { url, stagger_secs: secs });
+    toast(secs ? 'Opening on each phone, ' + secs + 's apart' : 'Opening on all phones', 'ok');
+  } catch(e) { toast('Could not open URL', 'err'); }
+}
+
+// ── Teach ────────────────────────────────────────────────────────────
+async function teachRecord() {
+  try { await api('/api/teach/start', 'POST'); }
+  catch(e) { toast('Could not start recording', 'err'); }
+}
+async function teachStop() {
+  try { await api('/api/teach/stop', 'POST'); }
+  catch(e) { toast('Could not stop', 'err'); }
+}
+async function teachPlay() {
+  const delay = +document.getElementById('teach-delay').value || 60;
+  try { await api('/api/teach/play', 'POST', { delay_secs: delay }); toast('Playing on all phones…', 'ok'); }
+  catch(e) { toast('Could not play', 'err'); }
+}
+
+function onTeachStatus(msg) {
+  teachFile = msg.file;
+  const s1 = document.getElementById('step-1');
+  const s2 = document.getElementById('step-2');
+  const s3 = document.getElementById('step-3');
+  const btnRec  = document.getElementById('btn-record');
+  const btnStop = document.getElementById('btn-stop-rec');
+  const btnPlay = document.getElementById('btn-play-teach');
+  const dot     = document.getElementById('rec-dot');
+  const statusEl = document.getElementById('teach-status');
+
+  btnRec.disabled  = msg.state !== 'idle';
+  btnStop.disabled = msg.state !== 'recording';
+  btnPlay.disabled = msg.state !== 'idle' || !teachFile;
+
+  s1.className = 'teach-step' + (msg.state !== 'idle' ? ' done' : '');
+  s2.className = 'teach-step' + (msg.state === 'recording' ? ' active' : msg.state !== 'idle' ? ' done' : '');
+  s3.className = 'teach-step' + (msg.state === 'playing' ? ' active' : '');
+
+  dot.style.animation = msg.state === 'recording' ? 'blink .8s ease infinite' : 'none';
+  statusEl.textContent = msg.state === 'recording' ? '● Recording — do your steps on Phone 1'
+    : msg.state === 'playing' ? '▶ Playing on all phones…'
+    : teachFile ? 'Recording ready — tap Play on All Phones' : '';
+}
+
+// ── Tor ──────────────────────────────────────────────────────────────
+async function setupTor() {
+  const btn = document.getElementById('btn-tor');
+  btn.disabled = true;
+  btn.textContent = 'Setting up…';
+  try {
+    await api('/api/proxy/setup', 'POST');
+    toast('Setting up locations for each phone…', 'ok');
+  } catch(e) {
+    toast('Could not set up locations', 'err');
+    btn.disabled = false;
+    btn.textContent = 'Set Up Now';
+  }
+}
+
+// ── Log ───────────────────────────────────────────────────────────────
+function addLog(msg) {
+  const ts = new Date().toLocaleTimeString('en-US', { hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const el  = document.getElementById('log-lines');
+  const row = document.createElement('div');
+  row.className = 'log-line';
+  const tsSpan = document.createElement('span');
+  tsSpan.className = 'log-ts';
+  tsSpan.textContent = ts;
+  const msgSpan = document.createElement('span');
+  msgSpan.className = 'log-msg';
+  msgSpan.textContent = msg;
+  row.appendChild(tsSpan);
+  row.appendChild(msgSpan);
+  el.prepend(row);
+  if (el.children.length > 80) el.lastChild.remove();
+
+  // Mirror to Tor status if it's a location message
+  if (msg.toLowerCase().includes('phone') && msg.toLowerCase().includes('ready')) {
+    const torEl = document.getElementById('tor-status');
+    const torRow = document.createElement('div');
+    torRow.className = 'tor-row';
+    torRow.textContent = msg;
+    torEl.appendChild(torRow);
+  }
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────
+function toast(msg, type = '') {
+  const wrap = document.getElementById('toasts');
+  const el   = document.createElement('div');
+  el.className = 'toast ' + type;
+  const pip = document.createElement('div');
+  pip.className = 'toast-pip';
+  const txt = document.createElement('span');
+  txt.textContent = msg;
+  el.appendChild(pip);
+  el.appendChild(txt);
   wrap.appendChild(el);
-  setTimeout(() => el.remove(), 3200);
+  setTimeout(() => el.remove(), 3000);
 }
 
-// ── Busy state ─────────────────────────────────────────────
-function setBusy(on) {
-  busy = on;
-  // Disable global buttons while busy
-  document.querySelectorAll('#controls button, #fab').forEach(b => b.disabled = on);
+// ── IP ─────────────────────────────────────────────────────────────────
+async function initIp() {
+  const chip = document.getElementById('ip-chip');
+  try {
+    const r = await api('/api/ip');
+    chip.textContent = r.ip + ':8080';
+    chip.title = 'Tap to copy';
+    chip.addEventListener('click', () => {
+      navigator.clipboard?.writeText(r.url).then(() => toast('Address copied!', 'ok'));
+    });
+  } catch { chip.textContent = location.host; }
 }
 
-// ── PWA service worker ─────────────────────────────────────
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
-}
+// ── Drop zone ──────────────────────────────────────────────────────────
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('click', () => document.getElementById('apk-input').click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', handleDrop);
 
-// ── Init ───────────────────────────────────────────────────
-detectIP();
-fetchPhones(true);
+// ── Button wiring ──────────────────────────────────────────────────────
+document.getElementById('btn-start-all').addEventListener('click', () =>
+  api('/api/start_all','POST').then(() => toast('Starting all phones','ok')).catch(() => toast('Error','err')));
+document.getElementById('btn-stop-all').addEventListener('click', () =>
+  api('/api/stop_all','POST').then(() => toast('Stopping all phones')).catch(() => toast('Error','err')));
+document.getElementById('btn-clone').addEventListener('click', clonePhone);
+document.getElementById('btn-open-url').addEventListener('click', launchUrl);
+document.getElementById('btn-record').addEventListener('click', teachRecord);
+document.getElementById('btn-stop-rec').addEventListener('click', teachStop);
+document.getElementById('btn-play-teach').addEventListener('click', teachPlay);
+document.getElementById('btn-tor').addEventListener('click', setupTor);
+document.getElementById('btn-tor-off').addEventListener('click', async () => {
+  try {
+    await api('/api/proxy/teardown', 'POST');
+    document.getElementById('tor-status').textContent = '';
+    document.getElementById('btn-tor').disabled = false;
+    document.getElementById('btn-tor').textContent = 'Set Up Now';
+    toast('Turned off', 'ok');
+  } catch(e) { toast('Error turning off', 'err'); }
+});
+document.getElementById('log-clear').addEventListener('click', () =>
+  document.getElementById('log-lines').textContent = '');
+document.getElementById('fab').addEventListener('click', clonePhone);
+
+// ── PWA ────────────────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+// ── Boot ────────────────────────────────────────────────────────────────
+connectWS();
+initIp();
+loadServerApks();
+api('/api/phones').then(d => { if (!phones.length) onPhonesUpdate(d); }).catch(() => {});
 </script>
 </body>
 </html>

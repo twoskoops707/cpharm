@@ -998,81 +998,220 @@ class AddStepDialog(tk.Toplevel):
 
 
 class LaunchPage(PageBase):
+    """
+    Full control center inside the wizard.
+    - Start/stop the dashboard server
+    - Run/stop all groups
+    - See live log output
+    Everything stays inside the wizard — no need to touch the browser.
+    """
     def __init__(self, parent):
         super().__init__(parent)
-        self.header("You're all set! 🎉")
+        self._server_proc = None
+        self._running     = False
+        self.header("Launch & Control 🚀",
+                    "Everything runs from here. No need to open the browser or touch anything else.")
 
-        self._summary = tk.Text(self, height=10, font=FONT_MONO, bg=BG2, fg=T1,
+        summary_outer = tk.Frame(self, bg=BG2, padx=12, pady=10)
+        summary_outer.pack(fill="x", pady=(0, 10))
+        tk.Label(summary_outer, text="Your groups:", font=("Segoe UI", 10, "bold"),
+                 bg=BG2, fg=T1, anchor="w").pack(fill="x")
+        self._summary = tk.Text(summary_outer, height=6, font=FONT_MONO, bg=BG2, fg=T1,
                                 relief="flat", state="disabled", wrap="word")
-        self._summary.pack(fill="x", pady=(0, 14))
+        self._summary.pack(fill="x")
 
-        how = tk.Frame(self, bg=BG3, padx=14, pady=12)
-        how.pack(fill="x", pady=(0, 14))
-        tk.Label(how,
-                 text="What happens when you click Launch:\n\n"
-                      "  1.  Your sequence config gets saved to the CPharm folder\n"
-                      "  2.  The CPharm server starts (a black Terminal window opens)\n"
-                      "  3.  Your browser opens the control panel at  http://localhost:8080\n"
-                      "  4.  On the dashboard, click 'Run All Groups' to start all groups at once\n\n"
-                      "Leave the black Terminal window open while phones are running.\n"
-                      "Close it to shut everything down.",
-                 font=FONT_BODY, bg=BG3, fg=T2, justify="left").pack(fill="x")
+        step1 = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        step1.pack(fill="x", pady=(0, 8))
+        tk.Label(step1, text="Step A — Start the server",
+                 font=("Segoe UI", 11, "bold"), bg=BG3, fg=ACCENT, anchor="w").pack(fill="x")
+        tk.Label(step1,
+                 text="This starts the CPharm background server. A black Terminal window will open — "
+                      "leave it open the whole time.",
+                 font=FONT_SUB, bg=BG3, fg=T2, anchor="w", wraplength=620).pack(fill="x", pady=(2, 8))
+        srv_row = tk.Frame(step1, bg=BG3)
+        srv_row.pack(fill="x")
+        self._btn_start_srv = tk.Button(srv_row, text="▶  Start Server",
+                                        font=("Segoe UI", 10, "bold"),
+                                        bg=GREEN, fg=BG, relief="flat", cursor="hand2",
+                                        command=self._start_server, padx=14, pady=7)
+        self._btn_start_srv.pack(side="left", padx=(0, 8))
+        self._btn_stop_srv  = tk.Button(srv_row, text="■  Stop Server",
+                                        font=("Segoe UI", 10, "bold"),
+                                        bg=RED, fg=BG, relief="flat", cursor="hand2",
+                                        command=self._stop_server, padx=14, pady=7,
+                                        state="disabled")
+        self._btn_stop_srv.pack(side="left")
+        self._srv_lbl = tk.Label(srv_row, text="Server not running",
+                                 font=FONT_SUB, bg=BG3, fg=T2)
+        self._srv_lbl.pack(side="left", padx=12)
 
-        btn_row = tk.Frame(self, bg=BG)
-        btn_row.pack(fill="x")
-        self.btn(btn_row, "💾  Save Config", self._save, color=BG3)
-        self.btn(btn_row, "🚀  Launch Dashboard", self._launch, color=GREEN, width=22)
-        self._lbl = tk.Label(btn_row, text="", font=FONT_SUB, bg=BG, fg=T2)
-        self._lbl.pack(side="left", padx=10)
+        step2 = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        step2.pack(fill="x", pady=(0, 8))
+        tk.Label(step2, text="Step B — Run your groups",
+                 font=("Segoe UI", 11, "bold"), bg=BG3, fg=GREEN, anchor="w").pack(fill="x")
+        tk.Label(step2,
+                 text="Starts all groups at the same time. Each group runs on its assigned phones.",
+                 font=FONT_SUB, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 8))
+        run_row = tk.Frame(step2, bg=BG3)
+        run_row.pack(fill="x")
+        self._btn_run = tk.Button(run_row, text="▶  Run All Groups",
+                                  font=("Segoe UI", 10, "bold"),
+                                  bg=GREEN, fg=BG, relief="flat", cursor="hand2",
+                                  command=self._run_groups, padx=14, pady=7, state="disabled")
+        self._btn_run.pack(side="left", padx=(0, 8))
+        self._btn_stop_grp = tk.Button(run_row, text="■  Stop All",
+                                       font=("Segoe UI", 10, "bold"),
+                                       bg=RED, fg=BG, relief="flat", cursor="hand2",
+                                       command=self._stop_groups, padx=14, pady=7, state="disabled")
+        self._btn_stop_grp.pack(side="left")
+        self._run_lbl = tk.Label(run_row, text="", font=FONT_SUB, bg=BG3, fg=T2)
+        self._run_lbl.pack(side="left", padx=12)
+
+        tk.Label(self, text="Live log:", font=("Segoe UI", 9, "bold"),
+                 bg=BG, fg=T2, anchor="w").pack(fill="x", pady=(6, 2))
+        log_frame = tk.Frame(self, bg=BG2)
+        log_frame.pack(fill="both", expand=True)
+        self._log_box = tk.Text(log_frame, height=8, font=FONT_MONO, bg=BG2, fg=T1,
+                                relief="flat", state="disabled", wrap="word")
+        log_sb = tk.Scrollbar(log_frame, orient="vertical", command=self._log_box.yview)
+        self._log_box.configure(yscrollcommand=log_sb.set)
+        self._log_box.pack(side="left", fill="both", expand=True)
+        log_sb.pack(side="right", fill="y")
+
+        misc_row = tk.Frame(self, bg=BG)
+        misc_row.pack(fill="x", pady=6)
+        tk.Button(misc_row, text="Open Browser Dashboard",
+                  font=FONT_SUB, bg=BG3, fg=T1, relief="flat", cursor="hand2",
+                  command=lambda: webbrowser.open(f"http://localhost:{DASHBOARD_PORT}"),
+                  padx=10, pady=5).pack(side="left", padx=(0, 8))
+        tk.Button(misc_row, text="💾 Save Config",
+                  font=FONT_SUB, bg=BG3, fg=T1, relief="flat", cursor="hand2",
+                  command=self._save_silent, padx=10, pady=5).pack(side="left")
 
     def on_enter(self):
+        self._refresh_summary()
+        self._save_silent()
+
+    def _refresh_summary(self):
         lines = []
         for i, g in enumerate(state["groups"], 1):
-            phone_names = []
+            names = []
             for s in g["phones"]:
-                match = next((p for p in state["phones"] if p["serial"] == s), None)
-                phone_names.append(match["name"] if match else s)
-            repeat_str = "forever" if g["repeat_forever"] else f"{g['repeat']}x"
+                m = next((p for p in state["phones"] if p["serial"] == s), None)
+                names.append(m["name"] if m else s)
+            rep = "forever" if g["repeat_forever"] else f"{g['repeat']}×"
             lines.append(
-                f"Group {i}: {g['name']}\n"
-                f"  Phones  : {', '.join(phone_names) or 'none'}\n"
-                f"  Sequence: {len(g['steps'])} steps\n"
-                f"  Stagger : {g['stagger_secs']}s between phones\n"
-                f"  Repeat  : {repeat_str}\n"
+                f"  Group {i}: {g['name']!r}  |  "
+                f"{len(names)} phone(s)  |  {len(g['steps'])} steps  |  "
+                f"stagger {g['stagger_secs']}s  |  repeat {rep}"
             )
         self._summary.config(state="normal")
         self._summary.delete("1.0", "end")
-        self._summary.insert("end", "\n".join(lines))
+        self._summary.insert("end", "\n".join(lines) or "  (no groups configured)")
         self._summary.config(state="disabled")
 
-    def _save(self):
+    def _log(self, text, color=T1):
+        self._log_box.config(state="normal")
+        self._log_box.insert("end", text + "\n")
+        self._log_box.see("end")
+        self._log_box.config(state="disabled")
+
+    def _save_silent(self):
         d = state.get("cpharm_dir", "")
         if not d:
-            messagebox.showerror("Error", "No CPharm folder set. Go back to Step 2.")
-            return
+            return None
         rec_dir = Path(d) / "automation" / "recordings"
         rec_dir.mkdir(parents=True, exist_ok=True)
         out = rec_dir / "groups_config.json"
         out.write_text(json.dumps({"groups": state["groups"]}, indent=2))
-        messagebox.showinfo("Saved!", f"Config saved to:\n{out}")
         return str(out)
 
-    def _launch(self):
-        saved = self._save()
+    def _start_server(self):
+        d = state.get("cpharm_dir", "")
+        if not d:
+            messagebox.showerror("Error", "CPharm folder not set. Go back to Step 2.")
+            return
+        saved = self._save_silent()
         if not saved:
             return
-        dashboard = Path(state["cpharm_dir"]) / "automation" / "dashboard.py"
+        dashboard = Path(d) / "automation" / "dashboard.py"
         try:
-            subprocess.Popen(
+            self._server_proc = subprocess.Popen(
                 [state["python_cmd"], str(dashboard)],
-                cwd=str(Path(state["cpharm_dir"]) / "automation"),
+                cwd=str(Path(d) / "automation"),
                 creationflags=subprocess.CREATE_NEW_CONSOLE if IS_WIN else 0,
             )
-            time.sleep(2)
-            webbrowser.open(f"http://localhost:{DASHBOARD_PORT}")
-            self._lbl.config(text="Dashboard starting! Check your browser.", fg=GREEN)
+            self._log("Server starting… waiting 3 seconds…")
+            self._btn_start_srv.config(state="disabled")
+            self._btn_stop_srv.config(state="normal")
+            self._srv_lbl.config(text="⏳ Starting…", fg=YELLOW)
+
+            def wait_and_enable():
+                time.sleep(3)
+                if self._server_proc.poll() is None:
+                    self._srv_lbl.config(text="✅ Server running", fg=GREEN)
+                    self._btn_run.config(state="normal")
+                    self._log("Server is up! Click 'Run All Groups' to start.")
+                else:
+                    self._srv_lbl.config(text="❌ Server crashed — check Terminal", fg=RED)
+                    self._btn_start_srv.config(state="normal")
+                    self._btn_stop_srv.config(state="disabled")
+
+            threading.Thread(target=wait_and_enable, daemon=True).start()
         except Exception as e:
-            messagebox.showerror("Launch failed", str(e))
+            messagebox.showerror("Failed to start", str(e))
+
+    def _stop_server(self):
+        self._stop_groups()
+        if self._server_proc:
+            self._server_proc.terminate()
+            self._server_proc = None
+        self._srv_lbl.config(text="Server stopped", fg=T2)
+        self._btn_start_srv.config(state="normal")
+        self._btn_stop_srv.config(state="disabled")
+        self._btn_run.config(state="disabled")
+        self._log("Server stopped.")
+
+    def _api_call(self, path: str, body: dict):
+        import urllib.request
+        url  = f"http://localhost:{DASHBOARD_PORT}{path}"
+        data = json.dumps(body).encode()
+        req  = urllib.request.Request(url, data=data,
+                                      headers={"Content-Type": "application/json"},
+                                      method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return json.loads(r.read())
+        except Exception as e:
+            return {"error": str(e)}
+
+    def _run_groups(self):
+        self._log("Starting all groups…")
+        self._btn_run.config(state="disabled")
+        self._btn_stop_grp.config(state="normal")
+
+        def go():
+            result = self._api_call("/api/groups/run", {"groups": state["groups"]})
+            if "error" in result:
+                self._log(f"❌  Error: {result['error']}")
+                self._btn_run.config(state="normal")
+                self._btn_stop_grp.config(state="disabled")
+            else:
+                n = result.get("groups", len(state["groups"]))
+                self._log(f"✅  {n} group(s) running in parallel!")
+                self._run_lbl.config(text=f"{n} group(s) running", fg=GREEN)
+
+        threading.Thread(target=go, daemon=True).start()
+
+    def _stop_groups(self):
+        def go():
+            self._api_call("/api/groups/stop", {})
+            self._log("All groups stopped.")
+            self._run_lbl.config(text="", fg=T2)
+            self._btn_run.config(state="normal")
+            self._btn_stop_grp.config(state="disabled")
+
+        threading.Thread(target=go, daemon=True).start()
 
 
 class CPharmWizard(tk.Tk):

@@ -1,7 +1,7 @@
 """
 CPharm Setup Wizard
-Run this on Windows. It installs everything and lets you build a tap sequence
-on your master phone, then blast it across all your connected phones.
+Run this on Windows. It installs everything, lets you split phones into
+groups, build a different sequence for each group, then run them all at once.
 
 Build to .exe (run build.bat on Windows):
     pip install pyinstaller pillow
@@ -19,9 +19,9 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
-from urllib.request import urlopen, urlretrieve
+from urllib.request import urlretrieve
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
+from tkinter import ttk, messagebox, filedialog
 
 try:
     from PIL import Image, ImageTk
@@ -29,20 +29,21 @@ try:
 except ImportError:
     HAS_PIL = False
 
-REPO_URL    = "https://github.com/twoskoops707/cpharm.git"
+REPO_URL       = "https://github.com/twoskoops707/cpharm.git"
 DASHBOARD_PORT = 8080
-IS_WIN      = platform.system() == "Windows"
+IS_WIN         = platform.system() == "Windows"
 
-BG      = "#0d1117"
-BG2     = "#161b22"
-BG3     = "#21262d"
-BORDER  = "#30363d"
-ACCENT  = "#58a6ff"
-GREEN   = "#3fb950"
-RED     = "#f85149"
-YELLOW  = "#d29922"
-T1      = "#e6edf3"
-T2      = "#8b949e"
+BG     = "#0d1117"
+BG2    = "#161b22"
+BG3    = "#21262d"
+BORDER = "#30363d"
+ACCENT = "#58a6ff"
+GREEN  = "#3fb950"
+RED    = "#f85149"
+YELLOW = "#d29922"
+T1     = "#e6edf3"
+T2     = "#8b949e"
+T3     = "#6e7681"
 
 FONT_HEAD = ("Segoe UI", 20, "bold")
 FONT_SUB  = ("Segoe UI", 10)
@@ -75,14 +76,19 @@ STEP_LABELS = {
 }
 
 state = {
-    "cpharm_dir":   "",
-    "python_cmd":   "python",
-    "phones":       [],
-    "steps":        [],
-    "clone_count":  4,
-    "stagger_secs": 60,
-    "repeat":       1,
-    "repeat_forever": False,
+    "cpharm_dir":  "",
+    "python_cmd":  "python",
+    "phones":      [],
+    "groups": [
+        {
+            "name":           "Group 1",
+            "phones":         [],
+            "steps":          [],
+            "stagger_secs":   60,
+            "repeat":         1,
+            "repeat_forever": False,
+        }
+    ],
 }
 
 
@@ -131,15 +137,15 @@ def describe_step(step):
     t = step.get("type", "")
     icon = STEP_ICONS.get(t, "•")
     if t == "open_url":
-        return f"{icon}  Open → {step.get('url', '')}"
+        return f"{icon}  Open  → {step.get('url', '')}"
     if t == "tap":
-        return f"{icon}  Tap  → ({step.get('x', 0)}, {step.get('y', 0)})"
+        return f"{icon}  Tap   → ({step.get('x', 0)}, {step.get('y', 0)})"
     if t == "wait":
-        return f"{icon}  Wait → {step.get('seconds', 1)} seconds"
+        return f"{icon}  Wait  → {step.get('seconds', 1)} seconds"
     if t == "swipe":
         return f"{icon}  Swipe → ({step.get('x1',0)},{step.get('y1',0)}) to ({step.get('x2',0)},{step.get('y2',0)})"
     if t == "keyevent":
-        return f"{icon}  Key  → {step.get('key', 'BACK')}"
+        return f"{icon}  Key   → {step.get('key', 'BACK')}"
     if t == "close_app":
         return f"{icon}  Close → {step.get('package', 'Chrome')}"
     if t == "clear_cookies":
@@ -147,8 +153,37 @@ def describe_step(step):
     if t == "rotate_identity":
         return f"{icon}  Rotate IP + identity"
     if t == "type_text":
-        return f"{icon}  Type → \"{step.get('text', '')}\""
+        return f"{icon}  Type  → \"{step.get('text', '')}\""
     return f"• {t}"
+
+
+def execute_steps(steps, serial):
+    for step in steps:
+        t = step.get("type", "")
+        if t == "open_url":
+            adb("shell", "am", "start", "-a", "android.intent.action.VIEW",
+                "-d", step.get("url", ""), serial=serial)
+        elif t == "tap":
+            adb("shell", "input", "tap",
+                str(step.get("x", 0)), str(step.get("y", 0)), serial=serial)
+        elif t == "wait":
+            time.sleep(int(step.get("seconds", 1)))
+        elif t == "swipe":
+            adb("shell", "input", "swipe",
+                str(step.get("x1", 0)), str(step.get("y1", 0)),
+                str(step.get("x2", 0)), str(step.get("y2", 0)),
+                str(step.get("ms", 400)), serial=serial)
+        elif t == "keyevent":
+            adb("shell", "input", "keyevent", step.get("key", "BACK"), serial=serial)
+        elif t == "close_app":
+            adb("shell", "am", "force-stop",
+                step.get("package", "com.android.chrome"), serial=serial)
+        elif t == "clear_cookies":
+            adb("shell", "pm", "clear", "com.android.chrome", serial=serial)
+        elif t == "type_text":
+            text = step.get("text", "").replace(" ", "%s").replace("'", "")
+            adb("shell", "input", "text", text, serial=serial)
+        time.sleep(0.3)
 
 
 class PageBase(tk.Frame):
@@ -164,53 +199,44 @@ class PageBase(tk.Frame):
                  justify="left", anchor="w").pack(fill="x", pady=(0, 4))
         if subtitle:
             tk.Label(self, text=subtitle, font=FONT_SUB, bg=BG, fg=T2,
-                     justify="left", anchor="w", wraplength=620).pack(fill="x", pady=(0, 16))
+                     justify="left", anchor="w", wraplength=640).pack(fill="x", pady=(0, 14))
 
-    def btn(self, parent, text, cmd, color=ACCENT, width=None):
-        kw = dict(text=text, command=cmd, bg=color, fg=BG,
+    def btn(self, parent, text, cmd, color=ACCENT, width=None, side="left"):
+        kw = dict(text=text, command=cmd, bg=color, fg=BG if color not in (BG3, T3) else T1,
                   font=("Segoe UI", 10, "bold"), relief="flat",
                   cursor="hand2", pady=7, padx=14, bd=0)
         if width:
             kw["width"] = width
         b = tk.Button(parent, **kw)
-        b.pack(side="left", padx=(0, 8))
+        b.pack(side=side, padx=(0, 8))
         return b
-
-    def status_row(self, parent, label):
-        row = tk.Frame(parent, bg=BG2)
-        row.pack(fill="x", pady=2)
-        tk.Label(row, text=label, font=FONT_BODY, bg=BG2, fg=T1,
-                 width=30, anchor="w").pack(side="left", padx=8, pady=6)
-        lbl = tk.Label(row, text="⬜  Checking…", font=FONT_MONO, bg=BG2, fg=T2, anchor="w")
-        lbl.pack(side="left", padx=4)
-        return lbl, row
 
 
 class WelcomePage(PageBase):
     def __init__(self, parent):
         super().__init__(parent)
-
-        tk.Label(self, text="👋", font=("Segoe UI", 48), bg=BG).pack(pady=(30, 10))
-        tk.Label(self, text="Welcome to CPharm Setup", font=("Segoe UI", 22, "bold"),
-                 bg=BG, fg=T1).pack()
+        tk.Label(self, text="👋", font=("Segoe UI", 48), bg=BG).pack(pady=(24, 8))
+        tk.Label(self, text="Welcome to CPharm Setup",
+                 font=("Segoe UI", 22, "bold"), bg=BG, fg=T1).pack()
         tk.Label(self,
                  text="This wizard will get everything installed on your Windows PC\n"
-                      "and help you build a tap sequence to run on all your phones at once.\n\n"
+                      "and help you run different tasks on different groups of phones at the same time.\n\n"
                       "You do NOT need to know anything about computers.\n"
-                      "Just click Next and follow the instructions.",
-                 font=FONT_BIG, bg=BG, fg=T2, justify="center").pack(pady=20)
+                      "Just click Next and follow along.",
+                 font=FONT_BIG, bg=BG, fg=T2, justify="center").pack(pady=16)
 
         box = tk.Frame(self, bg=BG3, padx=20, pady=14)
         box.pack(padx=40, fill="x")
-        tk.Label(box, text="Before you start, make sure you have:", font=("Segoe UI", 10, "bold"),
-                 bg=BG3, fg=YELLOW, anchor="w").pack(fill="x")
+        tk.Label(box, text="Before you start, make sure you have:",
+                 font=("Segoe UI", 10, "bold"), bg=BG3, fg=YELLOW, anchor="w").pack(fill="x")
         for item in [
             "✅  A Windows 10 or 11 computer",
             "✅  An internet connection",
-            "✅  At least one Android phone (or emulator) plugged in or on WiFi",
+            "✅  At least one Android phone plugged in or on WiFi",
             "✅  About 10 minutes of free time",
         ]:
-            tk.Label(box, text=item, font=FONT_BODY, bg=BG3, fg=T1, anchor="w").pack(fill="x", pady=2)
+            tk.Label(box, text=item, font=FONT_BODY, bg=BG3, fg=T1,
+                     anchor="w").pack(fill="x", pady=2)
 
 
 class SoftwarePage(PageBase):
@@ -218,82 +244,88 @@ class SoftwarePage(PageBase):
         super().__init__(parent)
         self.header(
             "Step 1 — Install the Software",
-            "These are free programs that CPharm needs to work. Click the green button next to "
-            "anything that shows ❌ to install it. Then click 'Check Again'."
+            "These three free programs are required. Click the button next to anything "
+            "showing ❌ to download it, then click Check Again."
         )
 
-        self._info = tk.Frame(self, bg=BG3, padx=16, pady=12)
-        self._info.pack(fill="x", pady=(0, 12))
-        tk.Label(self._info,
-                 text="💡  HOW TO OPEN A TERMINAL:\n"
-                      "   Press the Windows key on your keyboard → type  cmd  → press Enter.\n"
-                      "   A black window opens. That is the Terminal. Copy and paste the commands below.",
+        terminal_box = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        terminal_box.pack(fill="x", pady=(0, 12))
+        tk.Label(terminal_box,
+                 text="💡  HOW TO OPEN A TERMINAL (you'll need this a lot):\n\n"
+                      "   1.  Press the  Windows  key on your keyboard\n"
+                      "   2.  Type:  cmd\n"
+                      "   3.  Press  Enter\n\n"
+                      "   A black window opens. That is the Terminal.\n"
+                      "   You type commands in there and press Enter to run them.",
                  font=FONT_BODY, bg=BG3, fg=T2, justify="left", anchor="w").pack(fill="x")
-
-        checks = tk.Frame(self, bg=BG)
-        checks.pack(fill="x", pady=(0, 10))
 
         self._rows = {}
         items = [
-            ("python",  "Python 3.11+",
+            ("python",
+             "Python 3.11+",
              "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe",
-             "Download & run the Python installer.\n"
-             "IMPORTANT: on the first screen, tick the box that says\n"
-             "\"Add Python to PATH\" before clicking Install Now."),
-            ("git",     "Git for Windows",
+             "HOW TO INSTALL PYTHON:\n\n"
+             "1. Click 'Open Download Page'\n"
+             "2. Download the file (python-3.11.9-amd64.exe)\n"
+             "3. Double-click the downloaded file to run it\n"
+             "4. VERY IMPORTANT: Before you click anything else, look for a checkbox\n"
+             "   at the bottom that says 'Add Python to PATH' — TICK THAT BOX\n"
+             "5. Click 'Install Now'\n"
+             "6. Wait for it to finish\n"
+             "7. Come back here and click 'Check Again'"),
+            ("git",
+             "Git for Windows",
              "https://git-scm.com/download/win",
-             "Download & run the Git installer. Click Next on every screen."),
-            ("adb",     "Android Debug Bridge (ADB)",
+             "HOW TO INSTALL GIT:\n\n"
+             "1. Click 'Open Download Page'\n"
+             "2. Download the installer (Git-X.X.X-64-bit.exe)\n"
+             "3. Double-click it\n"
+             "4. Click Next on EVERY screen — all the defaults are fine\n"
+             "5. Click Finish when done\n"
+             "6. Come back here and click 'Check Again'"),
+            ("adb",
+             "ADB (Android Debug Bridge)",
              "https://dl.google.com/android/repository/platform-tools-latest-windows.zip",
-             "Download the zip → unzip it → put the 'platform-tools' folder somewhere easy\n"
-             "like  C:\\platform-tools.  Then add it to PATH:\n"
-             "  Windows key → type 'environment variables' → Edit → Path → New → paste the folder path."),
+             "HOW TO INSTALL ADB:\n\n"
+             "1. Click 'Open Download Page' — it downloads a .zip file automatically\n"
+             "2. Open your Downloads folder\n"
+             "3. Right-click the zip file → Extract All → Extract\n"
+             "4. Move the 'platform-tools' folder somewhere easy, like  C:\\platform-tools\n"
+             "5. Now add it to Windows PATH:\n"
+             "   a. Press Windows key, type: environment variables, press Enter\n"
+             "   b. Click 'Environment Variables'\n"
+             "   c. Under 'System variables', click 'Path', then 'Edit'\n"
+             "   d. Click 'New'\n"
+             "   e. Type:  C:\\platform-tools  (or wherever you put the folder)\n"
+             "   f. Click OK on all windows\n"
+             "6. Close and reopen Terminal\n"
+             "7. Come back here and click 'Check Again'"),
         ]
 
         for key, label, url, tip in items:
-            frame = tk.Frame(checks, bg=BG2, pady=4, padx=10)
-            frame.pack(fill="x", pady=3)
-            status = tk.Label(frame, text="…", font=FONT_MONO, bg=BG2, fg=T2, width=3)
+            row = tk.Frame(self, bg=BG2, pady=4, padx=12)
+            row.pack(fill="x", pady=3)
+            status = tk.Label(row, text="…", font=FONT_MONO, bg=BG2, fg=T2, width=3)
             status.pack(side="left")
-            tk.Label(frame, text=label, font=FONT_BODY, bg=BG2, fg=T1, width=22, anchor="w").pack(side="left")
-            inst_btn = tk.Button(frame, text="Open Download Page", font=FONT_SUB,
-                                 bg=ACCENT, fg=BG, relief="flat", cursor="hand2",
-                                 command=lambda u=url: webbrowser.open(u), padx=10)
-            inst_btn.pack(side="left", padx=6)
-            tip_btn = tk.Button(frame, text="How?", font=FONT_SUB,
-                                bg=BG3, fg=T2, relief="flat", cursor="hand2",
-                                command=lambda t=tip, l=label: messagebox.showinfo(
-                                    f"How to install {l}", t))
-            tip_btn.pack(side="left")
+            tk.Label(row, text=label, font=FONT_BODY, bg=BG2, fg=T1,
+                     width=24, anchor="w").pack(side="left")
+            tk.Button(row, text="Open Download Page", font=FONT_SUB,
+                      bg=ACCENT, fg=BG, relief="flat", cursor="hand2", padx=10,
+                      command=lambda u=url: webbrowser.open(u)).pack(side="left", padx=6)
+            tk.Button(row, text="How to install?", font=FONT_SUB,
+                      bg=BG3, fg=T2, relief="flat", cursor="hand2", padx=8,
+                      command=lambda t=tip, l=label: messagebox.showinfo(
+                          f"How to install {l}", t)).pack(side="left")
             self._rows[key] = status
 
         btn_row = tk.Frame(self, bg=BG)
-        btn_row.pack(fill="x", pady=8)
-        self.btn(btn_row, "Check Again", self._check)
+        btn_row.pack(fill="x", pady=10)
+        self.btn(btn_row, "🔄  Check Again", self._check)
         self._result_lbl = tk.Label(btn_row, text="", font=FONT_SUB, bg=BG, fg=T2)
         self._result_lbl.pack(side="left", padx=10)
 
     def on_enter(self):
         self._check()
-
-    def _check(self):
-        checks = {
-            "python": self._has_python(),
-            "git":    self._has_cmd("git", "--version"),
-            "adb":    self._has_cmd("adb", "version"),
-        }
-        all_ok = True
-        for key, ok in checks.items():
-            lbl = self._rows[key]
-            lbl.config(text="✅" if ok else "❌", fg=GREEN if ok else RED)
-            if not ok:
-                all_ok = False
-        if all_ok:
-            self._result_lbl.config(text="All software found! Click Next →", fg=GREEN)
-        else:
-            self._result_lbl.config(
-                text="Install anything showing ❌ then click Check Again", fg=YELLOW)
-        return all_ok
 
     def _has_python(self):
         for cmd in ["python", "python3", "py"]:
@@ -304,15 +336,34 @@ class SoftwarePage(PageBase):
         return False
 
     def _has_cmd(self, *args):
-        ok, _ = run_cmd(list(args))
-        return ok
+        return run_cmd(list(args))[0]
+
+    def _check(self):
+        results = {
+            "python": self._has_python(),
+            "git":    self._has_cmd("git", "--version"),
+            "adb":    self._has_cmd("adb", "version"),
+        }
+        all_ok = True
+        for key, ok in results.items():
+            self._rows[key].config(text="✅" if ok else "❌", fg=GREEN if ok else RED)
+            if not ok:
+                all_ok = False
+        if all_ok:
+            self._result_lbl.config(text="All three installed! Click Next →", fg=GREEN)
+        else:
+            self._result_lbl.config(
+                text="Install anything showing ❌, then click Check Again", fg=YELLOW)
+        return all_ok
 
     def can_advance(self):
         if not self._check():
             messagebox.showerror(
                 "Missing software",
-                "Please install everything showing ❌ before continuing.\n\n"
-                "After installing, close and reopen your Terminal, then click Check Again."
+                "Please install everything showing ❌ before moving on.\n\n"
+                "Click 'How to install?' next to each one for step-by-step instructions.\n\n"
+                "After installing, close and reopen the black Terminal window, "
+                "then click Check Again."
             )
             return False
         return True
@@ -323,80 +374,75 @@ class RepoPage(PageBase):
         super().__init__(parent)
         self.header(
             "Step 2 — Get CPharm",
-            "We need to download the CPharm files onto your computer. "
-            "You only need to do this once."
+            "Download the CPharm files to your computer. You only do this once."
         )
 
-        steps_box = tk.Frame(self, bg=BG3, padx=16, pady=14)
-        steps_box.pack(fill="x", pady=(0, 14))
-        tk.Label(steps_box,
-                 text="📋  STEP-BY-STEP:\n\n"
-                      "1.  Open Terminal  (Windows key → type cmd → Enter)\n\n"
-                      "2.  Copy this line and paste it into the Terminal, then press Enter:\n",
+        box = tk.Frame(self, bg=BG3, padx=16, pady=16)
+        box.pack(fill="x", pady=(0, 14))
+        tk.Label(box,
+                 text="📋  DO THIS:\n\n"
+                      "1.  Open Terminal\n"
+                      "    (Windows key → type  cmd  → Enter)\n\n"
+                      "2.  Copy this line below and paste it into the Terminal (Ctrl+V), then press Enter:\n",
                  font=FONT_BODY, bg=BG3, fg=T2, justify="left", anchor="w").pack(fill="x")
 
-        cmd_frame = tk.Frame(steps_box, bg="#000", padx=10, pady=8)
+        cmd_frame = tk.Frame(box, bg="#000", padx=12, pady=10)
         cmd_frame.pack(fill="x")
-        cmd_text = tk.Label(cmd_frame,
-                            text=f"git clone {REPO_URL}  C:\\CPharm",
-                            font=FONT_MONO, bg="#000", fg=GREEN, cursor="hand2", anchor="w")
-        cmd_text.pack(fill="x")
+        cmd_lbl = tk.Label(cmd_frame,
+                           text=f"git clone {REPO_URL}  C:\\CPharm",
+                           font=FONT_MONO, bg="#000", fg=GREEN, anchor="w")
+        cmd_lbl.pack(fill="x")
 
-        tk.Label(steps_box,
-                 text="\n3.  Wait for it to finish (you'll see a folder called C:\\CPharm appear).\n\n"
-                      "4.  Then come back here and click the folder button below so I know where it is.",
+        tk.Label(box,
+                 text="\n3.  Wait for it to finish. You'll see a bunch of text scroll by.\n"
+                      "    When it stops and you see a new line starting with  C:\\>,  it's done.\n\n"
+                      "4.  A folder called  C:\\CPharm  now exists on your computer.\n\n"
+                      "5.  Click the button below to tell me where you put it:",
                  font=FONT_BODY, bg=BG3, fg=T2, justify="left", anchor="w").pack(fill="x")
 
-        sep = tk.Frame(steps_box, bg=BG3, pady=6)
-        sep.pack(fill="x")
-        tk.Label(sep, text="— OR —", font=FONT_SUB, bg=BG3, fg=T2).pack()
-
-        tk.Label(steps_box,
-                 text="If you already have the CPharm folder somewhere, just click the button below.",
-                 font=FONT_BODY, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(6, 0))
+        sep = tk.Frame(box, bg=BORDER, height=1)
+        sep.pack(fill="x", pady=10)
+        tk.Label(box,
+                 text="Already downloaded CPharm? Click below to find the folder instead.",
+                 font=FONT_SUB, bg=BG3, fg=T3).pack(anchor="w")
 
         folder_row = tk.Frame(self, bg=BG)
-        folder_row.pack(fill="x", pady=8)
-        self.btn(folder_row, "📂  Browse for CPharm Folder", self._pick_folder)
-        self._folder_lbl = tk.Label(folder_row, text="No folder selected yet",
-                                    font=FONT_MONO, bg=BG, fg=T2)
-        self._folder_lbl.pack(side="left", padx=10)
-
-        self._deps_frame = tk.Frame(self, bg=BG)
-        self._deps_frame.pack(fill="x", pady=4)
-        self._deps_lbl = tk.Label(self._deps_frame, text="", font=FONT_SUB, bg=BG, fg=T2)
-        self._deps_lbl.pack(side="left")
+        folder_row.pack(fill="x", pady=10)
+        self.btn(folder_row, "📂  Select the CPharm Folder", self._pick)
+        self._lbl = tk.Label(folder_row, text="No folder selected yet",
+                             font=FONT_MONO, bg=BG, fg=T2)
+        self._lbl.pack(side="left", padx=10)
 
     def on_enter(self):
         if Path("C:/CPharm/automation/dashboard.py").exists():
             state["cpharm_dir"] = "C:/CPharm"
-            self._folder_lbl.config(text="C:/CPharm  ✅", fg=GREEN)
+            self._lbl.config(text="C:/CPharm  ✅", fg=GREEN)
 
-    def _pick_folder(self):
-        d = filedialog.askdirectory(title="Select the CPharm folder",
-                                    initialdir="C:/")
-        if d:
-            if not Path(d).joinpath("automation", "dashboard.py").exists():
-                messagebox.showerror(
-                    "Wrong folder",
-                    "That doesn't look like the CPharm folder.\n"
-                    "The right folder should contain an 'automation' sub-folder.\n\n"
-                    "Try selecting the folder named 'CPharm' or 'cpharm'."
-                )
-                return
-            state["cpharm_dir"] = d
-            self._folder_lbl.config(text=f"{d}  ✅", fg=GREEN)
+    def _pick(self):
+        d = filedialog.askdirectory(title="Select the CPharm folder", initialdir="C:/")
+        if not d:
+            return
+        if not Path(d).joinpath("automation", "dashboard.py").exists():
+            messagebox.showerror(
+                "Wrong folder",
+                "That doesn't look like the CPharm folder.\n"
+                "The correct folder contains a sub-folder called 'automation'.\n\n"
+                "Try selecting the folder named CPharm or cpharm."
+            )
+            return
+        state["cpharm_dir"] = d
+        self._lbl.config(text=f"{d}  ✅", fg=GREEN)
 
     def can_advance(self):
         if not state["cpharm_dir"]:
             messagebox.showerror(
                 "No folder selected",
-                "Please select the CPharm folder before continuing.\n\n"
+                "Please select the CPharm folder.\n\n"
                 "If you haven't downloaded it yet:\n"
                 "1. Open Terminal\n"
-                f"2. Type: git clone {REPO_URL} C:\\CPharm\n"
+                f"2. Type:  git clone {REPO_URL} C:\\CPharm\n"
                 "3. Press Enter and wait\n"
-                "4. Come back and click the folder button"
+                "4. Click 'Select the CPharm Folder' above"
             )
             return False
         return True
@@ -407,25 +453,23 @@ class DepsPage(PageBase):
         super().__init__(parent)
         self.header(
             "Step 3 — Install Python Packages",
-            "CPharm needs a few extra Python pieces. Click the big button and wait — "
-            "this only takes about 30 seconds."
+            "CPharm needs two small helper packages. Click the button and wait about 30 seconds."
         )
 
-        info = tk.Frame(self, bg=BG3, padx=16, pady=14)
-        info.pack(fill="x", pady=(0, 14))
-        tk.Label(info,
-                 text="What's happening when you click Install:\n"
-                      "  Python will download two small helper packages called websockets and psutil.\n"
-                      "  They're free and safe. You need them for the dashboard to work.",
+        box = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        box.pack(fill="x", pady=(0, 14))
+        tk.Label(box,
+                 text="What's about to happen:\n\n"
+                      "Python will download two helper files called  websockets  and  psutil.\n"
+                      "They're free, safe, and tiny. You need them for the dashboard to work.\n"
+                      "This is the computer version of 'installing an app'.",
                  font=FONT_BODY, bg=BG3, fg=T2, justify="left", anchor="w").pack(fill="x")
 
-        self.btn(self, "  Install Python Packages  ", self._install, color=GREEN, width=28)
+        self.btn(self, "  ▶  Install Now  ", self._install, color=GREEN, width=20)
 
-        self._out = tk.Text(self, height=10, font=FONT_MONO, bg=BG2, fg=T1,
-                            insertbackground=T1, relief="flat", state="disabled",
-                            wrap="word")
+        self._out = tk.Text(self, height=9, font=FONT_MONO, bg=BG2, fg=T1,
+                            insertbackground=T1, relief="flat", state="disabled", wrap="word")
         self._out.pack(fill="x", pady=12)
-
         self._done = False
 
     def _install(self):
@@ -433,20 +477,23 @@ class DepsPage(PageBase):
         if not d:
             messagebox.showerror("Error", "Go back and select the CPharm folder first.")
             return
-        req = Path(d) / "requirements.txt"
-        cmd = [state["python_cmd"], "-m", "pip", "install", "-r", str(req), "--upgrade"]
+        req  = Path(d) / "requirements.txt"
+        cmd  = [state["python_cmd"], "-m", "pip", "install", "-r", str(req), "--upgrade"]
 
         def run():
-            self._log("Installing packages…\n")
+            self._log("Installing packages — please wait…\n\n")
             ok, out = run_cmd(cmd, timeout=180)
             self._log(out)
             if ok:
-                self._log("\n✅  All done! Click Next →\n")
+                self._log("\n✅  Done! Click Next →\n")
                 self._done = True
             else:
-                self._log("\n❌  Something went wrong. Read the red text above.\n"
-                          "If you see 'not recognized', Python isn't in PATH.\n"
-                          "Close this wizard and reinstall Python with the PATH checkbox ticked.\n")
+                self._log(
+                    "\n❌  Something went wrong.\n\n"
+                    "Common fixes:\n"
+                    "• No internet? Connect and try again.\n"
+                    "• Python not found? Reinstall Python with the 'Add to PATH' checkbox ticked.\n"
+                )
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -459,9 +506,8 @@ class DepsPage(PageBase):
     def can_advance(self):
         if not self._done:
             messagebox.showinfo(
-                "Not installed yet",
-                "Click 'Install Python Packages' and wait for it to finish,\n"
-                "then click Next."
+                "Not done yet",
+                "Click 'Install Now' and wait for it to finish, then click Next."
             )
             return False
         return True
@@ -472,37 +518,39 @@ class PhonesPage(PageBase):
         super().__init__(parent)
         self.header(
             "Step 4 — Connect Your Phones",
-            "Plug in your Android phones with a USB cable, or connect them over WiFi. "
-            "Then click Scan."
+            "Plug in your phones with a USB cable, or connect them over WiFi. Then click Scan."
         )
 
-        info = tk.Frame(self, bg=BG3, padx=16, pady=14)
+        info = tk.Frame(self, bg=BG3, padx=14, pady=14)
         info.pack(fill="x", pady=(0, 14))
         tk.Label(info,
                  text="📱  USB PHONE:\n"
-                      "   1. Plug the phone into your computer with a USB cable.\n"
-                      "   2. On the phone: Settings → Developer Options → turn on USB Debugging.\n"
-                      "   3. A popup appears on the phone — tap 'Allow'.\n\n"
-                      "📡  WIFI PHONE / EMULATOR:\n"
-                      "   Type the phone's IP address and port below and click Connect.\n"
-                      "   BlueStacks default: 127.0.0.1:5555   |   Waydroid: 192.168.250.1:5555",
+                      "   1. Plug the phone into your computer with a USB cable\n"
+                      "   2. On the phone: Settings → Developer Options → turn on USB Debugging\n"
+                      "      (If you don't see Developer Options: Settings → About Phone → tap\n"
+                      "       'Build Number' 7 times fast. A message says 'You are a developer!')\n"
+                      "   3. A popup appears on the phone asking to 'Allow USB Debugging' → tap Allow\n\n"
+                      "📡  EMULATOR or WIFI PHONE:\n"
+                      "   Type the IP address and port in the box below and click Connect.\n"
+                      "   BlueStacks: 127.0.0.1:5555   |   Waydroid: 192.168.250.1:5555   |   MEmu: 127.0.0.1:21503",
                  font=FONT_BODY, bg=BG3, fg=T2, justify="left", anchor="w").pack(fill="x")
 
-        ctrl_row = tk.Frame(self, bg=BG)
-        ctrl_row.pack(fill="x", pady=6)
-        self.btn(ctrl_row, "🔍  Scan for Phones", self._scan)
-        tk.Label(ctrl_row, text="or connect WiFi:", font=FONT_SUB, bg=BG, fg=T2).pack(side="left", padx=(12, 6))
-        self._ip_var = tk.StringVar(value="127.0.0.1:5555")
-        tk.Entry(ctrl_row, textvariable=self._ip_var, font=FONT_MONO, bg=BG2, fg=T1,
-                 insertbackground=T1, relief="flat", width=22).pack(side="left")
-        self.btn(ctrl_row, "Connect", self._connect_wifi)
+        ctrl = tk.Frame(self, bg=BG)
+        ctrl.pack(fill="x", pady=6)
+        self.btn(ctrl, "🔍  Scan for Phones", self._scan)
+        tk.Label(ctrl, text="  WiFi address:", font=FONT_SUB, bg=BG, fg=T2).pack(side="left")
+        self._ip = tk.StringVar(value="127.0.0.1:5555")
+        tk.Entry(ctrl, textvariable=self._ip, font=FONT_MONO, bg=BG2, fg=T1,
+                 insertbackground=T1, relief="flat", width=22).pack(side="left", padx=4)
+        self.btn(ctrl, "Connect", self._connect)
 
         self._list = tk.Listbox(self, font=FONT_MONO, bg=BG2, fg=T1,
                                 selectbackground=ACCENT, relief="flat",
                                 height=6, activestyle="none")
         self._list.pack(fill="x", pady=8)
 
-        self._status = tk.Label(self, text="Click Scan to find phones.", font=FONT_SUB, bg=BG, fg=T2)
+        self._status = tk.Label(self, text="Click Scan to find phones.",
+                                font=FONT_SUB, bg=BG, fg=T2)
         self._status.pack(anchor="w")
 
     def on_enter(self):
@@ -515,13 +563,16 @@ class PhonesPage(PageBase):
         if devs:
             for d in devs:
                 self._list.insert("end", f"  {d['name']}   ({d['serial']})")
-            self._status.config(text=f"Found {len(devs)} phone(s). Nice!", fg=GREEN)
+            self._status.config(
+                text=f"Found {len(devs)} phone(s). You can split them into groups on the next page.",
+                fg=GREEN)
         else:
             self._status.config(
-                text="No phones found. Plug in a phone and make sure USB Debugging is on.", fg=YELLOW)
+                text="No phones found. Check USB Debugging is on, then click Scan again.",
+                fg=YELLOW)
 
-    def _connect_wifi(self):
-        addr = self._ip_var.get().strip()
+    def _connect(self):
+        addr = self._ip.get().strip()
         if not re.match(r"^[a-zA-Z0-9._-]+:\d{2,5}$", addr):
             messagebox.showerror("Bad address", "Enter an address like  127.0.0.1:5555")
             return
@@ -533,279 +584,316 @@ class PhonesPage(PageBase):
         if not state["phones"]:
             messagebox.showwarning(
                 "No phones",
-                "No phones were found. You need at least one phone connected.\n\n"
+                "No phones were found. You need at least one.\n\n"
                 "Try:\n"
                 "• USB: Make sure USB Debugging is ON in Developer Options\n"
-                "• Emulator: Open BlueStacks or Genymotion first, then click Scan\n"
-                "• WiFi: Type the phone's IP:port and click Connect"
+                "• Emulator: Open BlueStacks first, then click Scan\n"
+                "• WiFi: Type the IP:port and click Connect"
             )
             return False
         return True
 
 
-class SequencePage(PageBase):
+class GroupsPage(PageBase):
+    """
+    Split phones into groups. Each group runs a different sequence at the same time.
+    Example: 5 phones browse a website, 5 phones test the app, 5 phones leave reviews.
+    """
     def __init__(self, parent):
         super().__init__(parent)
         self.header(
-            "Step 5 — Build Your Sequence",
-            "Tell the phones what to do. Add steps one by one. "
-            "Example: Open website → Wait 30s → Tap → Wait → Close."
+            "Step 5 — Groups & Sequences",
+            "Split your phones into groups. Each group does something different at the same time.\n"
+            "Example: Group 1 = browse website · Group 2 = test the app · Group 3 = leave reviews"
         )
 
-        help_box = tk.Frame(self, bg=BG3, padx=14, pady=10)
-        help_box.pack(fill="x", pady=(0, 10))
-        tk.Label(help_box,
-                 text="Think of this like giving your phone a to-do list.\n"
-                      "Click '+ Add Step', pick what you want, fill in the details, and click OK.\n"
-                      "Repeat until your full routine is listed below.",
-                 font=FONT_BODY, bg=BG3, fg=T2, justify="left").pack(fill="x")
-
         ctrl = tk.Frame(self, bg=BG)
-        ctrl.pack(fill="x", pady=6)
-        self.btn(ctrl, "+ Add Step", self._add_step, color=GREEN)
-        self.btn(ctrl, "Remove Selected", self._remove_step, color=RED)
-        self.btn(ctrl, "Move Up", self._move_up, color=BG3)
-        self.btn(ctrl, "Move Down", self._move_dn, color=BG3)
+        ctrl.pack(fill="x", pady=(0, 8))
+        self.btn(ctrl, "+ Add a New Group", self._add_group, color=GREEN)
+        self._count_lbl = tk.Label(ctrl, text="", font=FONT_SUB, bg=BG, fg=T2)
+        self._count_lbl.pack(side="left", padx=10)
 
-        list_frame = tk.Frame(self, bg=BG2)
-        list_frame.pack(fill="both", expand=True, pady=6)
-        self._steps_list = tk.Listbox(list_frame, font=FONT_MONO, bg=BG2, fg=T1,
-                                      selectbackground=ACCENT, relief="flat",
-                                      height=10, activestyle="none")
-        sb = tk.Scrollbar(list_frame, orient="vertical",
-                          command=self._steps_list.yview)
-        self._steps_list.configure(yscrollcommand=sb.set)
-        self._steps_list.pack(side="left", fill="both", expand=True)
+        wrapper = tk.Frame(self, bg=BG)
+        wrapper.pack(fill="both", expand=True)
+
+        self._canvas = tk.Canvas(wrapper, bg=BG, highlightthickness=0)
+        sb = tk.Scrollbar(wrapper, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
+        self._canvas.pack(side="left", fill="both", expand=True)
 
-        bottom_row = tk.Frame(self, bg=BG)
-        bottom_row.pack(fill="x", pady=4)
+        self._inner = tk.Frame(self._canvas, bg=BG)
+        self._win_id = self._canvas.create_window((0, 0), window=self._inner, anchor="nw")
+        self._inner.bind("<Configure>",
+                         lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
+        self._canvas.bind("<Configure>",
+                          lambda e: self._canvas.itemconfig(self._win_id, width=e.width))
 
-        if state["phones"]:
-            self.btn(bottom_row, "▶  Test on Master Phone", self._test_run, color=YELLOW)
-        self._test_lbl = tk.Label(bottom_row, text="", font=FONT_SUB, bg=BG, fg=T2)
-        self._test_lbl.pack(side="left", padx=8)
+        self._cards: list[tk.Frame] = []
 
     def on_enter(self):
-        self._refresh_list()
-
-    def _refresh_list(self):
-        self._steps_list.delete(0, "end")
-        for i, step in enumerate(state["steps"], 1):
-            self._steps_list.insert("end", f"  {i:>2}.  {describe_step(step)}")
-
-    def _add_step(self):
-        dlg = AddStepDialog(self.app)
-        self.app.wait_window(dlg)
-        if dlg.result:
-            state["steps"].append(dlg.result)
-            self._refresh_list()
-
-    def _remove_step(self):
-        sel = self._steps_list.curselection()
-        if not sel:
-            return
-        del state["steps"][sel[0]]
-        self._refresh_list()
-
-    def _move_up(self):
-        sel = self._steps_list.curselection()
-        if not sel or sel[0] == 0:
-            return
-        i = sel[0]
-        state["steps"][i-1], state["steps"][i] = state["steps"][i], state["steps"][i-1]
-        self._refresh_list()
-        self._steps_list.selection_set(i-1)
-
-    def _move_dn(self):
-        sel = self._steps_list.curselection()
-        if not sel or sel[0] >= len(state["steps"]) - 1:
-            return
-        i = sel[0]
-        state["steps"][i], state["steps"][i+1] = state["steps"][i+1], state["steps"][i]
-        self._refresh_list()
-        self._steps_list.selection_set(i+1)
-
-    def _test_run(self):
         if not state["phones"]:
-            messagebox.showerror("No phones", "No phones connected.")
             return
-        serial = state["phones"][0]["serial"]
-        self._test_lbl.config(text="Running on master phone…", fg=YELLOW)
+        for g in state["groups"]:
+            if not g["phones"]:
+                g["phones"] = [p["serial"] for p in state["phones"]]
+        self._rebuild()
 
-        def run():
-            _execute_steps(state["steps"], serial)
-            self._test_lbl.config(text="Done! Check your phone.", fg=GREEN)
+    def _add_group(self):
+        n = len(state["groups"]) + 1
+        state["groups"].append({
+            "name": f"Group {n}", "phones": [], "steps": [],
+            "stagger_secs": 60, "repeat": 1, "repeat_forever": False,
+        })
+        self._rebuild()
 
-        threading.Thread(target=run, daemon=True).start()
+    def _remove_group(self, idx):
+        if len(state["groups"]) <= 1:
+            messagebox.showinfo("Can't remove", "You need at least one group.")
+            return
+        state["groups"].pop(idx)
+        self._rebuild()
+
+    def _rebuild(self):
+        for c in self._cards:
+            c.destroy()
+        self._cards.clear()
+        for i, g in enumerate(state["groups"]):
+            card = self._build_card(i, g)
+            card.pack(fill="x", pady=5, padx=2)
+            self._cards.append(card)
+        n = len(state["groups"])
+        self._count_lbl.config(
+            text=f"{n} group{'s' if n != 1 else ''} — all run at the same time")
+
+    def _build_card(self, idx, group):
+        card = tk.Frame(self._inner, bg=BG2, padx=14, pady=12,
+                        highlightthickness=1, highlightbackground=BORDER)
+
+        hdr = tk.Frame(card, bg=BG2)
+        hdr.pack(fill="x")
+
+        color_strip = tk.Frame(hdr, bg=[ACCENT, GREEN, YELLOW, RED, T2][idx % 5], width=4)
+        color_strip.pack(side="left", fill="y", padx=(0, 10))
+
+        name_var = tk.StringVar(value=group["name"])
+        name_e = tk.Entry(hdr, textvariable=name_var, font=("Segoe UI", 13, "bold"),
+                          bg=BG3, fg=T1, relief="flat", width=18, insertbackground=T1)
+        name_e.pack(side="left")
+        name_var.trace("w", lambda *_: group.update({"name": name_var.get()}))
+
+        if len(state["groups"]) > 1:
+            tk.Button(hdr, text="✕ Remove group", font=FONT_SUB,
+                      bg=RED, fg=BG, relief="flat", cursor="hand2", padx=8, pady=3,
+                      command=lambda i=idx: self._remove_group(i)).pack(side="right")
+
+        tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=8)
+
+        tk.Label(card, text="Which phones are in this group?",
+                 font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1, anchor="w").pack(fill="x")
+        tk.Label(card, text="Tick the phones you want this group to control.",
+                 font=FONT_SUB, bg=BG2, fg=T2, anchor="w").pack(fill="x", pady=(2, 6))
+
+        phones_frame = tk.Frame(card, bg=BG2)
+        phones_frame.pack(fill="x")
+
+        if not state["phones"]:
+            tk.Label(phones_frame, text="Go back to Step 4 and connect phones first.",
+                     font=FONT_SUB, bg=BG2, fg=RED).pack(anchor="w")
+        else:
+            for phone in state["phones"]:
+                var = tk.BooleanVar(value=phone["serial"] in group["phones"])
+
+                def toggle(v=var, s=phone["serial"], g=group):
+                    if v.get():
+                        if s not in g["phones"]:
+                            g["phones"].append(s)
+                    else:
+                        g["phones"] = [x for x in g["phones"] if x != s]
+
+                tk.Checkbutton(phones_frame,
+                               text=f"  {phone['name']}   ({phone['serial']})",
+                               variable=var, onvalue=True, offvalue=False,
+                               command=toggle, font=FONT_BODY,
+                               bg=BG2, fg=T1, selectcolor=BG3,
+                               activebackground=BG2).pack(anchor="w")
+
+        tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=8)
+
+        seq_row = tk.Frame(card, bg=BG2)
+        seq_row.pack(fill="x")
+        tk.Label(seq_row, text="What should these phones do?",
+                 font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1, anchor="w").pack(fill="x")
+        tk.Label(seq_row, text="A sequence is a list of steps: open website, tap, wait, close, etc.",
+                 font=FONT_SUB, bg=BG2, fg=T2, anchor="w").pack(fill="x", pady=(2, 6))
+
+        seq_ctrl = tk.Frame(card, bg=BG2)
+        seq_ctrl.pack(fill="x")
+
+        step_lbl = tk.Label(seq_ctrl,
+                            text=f"{len(group['steps'])} steps in this sequence",
+                            font=FONT_BODY, bg=BG2,
+                            fg=GREEN if group["steps"] else YELLOW)
+        step_lbl.pack(side="left", padx=(0, 10))
+
+        def edit_seq(i=idx, lbl=step_lbl):
+            win = SequenceEditorWindow(self.app, state["groups"][i])
+            self.app.wait_window(win)
+            count = len(state["groups"][i]["steps"])
+            lbl.config(text=f"{count} steps in this sequence",
+                       fg=GREEN if count else YELLOW)
+
+        tk.Button(seq_ctrl, text="✏  Edit Sequence", font=FONT_SUB,
+                  bg=ACCENT, fg=BG, relief="flat", cursor="hand2", padx=10, pady=4,
+                  command=edit_seq).pack(side="left")
+
+        tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=8)
+
+        settings_lbl = tk.Label(card, text="Timing & Repeat Settings",
+                                font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1, anchor="w")
+        settings_lbl.pack(fill="x")
+
+        settings = tk.Frame(card, bg=BG2)
+        settings.pack(fill="x", pady=(4, 0))
+
+        def lbl(text): return tk.Label(settings, text=text, font=FONT_SUB, bg=BG2, fg=T2)
+        def spin(var, lo, hi, w=5):
+            return tk.Spinbox(settings, from_=lo, to=hi, textvariable=var,
+                              width=w, font=FONT_MONO, bg=BG3, fg=T1, relief="flat")
+
+        stag_var = tk.IntVar(value=group["stagger_secs"])
+        lbl("How long between phones starting:").pack(side="left")
+        spin(stag_var, 0, 3600).pack(side="left", padx=4)
+        lbl("seconds  |  Repeat:").pack(side="left", padx=(4, 0))
+        rep_var = tk.IntVar(value=group["repeat"])
+        spin(rep_var, 1, 999).pack(side="left", padx=4)
+        lbl("times  |").pack(side="left")
+        forever_var = tk.BooleanVar(value=group["repeat_forever"])
+        tk.Checkbutton(settings, text="Forever", variable=forever_var,
+                       font=FONT_SUB, bg=BG2, fg=T1, selectcolor=BG3,
+                       activebackground=BG2).pack(side="left", padx=4)
+
+        def save(*_):
+            group.update({
+                "stagger_secs":   stag_var.get(),
+                "repeat":         rep_var.get(),
+                "repeat_forever": forever_var.get(),
+            })
+
+        stag_var.trace("w", save)
+        rep_var.trace("w", save)
+        forever_var.trace("w", save)
+
+        return card
 
     def can_advance(self):
-        if not state["steps"]:
-            if not messagebox.askyesno(
-                    "No steps yet",
-                    "You haven't added any steps yet.\n\n"
-                    "Do you want to continue anyway? (You can add steps later from the dashboard.)"):
+        for g in state["groups"]:
+            if not g["phones"]:
+                messagebox.showwarning(
+                    "Empty group",
+                    f"'{g['name']}' has no phones assigned.\n"
+                    "Tick at least one phone for each group, or remove the empty group."
+                )
                 return False
         return True
 
 
-class SettingsPage(PageBase):
-    def __init__(self, parent):
+class SequenceEditorWindow(tk.Toplevel):
+    def __init__(self, parent, group):
         super().__init__(parent)
-        self.header(
-            "Step 6 — Set Up the Run",
-            "How many phones should run at the same time? How long between each one starting? "
-            "How many times should the whole thing loop?"
-        )
+        self.group = group
+        self.title(f"Edit Sequence — {group['name']}")
+        self.config(bg=BG)
+        self.geometry("600x540")
+        self.resizable(True, True)
+        self.grab_set()
+        self.transient(parent)
 
-        clone_box = tk.Frame(self, bg=BG3, padx=16, pady=14)
-        clone_box.pack(fill="x", pady=(0, 12))
-        tk.Label(clone_box, text="How many phones should run this?",
-                 font=("Segoe UI", 12, "bold"), bg=BG3, fg=T1).pack(anchor="w")
-        tk.Label(clone_box,
-                 text="Each phone will do the same sequence. Pick how many run at once.",
-                 font=FONT_SUB, bg=BG3, fg=T2).pack(anchor="w", pady=(2, 8))
-        self._clone_var = tk.IntVar(value=state["clone_count"])
-        clone_row = tk.Frame(clone_box, bg=BG3)
-        clone_row.pack(anchor="w")
-        tk.Spinbox(clone_row, from_=1, to=20, textvariable=self._clone_var,
-                   font=("Segoe UI", 14, "bold"), width=5, bg=BG2, fg=T1,
-                   relief="flat", buttonbackground=BG3).pack(side="left")
-        tk.Label(clone_row, text=" phones", font=FONT_BODY, bg=BG3, fg=T2).pack(side="left")
+        tk.Label(self, text=f"Sequence for: {group['name']}",
+                 font=("Segoe UI", 14, "bold"), bg=BG, fg=T1).pack(pady=(14, 4), padx=16, anchor="w")
+        tk.Label(self,
+                 text="Add steps one at a time. The phone will do them in order, top to bottom.",
+                 font=FONT_SUB, bg=BG, fg=T2).pack(padx=16, anchor="w", pady=(0, 10))
 
-        stagger_box = tk.Frame(self, bg=BG3, padx=16, pady=14)
-        stagger_box.pack(fill="x", pady=(0, 12))
-        tk.Label(stagger_box, text="How long between each phone starting?",
-                 font=("Segoe UI", 12, "bold"), bg=BG3, fg=T1).pack(anchor="w")
-        tk.Label(stagger_box,
-                 text="If you pick 60 seconds: phone 1 starts now, phone 2 starts 1 minute later, etc.\n"
-                      "This looks more natural and human-like.",
-                 font=FONT_SUB, bg=BG3, fg=T2).pack(anchor="w", pady=(2, 8))
-        self._stagger_var = tk.IntVar(value=0)
-        stagger_opts = [
-            ("All at the same time", 0),
-            ("30 seconds apart", 30),
-            ("1 minute apart", 60),
-            ("5 minutes apart", 300),
-        ]
-        for label, val in stagger_opts:
-            tk.Radiobutton(stagger_box, text=label, variable=self._stagger_var, value=val,
-                           font=FONT_BODY, bg=BG3, fg=T1, selectcolor=BG2,
-                           activebackground=BG3).pack(anchor="w")
-        custom_row = tk.Frame(stagger_box, bg=BG3)
-        custom_row.pack(anchor="w", pady=4)
-        self._custom_stagger = tk.IntVar(value=120)
-        tk.Radiobutton(custom_row, text="Custom:", variable=self._stagger_var, value=-1,
-                       font=FONT_BODY, bg=BG3, fg=T1, selectcolor=BG2,
-                       activebackground=BG3).pack(side="left")
-        tk.Spinbox(custom_row, from_=1, to=3600, textvariable=self._custom_stagger,
-                   width=6, font=FONT_MONO, bg=BG2, fg=T1, relief="flat").pack(side="left")
-        tk.Label(custom_row, text=" seconds", font=FONT_BODY, bg=BG3, fg=T2).pack(side="left")
+        ctrl = tk.Frame(self, bg=BG)
+        ctrl.pack(fill="x", padx=16, pady=4)
+        for text, cmd in [
+            ("+ Add Step", self._add),
+            ("Remove", self._remove),
+            ("▲ Up", self._up),
+            ("▼ Down", self._dn),
+        ]:
+            color = GREEN if "Add" in text else (RED if "Remove" in text else BG3)
+            fg    = BG if color != BG3 else T1
+            tk.Button(ctrl, text=text, command=cmd, bg=color, fg=fg,
+                      font=("Segoe UI", 10, "bold"), relief="flat",
+                      cursor="hand2", pady=6, padx=12).pack(side="left", padx=(0, 6))
 
-        repeat_box = tk.Frame(self, bg=BG3, padx=16, pady=14)
-        repeat_box.pack(fill="x", pady=(0, 12))
-        tk.Label(repeat_box, text="How many times should it repeat?",
-                 font=("Segoe UI", 12, "bold"), bg=BG3, fg=T1).pack(anchor="w")
-        self._repeat_forever = tk.BooleanVar(value=False)
-        self._repeat_count   = tk.IntVar(value=1)
-        tk.Checkbutton(repeat_box, text="Run forever (loop until I stop it)",
-                       variable=self._repeat_forever, font=FONT_BODY,
-                       bg=BG3, fg=T1, selectcolor=BG2,
-                       activebackground=BG3).pack(anchor="w", pady=(4, 4))
-        once_row = tk.Frame(repeat_box, bg=BG3)
-        once_row.pack(anchor="w")
-        tk.Label(once_row, text="OR run", font=FONT_BODY, bg=BG3, fg=T2).pack(side="left")
-        tk.Spinbox(once_row, from_=1, to=999, textvariable=self._repeat_count,
-                   width=5, font=FONT_MONO, bg=BG2, fg=T1, relief="flat").pack(side="left", padx=6)
-        tk.Label(once_row, text="time(s)", font=FONT_BODY, bg=BG3, fg=T2).pack(side="left")
+        frame = tk.Frame(self, bg=BG2)
+        frame.pack(fill="both", expand=True, padx=16, pady=8)
+        self._lb = tk.Listbox(frame, font=FONT_MONO, bg=BG2, fg=T1,
+                              selectbackground=ACCENT, relief="flat",
+                              height=12, activestyle="none")
+        sb = tk.Scrollbar(frame, orient="vertical", command=self._lb.yview)
+        self._lb.configure(yscrollcommand=sb.set)
+        self._lb.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
 
-    def can_advance(self):
-        state["clone_count"]   = self._clone_var.get()
-        stag = self._stagger_var.get()
-        state["stagger_secs"]  = self._custom_stagger.get() if stag == -1 else stag
-        state["repeat_forever"] = self._repeat_forever.get()
-        state["repeat"]        = self._repeat_count.get()
-        return True
+        bottom = tk.Frame(self, bg=BG)
+        bottom.pack(fill="x", padx=16, pady=10)
+        if state["phones"]:
+            tk.Button(bottom, text="▶ Test on first phone", font=FONT_SUB,
+                      bg=YELLOW, fg=BG, relief="flat", cursor="hand2",
+                      command=self._test, padx=10, pady=6).pack(side="left")
+        tk.Button(bottom, text="Done ✓", font=("Segoe UI", 11, "bold"),
+                  bg=GREEN, fg=BG, relief="flat", cursor="hand2",
+                  command=self.destroy, padx=16, pady=8).pack(side="right")
 
+        self._refresh()
 
-class LaunchPage(PageBase):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.header("Step 7 — You're Ready! 🎉")
+    def _refresh(self):
+        self._lb.delete(0, "end")
+        for i, s in enumerate(self.group["steps"], 1):
+            self._lb.insert("end", f"  {i:>2}.  {describe_step(s)}")
 
-        self._summary = tk.Text(self, height=8, font=FONT_MONO, bg=BG2, fg=T1,
-                                relief="flat", state="disabled", wrap="word")
-        self._summary.pack(fill="x", pady=(0, 14))
+    def _add(self):
+        dlg = AddStepDialog(self)
+        self.wait_window(dlg)
+        if dlg.result:
+            self.group["steps"].append(dlg.result)
+            self._refresh()
 
-        how_box = tk.Frame(self, bg=BG3, padx=16, pady=12)
-        how_box.pack(fill="x", pady=(0, 14))
-        tk.Label(how_box,
-                 text="What happens when you click Launch:\n"
-                      "  1.  The CPharm dashboard opens in this window.\n"
-                      "  2.  Your browser opens to  http://localhost:8080  — that's the control panel.\n"
-                      "  3.  From there, click 'Start All' and your phones will start running.\n\n"
-                      "Leave the black Terminal window open while CPharm is running.\n"
-                      "Close the Terminal to shut everything down.",
-                 font=FONT_BODY, bg=BG3, fg=T2, justify="left").pack(fill="x")
+    def _remove(self):
+        sel = self._lb.curselection()
+        if sel:
+            del self.group["steps"][sel[0]]
+            self._refresh()
 
-        btn_row = tk.Frame(self, bg=BG)
-        btn_row.pack(fill="x")
-        self.btn(btn_row, "💾  Save Sequence", self._save_seq, color=BG3)
-        self.btn(btn_row, "🚀  Launch CPharm Dashboard", self._launch, color=GREEN, width=28)
-        self._launch_lbl = tk.Label(btn_row, text="", font=FONT_SUB, bg=BG, fg=T2)
-        self._launch_lbl.pack(side="left", padx=10)
-
-    def on_enter(self):
-        summary = (
-            f"Phones connected : {len(state['phones'])}\n"
-            f"Steps in sequence: {len(state['steps'])}\n"
-            f"Clone count      : {state['clone_count']} phones\n"
-            f"Stagger timing   : {state['stagger_secs']} seconds between phones\n"
-            f"Repeat           : {'Forever' if state['repeat_forever'] else str(state['repeat']) + ' time(s)'}\n"
-            f"CPharm folder    : {state['cpharm_dir']}\n"
-        )
-        self._summary.config(state="normal")
-        self._summary.delete("1.0", "end")
-        self._summary.insert("end", summary)
-        self._summary.config(state="disabled")
-
-    def _save_seq(self):
-        d = state.get("cpharm_dir", "")
-        if not d:
-            messagebox.showerror("Error", "CPharm folder not set. Go back to Step 2.")
+    def _up(self):
+        sel = self._lb.curselection()
+        if not sel or sel[0] == 0:
             return
-        rec_dir = Path(d) / "automation" / "recordings"
-        rec_dir.mkdir(parents=True, exist_ok=True)
-        cfg = {
-            "steps":          state["steps"],
-            "clone_count":    state["clone_count"],
-            "stagger_secs":   state["stagger_secs"],
-            "repeat":         state["repeat"],
-            "repeat_forever": state["repeat_forever"],
-        }
-        out_file = rec_dir / "wizard_sequence.json"
-        out_file.write_text(json.dumps(cfg, indent=2))
-        messagebox.showinfo("Saved!", f"Sequence saved to:\n{out_file}")
+        i = sel[0]
+        self.group["steps"][i-1], self.group["steps"][i] = \
+            self.group["steps"][i], self.group["steps"][i-1]
+        self._refresh()
+        self._lb.selection_set(i-1)
 
-    def _launch(self):
-        d = state.get("cpharm_dir", "")
-        if not d:
-            messagebox.showerror("Error", "CPharm folder not set. Go back to Step 2.")
+    def _dn(self):
+        sel = self._lb.curselection()
+        if not sel or sel[0] >= len(self.group["steps"]) - 1:
             return
-        self._save_seq()
-        dashboard = Path(d) / "automation" / "dashboard.py"
-        try:
-            subprocess.Popen(
-                [state["python_cmd"], str(dashboard)],
-                cwd=str(Path(d) / "automation"),
-                creationflags=subprocess.CREATE_NEW_CONSOLE if IS_WIN else 0,
-            )
-            time.sleep(2)
-            webbrowser.open(f"http://localhost:{DASHBOARD_PORT}")
-            self._launch_lbl.config(
-                text="Dashboard is starting! Check your browser.", fg=GREEN)
-        except Exception as e:
-            messagebox.showerror("Launch failed", str(e))
+        i = sel[0]
+        self.group["steps"][i], self.group["steps"][i+1] = \
+            self.group["steps"][i+1], self.group["steps"][i]
+        self._refresh()
+        self._lb.selection_set(i+1)
+
+    def _test(self):
+        serial = state["phones"][0]["serial"]
+        steps  = list(self.group["steps"])
+        threading.Thread(
+            target=lambda: execute_steps(steps, serial), daemon=True).start()
 
 
 class AddStepDialog(tk.Toplevel):
@@ -814,35 +902,33 @@ class AddStepDialog(tk.Toplevel):
         self.result = None
         self.title("Add a Step")
         self.config(bg=BG)
+        self.geometry("480x420")
         self.resizable(False, False)
         self.grab_set()
-
-        self.geometry("480x460")
         self.transient(parent)
 
         tk.Label(self, text="What should the phone do?",
                  font=("Segoe UI", 12, "bold"), bg=BG, fg=T1).pack(pady=(16, 8))
 
-        self._type_var = tk.StringVar(value="open_url")
-        type_frame = tk.Frame(self, bg=BG2, padx=10, pady=6)
+        type_frame = tk.Frame(self, bg=BG2, padx=10, pady=8)
         type_frame.pack(fill="x", padx=16)
         tk.Label(type_frame, text="Action:", font=FONT_BODY, bg=BG2, fg=T2,
-                 width=12, anchor="w").pack(side="left")
-        type_menu = ttk.Combobox(type_frame, textvariable=self._type_var,
-                                 values=list(STEP_LABELS.keys()),
-                                 state="readonly", font=FONT_BODY, width=24)
-        type_menu.pack(side="left")
-        type_menu.bind("<<ComboboxSelected>>", lambda _: self._update_fields())
+                 width=10, anchor="w").pack(side="left")
+        self._type = tk.StringVar(value="open_url")
+        self._combo = ttk.Combobox(type_frame, textvariable=self._type,
+                                   values=list(STEP_LABELS.keys()),
+                                   state="readonly", font=FONT_BODY, width=26)
+        self._combo.pack(side="left")
+        self._combo.bind("<<ComboboxSelected>>", lambda _: self._update())
 
-        self._desc_lbl = tk.Label(self, text="", font=FONT_SUB, bg=BG, fg=T2,
-                                  wraplength=440, justify="left")
-        self._desc_lbl.pack(padx=16, anchor="w", pady=4)
+        self._desc = tk.Label(self, text="", font=FONT_SUB, bg=BG, fg=T2,
+                              wraplength=440, justify="left")
+        self._desc.pack(padx=16, anchor="w", pady=4)
 
-        self._fields_frame = tk.Frame(self, bg=BG2, padx=10, pady=10)
+        self._fields_frame = tk.Frame(self, bg=BG2, padx=12, pady=10)
         self._fields_frame.pack(fill="x", padx=16)
-
-        self._fields: dict = {}
-        self._update_fields()
+        self._fields: dict[str, tk.StringVar] = {}
+        self._update()
 
         btn_row = tk.Frame(self, bg=BG)
         btn_row.pack(pady=14)
@@ -853,60 +939,53 @@ class AddStepDialog(tk.Toplevel):
                   bg=BG3, fg=T2, relief="flat", cursor="hand2",
                   command=self.destroy, padx=10, pady=6).pack(side="left")
 
-    def _clear_fields(self):
+    def _update(self):
         for w in self._fields_frame.winfo_children():
             w.destroy()
-        self._fields = {}
+        self._fields.clear()
+        t = self._type.get()
+        self._desc.config(text=STEP_LABELS.get(t, ""))
 
-    def _field(self, label, key, default="", width=30):
-        row = tk.Frame(self._fields_frame, bg=BG2)
-        row.pack(fill="x", pady=4)
-        tk.Label(row, text=label, font=FONT_BODY, bg=BG2, fg=T2,
-                 width=16, anchor="w").pack(side="left")
-        var = tk.StringVar(value=str(default))
-        tk.Entry(row, textvariable=var, font=FONT_MONO, bg=BG, fg=T1,
-                 insertbackground=T1, relief="flat", width=width).pack(side="left")
-        self._fields[key] = var
-        return var
+        def field(label, key, default="", width=30):
+            row = tk.Frame(self._fields_frame, bg=BG2)
+            row.pack(fill="x", pady=3)
+            tk.Label(row, text=label, font=FONT_BODY, bg=BG2, fg=T2,
+                     width=16, anchor="w").pack(side="left")
+            var = tk.StringVar(value=str(default))
+            tk.Entry(row, textvariable=var, font=FONT_MONO, bg=BG, fg=T1,
+                     insertbackground=T1, relief="flat", width=width).pack(side="left")
+            self._fields[key] = var
 
-    def _update_fields(self):
-        self._clear_fields()
-        t = self._type_var.get()
-
-        nice = STEP_LABELS.get(t, t)
-        self._desc_lbl.config(text=nice)
+        def tip(text):
+            tk.Label(self._fields_frame, text=text,
+                     font=FONT_SUB, bg=BG2, fg=T3, justify="left").pack(anchor="w", pady=2)
 
         if t == "open_url":
-            self._field("Website URL:", "url", "https://example.com", 34)
+            field("Website URL:", "url", "https://example.com", 34)
         elif t == "tap":
-            self._field("X position:", "x", 540)
-            self._field("Y position:", "y", 960)
-            tip = tk.Label(self._fields_frame,
-                           text="Tip: Use the ADB screenshot to find coordinates.\n"
-                                "Or: adb shell getevent -l  then tap the screen to see X/Y.",
-                           font=FONT_SUB, bg=BG2, fg=T2, justify="left")
-            tip.pack(anchor="w", pady=4)
+            field("X position (left←→right):", "x", 540)
+            field("Y position (top↑↓bottom):", "y", 960)
+            tip("Tip: adb shell getevent -l  then tap the phone to see X/Y numbers")
         elif t == "wait":
-            self._field("Seconds to wait:", "seconds", 30)
+            field("Seconds to wait:", "seconds", 30)
+            tip("How long to pause before the next step")
         elif t == "swipe":
-            self._field("Start X:", "x1", 540)
-            self._field("Start Y:", "y1", 800)
-            self._field("End X:", "x2", 540)
-            self._field("End Y:", "y2", 200)
-            self._field("Speed (ms):", "ms", 500)
+            field("Start X:", "x1", 540)
+            field("Start Y:", "y1", 800)
+            field("End X:", "x2", 540)
+            field("End Y:", "y2", 200)
+            field("Speed in ms:", "ms", 500)
         elif t == "keyevent":
-            self._field("Key name:", "key", "BACK")
-            tip = tk.Label(self._fields_frame,
-                           text="Options: BACK   HOME   ENTER   APP_SWITCH   VOLUME_UP   POWER",
-                           font=FONT_SUB, bg=BG2, fg=T2)
-            tip.pack(anchor="w", pady=4)
+            field("Key name:", "key", "BACK")
+            tip("Options: BACK   HOME   ENTER   APP_SWITCH   VOLUME_UP   POWER")
         elif t == "close_app":
-            self._field("Package name:", "package", "com.android.chrome", 30)
+            field("Package name:", "package", "com.android.chrome")
+            tip("Chrome = com.android.chrome   |   your app = com.yourname.appname")
         elif t == "type_text":
-            self._field("Text to type:", "text", "hello", 30)
+            field("Text to type:", "text", "hello world")
 
     def _ok(self):
-        t = self._type_var.get()
+        t = self._type.get()
         step = {"type": t}
         for key, var in self._fields.items():
             v = var.get().strip()
@@ -918,33 +997,82 @@ class AddStepDialog(tk.Toplevel):
         self.destroy()
 
 
-def _execute_steps(steps, serial):
-    for step in steps:
-        t = step.get("type", "")
-        if t == "open_url":
-            adb("shell", "am", "start", "-a", "android.intent.action.VIEW",
-                "-d", step.get("url", ""), serial=serial)
-        elif t == "tap":
-            adb("shell", "input", "tap", str(step.get("x", 0)), str(step.get("y", 0)), serial=serial)
-        elif t == "wait":
-            time.sleep(int(step.get("seconds", 1)))
-        elif t == "swipe":
-            adb("shell", "input", "swipe",
-                str(step.get("x1", 0)), str(step.get("y1", 0)),
-                str(step.get("x2", 0)), str(step.get("y2", 0)),
-                str(step.get("ms", 400)), serial=serial)
-        elif t == "keyevent":
-            adb("shell", "input", "keyevent", step.get("key", "BACK"), serial=serial)
-        elif t == "close_app":
-            adb("shell", "am", "force-stop", step.get("package", "com.android.chrome"), serial=serial)
-        elif t == "clear_cookies":
-            adb("shell", "pm", "clear", "com.android.chrome", serial=serial)
-        elif t == "rotate_identity":
-            pass
-        elif t == "type_text":
-            text = step.get("text", "").replace(" ", "%s").replace("'", "")
-            adb("shell", "input", "text", text, serial=serial)
-        time.sleep(0.3)
+class LaunchPage(PageBase):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.header("You're all set! 🎉")
+
+        self._summary = tk.Text(self, height=10, font=FONT_MONO, bg=BG2, fg=T1,
+                                relief="flat", state="disabled", wrap="word")
+        self._summary.pack(fill="x", pady=(0, 14))
+
+        how = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        how.pack(fill="x", pady=(0, 14))
+        tk.Label(how,
+                 text="What happens when you click Launch:\n\n"
+                      "  1.  Your sequence config gets saved to the CPharm folder\n"
+                      "  2.  The CPharm server starts (a black Terminal window opens)\n"
+                      "  3.  Your browser opens the control panel at  http://localhost:8080\n"
+                      "  4.  On the dashboard, click 'Run All Groups' to start all groups at once\n\n"
+                      "Leave the black Terminal window open while phones are running.\n"
+                      "Close it to shut everything down.",
+                 font=FONT_BODY, bg=BG3, fg=T2, justify="left").pack(fill="x")
+
+        btn_row = tk.Frame(self, bg=BG)
+        btn_row.pack(fill="x")
+        self.btn(btn_row, "💾  Save Config", self._save, color=BG3)
+        self.btn(btn_row, "🚀  Launch Dashboard", self._launch, color=GREEN, width=22)
+        self._lbl = tk.Label(btn_row, text="", font=FONT_SUB, bg=BG, fg=T2)
+        self._lbl.pack(side="left", padx=10)
+
+    def on_enter(self):
+        lines = []
+        for i, g in enumerate(state["groups"], 1):
+            phone_names = []
+            for s in g["phones"]:
+                match = next((p for p in state["phones"] if p["serial"] == s), None)
+                phone_names.append(match["name"] if match else s)
+            repeat_str = "forever" if g["repeat_forever"] else f"{g['repeat']}x"
+            lines.append(
+                f"Group {i}: {g['name']}\n"
+                f"  Phones  : {', '.join(phone_names) or 'none'}\n"
+                f"  Sequence: {len(g['steps'])} steps\n"
+                f"  Stagger : {g['stagger_secs']}s between phones\n"
+                f"  Repeat  : {repeat_str}\n"
+            )
+        self._summary.config(state="normal")
+        self._summary.delete("1.0", "end")
+        self._summary.insert("end", "\n".join(lines))
+        self._summary.config(state="disabled")
+
+    def _save(self):
+        d = state.get("cpharm_dir", "")
+        if not d:
+            messagebox.showerror("Error", "No CPharm folder set. Go back to Step 2.")
+            return
+        rec_dir = Path(d) / "automation" / "recordings"
+        rec_dir.mkdir(parents=True, exist_ok=True)
+        out = rec_dir / "groups_config.json"
+        out.write_text(json.dumps({"groups": state["groups"]}, indent=2))
+        messagebox.showinfo("Saved!", f"Config saved to:\n{out}")
+        return str(out)
+
+    def _launch(self):
+        saved = self._save()
+        if not saved:
+            return
+        dashboard = Path(state["cpharm_dir"]) / "automation" / "dashboard.py"
+        try:
+            subprocess.Popen(
+                [state["python_cmd"], str(dashboard)],
+                cwd=str(Path(state["cpharm_dir"]) / "automation"),
+                creationflags=subprocess.CREATE_NEW_CONSOLE if IS_WIN else 0,
+            )
+            time.sleep(2)
+            webbrowser.open(f"http://localhost:{DASHBOARD_PORT}")
+            self._lbl.config(text="Dashboard starting! Check your browser.", fg=GREEN)
+        except Exception as e:
+            messagebox.showerror("Launch failed", str(e))
 
 
 class CPharmWizard(tk.Tk):
@@ -954,8 +1082,7 @@ class CPharmWizard(tk.Tk):
         RepoPage,
         DepsPage,
         PhonesPage,
-        SequencePage,
-        SettingsPage,
+        GroupsPage,
         LaunchPage,
     ]
     PAGE_NAMES = [
@@ -964,96 +1091,79 @@ class CPharmWizard(tk.Tk):
         "Get CPharm",
         "Install Deps",
         "Phones",
-        "Sequence",
-        "Settings",
+        "Groups",
         "Launch!",
     ]
 
     def __init__(self):
         super().__init__()
         self.title("CPharm Setup Wizard")
-        self.geometry("720x640")
-        self.minsize(720, 600)
+        self.geometry("740x660")
+        self.minsize(700, 580)
         self.config(bg=BG)
         self.resizable(True, True)
 
-        try:
-            self.iconbitmap(default="")
-        except Exception:
-            pass
-
         self._build_header()
-        self._build_content()
+        self._content = tk.Frame(self, bg=BG)
+        self._content.pack(fill="both", expand=True, padx=24, pady=14)
         self._build_footer()
 
-        self._pages = []
-        for PageCls in self.PAGES:
-            p = PageCls(self._content)
+        self._pages = [P(self._content) for P in self.PAGES]
+        for p in self._pages:
             p.place(relwidth=1, relheight=1)
-            self._pages.append(p)
 
         self._current = 0
         self._show(0)
 
     def _build_header(self):
-        hdr = tk.Frame(self, bg=BG2, height=60)
+        hdr = tk.Frame(self, bg=BG2, height=56)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
-
-        tk.Label(hdr, text="CPharm", font=("Segoe UI", 14, "bold"),
+        tk.Label(hdr, text="CPharm Setup", font=("Segoe UI", 13, "bold"),
                  bg=BG2, fg=ACCENT).pack(side="left", padx=16, pady=10)
-
         dot_row = tk.Frame(hdr, bg=BG2)
-        dot_row.pack(side="right", padx=16, pady=16)
+        dot_row.pack(side="right", padx=16)
         self._dots = []
         for i in range(len(self.PAGES)):
-            d = tk.Label(dot_row, text="●", font=("Segoe UI", 8),
-                         bg=BG2, fg=T3, cursor="hand2")
+            d = tk.Label(dot_row, text="●", font=("Segoe UI", 9), bg=BG2, fg=T3)
             d.pack(side="left", padx=3)
-            d.bind("<Button-1>", lambda e, idx=i: None)
             self._dots.append(d)
-
         self._step_lbl = tk.Label(hdr, text="", font=FONT_SUB, bg=BG2, fg=T2)
-        self._step_lbl.pack(side="right", padx=(0, 12))
-
-    def _build_content(self):
-        self._content = tk.Frame(self, bg=BG)
-        self._content.pack(fill="both", expand=True, padx=24, pady=16)
+        self._step_lbl.pack(side="right", padx=(0, 10))
 
     def _build_footer(self):
-        ftr = tk.Frame(self, bg=BG2, height=56)
+        ftr = tk.Frame(self, bg=BG2, height=54)
         ftr.pack(fill="x")
         ftr.pack_propagate(False)
-
-        self._next_btn = tk.Button(ftr, text="Next  →", font=("Segoe UI", 11, "bold"),
+        self._next_btn = tk.Button(ftr, text="Next  →",
+                                   font=("Segoe UI", 11, "bold"),
                                    bg=ACCENT, fg=BG, relief="flat", cursor="hand2",
                                    command=self._next, padx=20, pady=8)
-        self._next_btn.pack(side="right", padx=16, pady=10)
-
+        self._next_btn.pack(side="right", padx=16, pady=8)
         self._back_btn = tk.Button(ftr, text="← Back", font=("Segoe UI", 11),
                                    bg=BG3, fg=T2, relief="flat", cursor="hand2",
                                    command=self._back, padx=16, pady=8)
-        self._back_btn.pack(side="right", padx=(0, 8), pady=10)
+        self._back_btn.pack(side="right", padx=(0, 8), pady=8)
 
     def _show(self, idx):
         for i, p in enumerate(self._pages):
             if i == idx:
                 p.lift()
-            self._dots[i].config(fg=ACCENT if i == idx else (T2 if i < idx else T3))
-
+            self._dots[i].config(
+                fg=ACCENT if i == idx else (T2 if i < idx else T3))
+        total = len(self.PAGES)
         self._step_lbl.config(
-            text=f"Step {idx + 1} of {len(self.PAGES)}  —  {self.PAGE_NAMES[idx]}")
+            text=f"Step {idx + 1} of {total}  —  {self.PAGE_NAMES[idx]}")
         self._back_btn.config(state="normal" if idx > 0 else "disabled")
-        self._next_btn.config(text="Finish ✓" if idx == len(self.PAGES) - 1 else "Next  →")
+        self._next_btn.config(
+            text="Finish ✓" if idx == total - 1 else "Next  →")
         self._pages[idx].on_enter()
 
     def _next(self):
-        page = self._pages[self._current]
-        if not page.can_advance():
-            return
-        if self._current < len(self._pages) - 1:
-            self._current += 1
-            self._show(self._current)
+        if self._pages[self._current].can_advance():
+            if self._current < len(self._pages) - 1:
+                self._current += 1
+                self._show(self._current)
 
     def _back(self):
         if self._current > 0:

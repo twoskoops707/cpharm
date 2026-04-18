@@ -398,6 +398,25 @@ button:disabled{opacity:.35;cursor:not-allowed;transform:none!important}
   </div>
 </div>
 
+<div class="section" id="groups-section">
+  <div class="section-title">Phone Groups — Different Phones, Different Tasks</div>
+  <div style="background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad);padding:14px">
+    <p style="font-size:.78rem;color:var(--t1);line-height:1.6;margin-bottom:10px">
+      Run different sequences on different sets of phones at the same time.<br>
+      Build your groups in the <strong>Setup Wizard</strong>, then load them here and click Run All.
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="btn-b btn-sm" id="btn-groups-load">Load Groups Config</button>
+      <button class="btn-g" id="btn-groups-run" disabled>▶ Run All Groups</button>
+      <button class="btn-r btn-sm" id="btn-groups-stop" disabled>Stop All</button>
+    </div>
+    <div id="groups-list" style="display:flex;flex-direction:column;gap:8px"></div>
+    <div id="groups-empty" style="font-size:.75rem;color:var(--t2);margin-top:4px">
+      No groups loaded. Use the Setup Wizard to build groups, then click Load.
+    </div>
+  </div>
+</div>
+
 <div class="section">
   <div class="section-title">Teach Mode — Show it once, it does the rest</div>
   <div class="teach-card">
@@ -503,6 +522,7 @@ function connectWS() {
     if (msg.type === 'install_progress') onInstallProgress(msg);
     if (msg.type === 'teach_status')     onTeachStatus(msg);
     if (msg.type === 'log')              addLog(msg.msg);
+    if (msg.type === 'groups_status')    onWsMessage(msg);
   };
   ws.onclose = () => {
     document.getElementById('ws-dot').className = 'ws-dot error';
@@ -945,6 +965,87 @@ document.getElementById('btn-connect-do').addEventListener('click', async () => 
 document.getElementById('connect-addr').addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('btn-connect-do').click();
 });
+// ── Groups ────────────────────────────────────────────────────────────────
+let loadedGroups = [];
+
+async function loadGroups() {
+  try {
+    const d = await api('/api/groups/load');
+    loadedGroups = d.groups || [];
+    renderGroups();
+    document.getElementById('btn-groups-run').disabled = loadedGroups.length === 0;
+    toast(`Loaded ${loadedGroups.length} group(s)`, 'ok');
+  } catch(e) { toast('No groups config found — run the Setup Wizard first', 'err'); }
+}
+
+function renderGroups() {
+  const list  = document.getElementById('groups-list');
+  const empty = document.getElementById('groups-empty');
+  list.innerHTML = '';
+  if (!loadedGroups.length) { empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  const COLORS = ['#58a6ff','#3fb950','#d29922','#f85149','#8b949e'];
+  loadedGroups.forEach((g, i) => {
+    const card = document.createElement('div');
+    card.style.cssText = `background:var(--bg3);border-left:3px solid ${COLORS[i%5]};border-radius:4px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:12px`;
+    const info = document.createElement('div');
+    info.innerHTML = `<span style="font-weight:700;color:var(--t1)">${g.name}</span>
+      <span style="font-size:.72rem;color:var(--t2);margin-left:10px">${(g.phones||[]).length} phone(s) · ${(g.steps||[]).length} steps · repeat ${g.repeat_forever?'forever':g.repeat+'×'} · stagger ${g.stagger_secs}s</span>`;
+    const stopBtn = document.createElement('button');
+    stopBtn.textContent = 'Stop';
+    stopBtn.className = 'btn-r btn-sm';
+    stopBtn.id = `grp-stop-${i}`;
+    stopBtn.disabled = true;
+    stopBtn.onclick = () => api('/api/groups/stop','POST',{name:g.name}).catch(()=>{});
+    card.appendChild(info);
+    card.appendChild(stopBtn);
+    list.appendChild(card);
+  });
+}
+
+async function runAllGroups() {
+  if (!loadedGroups.length) { toast('Load a groups config first','err'); return; }
+  try {
+    await api('/api/groups/run','POST',{groups: loadedGroups});
+    document.getElementById('btn-groups-run').disabled = true;
+    document.getElementById('btn-groups-stop').disabled = false;
+    loadedGroups.forEach((_,i) => {
+      const b = document.getElementById(`grp-stop-${i}`);
+      if (b) b.disabled = false;
+    });
+    toast(`Running ${loadedGroups.length} group(s) in parallel`, 'ok');
+  } catch(e) { toast('Could not start groups','err'); }
+}
+
+async function stopAllGroups() {
+  await api('/api/groups/stop','POST',{}).catch(()=>{});
+  document.getElementById('btn-groups-run').disabled = false;
+  document.getElementById('btn-groups-stop').disabled = true;
+  loadedGroups.forEach((_,i) => {
+    const b = document.getElementById(`grp-stop-${i}`);
+    if (b) b.disabled = true;
+  });
+  toast('Stopping all groups','ok');
+}
+
+function onWsMessage(msg) {
+  if (msg.type === 'groups_status') {
+    const running = msg.running || [];
+    loadedGroups.forEach((g,i) => {
+      const b = document.getElementById(`grp-stop-${i}`);
+      if (b) b.disabled = !running.includes(g.name);
+    });
+    if (!running.length) {
+      document.getElementById('btn-groups-run').disabled = false;
+      document.getElementById('btn-groups-stop').disabled = true;
+    }
+  }
+}
+
+document.getElementById('btn-groups-load').addEventListener('click', loadGroups);
+document.getElementById('btn-groups-run').addEventListener('click', runAllGroups);
+document.getElementById('btn-groups-stop').addEventListener('click', stopAllGroups);
+
 document.getElementById('btn-open-url').addEventListener('click', launchUrl);
 document.getElementById('btn-record').addEventListener('click', teachRecord);
 document.getElementById('btn-stop-rec').addEventListener('click', teachStop);

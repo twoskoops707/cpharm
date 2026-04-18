@@ -42,7 +42,8 @@ _QUICK_ACTIONS = {
 }
 
 _ws_clients: set = set()
-_teach_state = {"state": "idle", "file": None}
+_teach_state    = {"state": "idle", "file": None}
+_running_groups: dict[str, bool] = {}
 _app_cache:      dict[str, dict]  = {}
 _app_cache_time: dict[str, float] = {}
 APP_CACHE_TTL = 30.0
@@ -568,6 +569,120 @@ async def handle_post(path: str, body: bytes) -> bytes:
         tor_manager.stop_all()
         await broadcast({"type": "log", "msg": "Tor turned off — phones using normal connection"})
         return json_ok({"ok": True})
+
+    # ── Groups: run different sequences on different phone sets in parallel ──
+    if path == "/api/groups/run":
+        raw_groups = data.get("groups")
+        if not raw_groups:
+            cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
+            if cfg_path.exists():
+                raw_groups = json.loads(cfg_path.read_text()).get("groups", [])
+        if not raw_groups:
+            return json_err("no groups provided and no saved groups_config.json found")
+
+        all_phones = {p["serial"]: p for p in list_phones() if p["running"]}
+        loop = asyncio.get_event_loop()
+        _running_groups.clear()
+
+        def _run_steps_adb(steps: list, serial: str, group_name: str):
+            for step in steps:
+                if not _running_groups.get(group_name, True):
+                    break
+                t = step.get("type", "")
+                if t == "open_url":
+                    _adb(serial, "shell", "am", "start",
+                         "-a", "android.intent.action.VIEW", "-d", step.get("url", ""))
+                elif t == "tap":
+                    _adb(serial, "shell", "input", "tap",
+                         str(step.get("x", 0)), str(step.get("y", 0)))
+                elif t == "wait":
+                    deadline = time.time() + int(step.get("seconds", 1))
+                    while time.time() < deadline:
+                        if not _running_groups.get(group_name, True):
+                            break
+                        time.sleep(0.25)
+                elif t == "swipe":
+                    _adb(serial, "shell", "input", "swipe",
+                         str(step.get("x1", 0)), str(step.get("y1", 0)),
+                         str(step.get("x2", 0)), str(step.get("y2", 0)),
+                         str(step.get("ms", 400)))
+                elif t == "keyevent":
+                    _adb(serial, "shell", "input", "keyevent", step.get("key", "BACK"))
+                elif t == "close_app":
+                    _adb(serial, "shell", "am", "force-stop",
+                         step.get("package", "com.android.chrome"))
+                elif t == "clear_cookies":
+                    _adb(serial, "shell", "pm", "clear", "com.android.chrome")
+                elif t == "type_text":
+                    text = step.get("text", "").replace(" ", "%s").replace("'", "")
+                    _adb(serial, "shell", "input", "text", text)
+                elif t == "rotate_identity":
+                    idx = list(all_phones.keys()).index(serial) if serial in all_phones else 0
+                    tor_manager.rotate_identity_adb(serial, idx)
+                time.sleep(0.3)
+
+        def _run_group(group: dict):
+            name    = group.get("name", "Group")
+            steps   = group.get("steps", [])
+            serials = [s for s in group.get("phones", []) if s in all_phones]
+            stagger = int(group.get("stagger_secs", 0))
+            repeat  = int(group.get("repeat", 1))
+            forever = bool(group.get("repeat_forever", False))
+
+            _running_groups[name] = True
+            asyncio.run_coroutine_threadsafe(
+                broadcast({"type": "log", "msg": f"[{name}] Starting on {len(serials)} phone(s)"}),
+                loop)
+
+            iteration = 0
+            while _running_groups.get(name) and (forever or iteration < repeat):
+                for i, serial in enumerate(serials):
+                    if not _running_groups.get(name):
+                        break
+                    if i > 0 and stagger > 0:
+                        deadline = time.time() + stagger
+                        while time.time() < deadline:
+                            if not _running_groups.get(name):
+                                break
+                            time.sleep(0.5)
+                    phone_name = all_phones[serial]["name"]
+                    asyncio.run_coroutine_threadsafe(
+                        broadcast({"type": "log",
+                                   "msg": f"[{name}] Running on {phone_name}"}), loop)
+                    _run_steps_adb(steps, serial, name)
+                iteration += 1
+
+            asyncio.run_coroutine_threadsafe(
+                broadcast({"type": "log",
+                           "msg": f"[{name}] Done ✓" if _running_groups.get(name)
+                                  else f"[{name}] Stopped"}), loop)
+            _running_groups.pop(name, None)
+            asyncio.run_coroutine_threadsafe(
+                broadcast({"type": "groups_status", "running": list(_running_groups.keys())}), loop)
+
+        for group in raw_groups:
+            threading.Thread(target=_run_group, args=(group,), daemon=True).start()
+
+        await broadcast({"type": "groups_status", "running": [g.get("name") for g in raw_groups]})
+        return json_ok({"ok": True, "groups": len(raw_groups)})
+
+    if path == "/api/groups/stop":
+        name = data.get("name", "")
+        if name:
+            _running_groups[name] = False
+            await broadcast({"type": "log", "msg": f"Stopping group: {name}"})
+        else:
+            for k in list(_running_groups.keys()):
+                _running_groups[k] = False
+            await broadcast({"type": "log", "msg": "Stopping all groups…"})
+        return json_ok({"ok": True})
+
+    if path == "/api/groups/load":
+        cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
+        if cfg_path.exists():
+            cfg = json.loads(cfg_path.read_text())
+            return json_ok(cfg)
+        return json_err("no groups_config.json found — run the Setup Wizard first")
 
     # ── App tester: launch app ──
     if path == "/api/launch_app":

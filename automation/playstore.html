@@ -328,6 +328,10 @@ textarea{resize:vertical;min-height:72px;line-height:1.5}
         <div style="font-family:var(--font-mono);font-size:.68rem;color:var(--t2)">Cycles:</div>
         <input type="number" id="loop-cycles" value="3" min="1" max="50" style="width:70px">
       </div>
+      <label style="display:flex;align-items:center;gap:.4rem;font-size:.75rem;color:var(--t2);cursor:pointer;margin-top:6px">
+        <input type="checkbox" id="loop-auto-rotate" style="width:1rem;height:1rem">
+        Auto-rotate IP + identity between cycles (requires Tor setup)
+      </label>
     </div>
     <div style="margin-top:12px;display:flex;gap:8px">
       <button class="btn-g" id="btn-loop-start">Start Loop</button>
@@ -629,10 +633,11 @@ let loopRunning = false;
 let loopTimers  = [];
 
 async function startLoop() {
-  const url    = document.getElementById('loop-url').value.trim();
-  const pkg    = document.getElementById('loop-pkg').value.trim();
-  const timeSec = +document.getElementById('loop-time').value || 30;
-  const cycles  = +document.getElementById('loop-cycles').value || 3;
+  const url        = document.getElementById('loop-url').value.trim();
+  const pkg        = document.getElementById('loop-pkg').value.trim();
+  const timeSec    = +document.getElementById('loop-time').value || 30;
+  const cycles     = +document.getElementById('loop-cycles').value || 3;
+  const autoRotate = document.getElementById('loop-auto-rotate').checked;
   if (!url && !pkg) { toast('Enter a URL or package name', 'err'); return; }
   loopRunning = true;
   document.getElementById('btn-loop-start').disabled = true;
@@ -652,6 +657,13 @@ async function startLoop() {
       await api('/api/launch_app', 'POST', { package: pkg, stagger_secs: 0, target: targetPhone }).catch(() => {});
     }
     for (let t = 0; t < timeSec && loopRunning; t++) await sleep(1000);
+    if (!loopRunning) break;
+
+    if (autoRotate && c < cycles) {
+      statusEl.textContent = `Cycle ${c}/${cycles}: rotating identity…`;
+      await api('/api/proxy/rotate', 'POST', {}).catch(() => {});
+      await sleep(1500);
+    }
   }
 
   loopRunning = false;

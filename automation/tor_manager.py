@@ -111,6 +111,67 @@ def apply_proxy(phone_idx: int):
         "--proxy-port", str(port))
 
 
+def _send_tor_newnym(ctrl_port: int) -> bool:
+    """Send NEWNYM signal to Tor control port to get a fresh circuit."""
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", ctrl_port), timeout=3) as s:
+            s.sendall(b'AUTHENTICATE ""\r\n')
+            s.recv(256)
+            s.sendall(b"SIGNAL NEWNYM\r\n")
+            resp = s.recv(256)
+            return b"250" in resp
+    except OSError:
+        return False
+
+
+def apply_identity_adb(serial: str, phone_idx: int) -> dict:
+    """
+    Route this phone's traffic through its Tor SOCKS5 port.
+    Uses Android global proxy setting (HTTP/HTTPS traffic only).
+    For full SOCKS5 routing, the app must support proxies or use ProxyDroid (rooted).
+    """
+    port = BASE_PORT + phone_idx
+    try:
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "settings", "put", "global",
+             "http_proxy", f"127.0.0.1:{port}"],
+            capture_output=True, timeout=10
+        )
+    except Exception:
+        pass
+    return {"socks_port": port}
+
+
+def rotate_identity_adb(serial: str, phone_idx: int) -> dict:
+    """
+    Rotate this phone's identity after a session ends:
+    1. Request a new Tor circuit (new exit IP).
+    2. Clear and re-apply the proxy so Android picks up the new circuit.
+    Returns info about the new identity.
+    """
+    ctrl_port = BASE_PORT + 1000 + phone_idx
+    rotated   = _send_tor_newnym(ctrl_port)
+    time.sleep(1)
+    result = apply_identity_adb(serial, phone_idx)
+    result["circuit_rotated"] = rotated
+    return result
+
+
+def rotate_identity_ldplayer(phone_idx: int) -> dict:
+    """
+    Rotate LDPlayer phone identity: new MAC, IMEI, and Tor circuit.
+    """
+    ctrl_port = BASE_PORT + 1000 + phone_idx
+    _send_tor_newnym(ctrl_port)
+    time.sleep(1)
+    mac  = _random_mac()
+    imei = _random_imei()
+    _ld("modify", "--index", str(phone_idx), "--imei", imei, "--mac", mac)
+    apply_proxy(phone_idx)
+    return {"mac": mac, "imei": imei, "socks_port": BASE_PORT + phone_idx, "circuit_rotated": True}
+
+
 def wait_for_tor(phone_idx: int, timeout: int = 30) -> bool:
     import socket
     port     = BASE_PORT + phone_idx

@@ -1,9 +1,9 @@
 """
 CPharm Setup Wizard
-Virtual phone farm using Android Studio AVD emulators.
+Virtual phone farm using Android AVD emulators.
 
-Works on Snapdragon ARM Windows — Android Studio is the ONLY emulator
-that officially supports ARM64 Windows and gets Google Play testing right.
+Works on Snapdragon ARM Windows.
+The wizard auto-downloads and installs the Android SDK — no Android Studio needed.
 
 Build:
     pip install pyinstaller pillow
@@ -14,11 +14,14 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import threading
 import time
+import urllib.request
 import webbrowser
+import zipfile
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -29,9 +32,13 @@ try:
 except ImportError:
     HAS_PIL = False
 
-REPO_URL       = "https://github.com/twoskoops707/cpharm.git"
-DASHBOARD_PORT = 8080
-IS_WIN         = platform.system() == "Windows"
+REPO_URL            = "https://github.com/twoskoops707/cpharm.git"
+DASHBOARD_PORT      = 8080
+IS_WIN              = platform.system() == "Windows"
+
+CMDLINE_TOOLS_URL   = "https://dl.google.com/android/repository/commandlinetools-win-14742923_latest.zip"
+SDK_DEFAULT_PATH    = os.path.join(os.environ.get("LOCALAPPDATA", "C:\\"), "Android", "Sdk")
+JAVA_DOWNLOAD_URL   = "https://aka.ms/download-jdk/microsoft-jdk-21-windows-aarch64.msi"
 
 BG     = "#0d1117"
 BG2    = "#161b22"
@@ -430,8 +437,8 @@ class WelcomePage(PageBase):
         tk.Label(self, text="CPharm Phone Farm", font=("Segoe UI", 26, "bold"),
                  bg=BG, fg=T1).pack(pady=(20, 4))
         tk.Label(self,
-                 text="Virtual Android phones on your Snapdragon laptop.\n"
-                      "Each phone runs independently — browse, tap, install apps, test, repeat.",
+                 text="Virtual Android phones on your Snapdragon Windows laptop.\n"
+                      "The wizard sets everything up automatically — just click Next on each screen.",
                  font=("Segoe UI", 12), bg=BG, fg=T2, justify="center").pack(pady=(0, 16))
 
         # Architecture diagram
@@ -444,7 +451,7 @@ class WelcomePage(PageBase):
         c.delete("all")
         w = c.winfo_width() or 700
         boxes = [
-            (ACCENT,  "Android\nStudio SDK"),
+            (ACCENT,  "Android\nSDK Tools"),
             (GREEN,   "Virtual Phones\n(AVD Emulators)"),
             (YELLOW,  "CPharm\nDashboard"),
             (PURPLE,  "Wizard\nControl"),
@@ -495,72 +502,301 @@ class WelcomePage(PageBase):
                      anchor="w").pack(side="left")
 
 
-# ─── page 2: android studio ───────────────────────────────────────────────────
+# ─── page 2: android sdk auto-install ────────────────────────────────────────
 
 class AndroidStudioPage(PageBase):
+    """
+    Auto-downloads and installs the Android SDK command-line tools.
+    No Android Studio, no terminal, no manual steps.
+    """
+
     def __init__(self, parent):
         super().__init__(parent)
-        self._ready = False
+        self._ready    = False
+        self._working  = False
+
         self.header(
-            "Step 1 — Android Studio",
-            "Google's free developer tool. It includes the emulator that powers your virtual phones.\n"
-            "The ARM64 version runs natively on Snapdragon — no emulation layers."
+            "Step 1 — Install Android SDK",
+            "One button does everything. The wizard downloads and sets up the SDK for you.\n"
+            "No Android Studio needed. No terminal. Just click the big button below."
         )
 
-        # Status box
-        self._status_box = tk.Frame(self, bg=BG2, padx=14, pady=12,
-                                    highlightthickness=1, highlightbackground=BORDER)
-        self._status_box.pack(fill="x", pady=(0, 10))
-        self._sdk_lbl = tk.Label(self._status_box, text="Checking…",
-                                  font=FB, bg=BG2, fg=T2, anchor="w")
-        self._sdk_lbl.pack(fill="x")
-        self._path_lbl = tk.Label(self._status_box, text="",
-                                   font=FM, bg=BG2, fg=T3, anchor="w")
-        self._path_lbl.pack(fill="x")
+        # ── status card ───────────────────────────────────────────────────────
+        status_card = tk.Frame(self, bg=BG2, padx=16, pady=14,
+                               highlightthickness=1, highlightbackground=BORDER)
+        status_card.pack(fill="x", pady=(0, 12))
 
-        # Install guide
-        guide = tk.Frame(self, bg=BG3, padx=14, pady=12)
-        guide.pack(fill="x", pady=(0, 10))
-        tk.Label(guide, text="INSTALL ANDROID STUDIO  (if you haven't yet):",
-                 font=("Segoe UI", 10, "bold"), bg=BG3, fg=YELLOW, anchor="w").pack(fill="x")
-        steps = (
-            "1.  Click the button below to open the Android Studio download page\n"
-            "2.  Click 'Download Android Studio' — choose  Windows ARM64\n"
-            "3.  Run the downloaded installer (android-studio-*.exe)\n"
-            "4.  Click Next on every screen — all defaults are perfect\n"
-            "5.  Open Android Studio after install — it will download the SDK automatically\n"
-            "6.  Wait for the 'Android Studio Setup Wizard' to finish completely\n"
-            "7.  Come back here and click 'Check Again'"
+        self._icon_lbl = tk.Label(status_card, text="🔍", font=("Segoe UI", 28),
+                                  bg=BG2)
+        self._icon_lbl.pack(side="left", padx=(0, 14))
+
+        right = tk.Frame(status_card, bg=BG2)
+        right.pack(side="left", fill="x", expand=True)
+        self._status_lbl = tk.Label(right, text="Checking for Android SDK…",
+                                    font=("Segoe UI", 12, "bold"),
+                                    bg=BG2, fg=T1, anchor="w")
+        self._status_lbl.pack(fill="x")
+        self._detail_lbl = tk.Label(right, text="",
+                                    font=FM, bg=BG2, fg=T3,
+                                    anchor="w", wraplength=520)
+        self._detail_lbl.pack(fill="x", pady=(2, 0))
+
+        # ── big install button ────────────────────────────────────────────────
+        self._install_btn = tk.Button(
+            self,
+            text="⬇   Install Android SDK — Click Here",
+            font=("Segoe UI", 14, "bold"),
+            bg=GREEN, fg="#000000",
+            relief="flat", cursor="hand2",
+            padx=24, pady=14,
+            command=self._auto_install,
         )
-        tk.Label(guide, text=steps, font=FB, bg=BG3, fg=T2,
-                 justify="left", anchor="w").pack(fill="x", pady=(6, 8))
-        tk.Button(guide, text="📥  Open Android Studio Download Page",
-                  font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
-                  relief="flat", cursor="hand2", padx=14, pady=7,
-                  command=lambda: webbrowser.open(
-                      "https://developer.android.com/studio")).pack(anchor="w")
+        self._install_btn.pack(fill="x", pady=(0, 10))
 
-        # Manual SDK path
+        # ── progress bar ──────────────────────────────────────────────────────
+        self._progress = ttk.Progressbar(self, mode="determinate", maximum=100)
+        self._progress.pack(fill="x", pady=(0, 6))
+        self._progress_lbl = tk.Label(self, text="", font=FS, bg=BG, fg=T2)
+        self._progress_lbl.pack(anchor="w")
+
+        # ── log box ───────────────────────────────────────────────────────────
+        log_fr = tk.Frame(self, bg=BG2)
+        log_fr.pack(fill="both", expand=True, pady=(6, 0))
+        self._log_box = tk.Text(log_fr, height=7, font=FM, bg=BG2, fg=T1,
+                                relief="flat", state="disabled", wrap="word")
+        sb = tk.Scrollbar(log_fr, orient="vertical", command=self._log_box.yview)
+        self._log_box.configure(yscrollcommand=sb.set)
+        self._log_box.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        # ── already installed / manual path ──────────────────────────────────
         sep = tk.Frame(self, bg=BORDER, height=1)
-        sep.pack(fill="x", pady=8)
-        tk.Label(self, text="Already installed? Paste your SDK folder path here (optional):",
-                 font=FS, bg=BG, fg=T2, anchor="w").pack(fill="x")
-        path_row = tk.Frame(self, bg=BG)
-        path_row.pack(fill="x", pady=4)
+        sep.pack(fill="x", pady=(10, 6))
+        note_row = tk.Frame(self, bg=BG)
+        note_row.pack(fill="x")
+        tk.Label(note_row,
+                 text="Already have the SDK installed?  Paste the folder path here:",
+                 font=FS, bg=BG, fg=T2).pack(side="left")
         self._path_var = tk.StringVar()
-        tk.Entry(path_row, textvariable=self._path_var, font=FM, bg=BG2, fg=T1,
-                 insertbackground=T1, relief="flat",
-                 width=52).pack(side="left", padx=(0, 6))
-        tk.Button(path_row, text="Browse…", font=FS, bg=BG3, fg=T1,
-                  relief="flat", cursor="hand2", padx=10, pady=5,
+        tk.Entry(note_row, textvariable=self._path_var, font=FM,
+                 bg=BG2, fg=T1, insertbackground=T1, relief="flat",
+                 width=28).pack(side="left", padx=6)
+        tk.Button(note_row, text="Browse", font=FS, bg=BG3, fg=T1,
+                  relief="flat", cursor="hand2", padx=8, pady=4,
                   command=self._browse).pack(side="left")
+        tk.Button(note_row, text="Check", font=FS, bg=BG3, fg=T1,
+                  relief="flat", cursor="hand2", padx=8, pady=4,
+                  command=self._check).pack(side="left", padx=(4, 0))
 
-        # Check button
-        check_row = tk.Frame(self, bg=BG)
-        check_row.pack(fill="x", pady=8)
-        self.btn(check_row, "🔍  Check Again", self._check)
-        self._result_lbl = tk.Label(check_row, text="", font=FS, bg=BG, fg=T2)
-        self._result_lbl.pack(side="left", padx=8)
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _log(self, text):
+        self._log_box.config(state="normal")
+        self._log_box.insert("end", text + "\n")
+        self._log_box.see("end")
+        self._log_box.config(state="disabled")
+
+    def _set_status(self, icon, text, detail="", color=T1):
+        self._icon_lbl.config(text=icon)
+        self._status_lbl.config(text=text, fg=color)
+        self._detail_lbl.config(text=detail)
+
+    def _set_progress(self, pct, label=""):
+        self._progress["value"] = pct
+        self._progress_lbl.config(text=label)
+
+    def _has_java(self):
+        ok, _ = run_cmd(["java", "-version"])
+        if ok:
+            return True
+        if IS_WIN:
+            for root in [
+                os.environ.get("JAVA_HOME", ""),
+                "C:\\Program Files\\Java",
+                "C:\\Program Files\\Eclipse Adoptium",
+                "C:\\Program Files\\Microsoft",
+            ]:
+                if root and any(Path(root).glob("**/java.exe")):
+                    return True
+        return False
+
+    # ── auto install ──────────────────────────────────────────────────────────
+
+    def _auto_install(self):
+        if self._working:
+            return
+        self._working = True
+        self._install_btn.config(state="disabled", text="Working… please wait")
+        threading.Thread(target=self._install_thread, daemon=True).start()
+
+    def _install_thread(self):
+        try:
+            self._do_install()
+        except Exception as exc:
+            self._log(f"\n❌  Unexpected error: {exc}")
+            self._set_status("❌", "Something went wrong — see log below.", color=RED)
+        finally:
+            self._working = False
+            if not self._ready:
+                self._install_btn.config(state="normal",
+                                         text="⬇   Try Again")
+
+    def _do_install(self):
+        sdk_path = Path(SDK_DEFAULT_PATH)
+
+        # ── step 0: check if already installed ───────────────────────────────
+        self._set_status("🔍", "Checking for existing SDK…", color=T2)
+        self._set_progress(5, "Scanning…")
+        existing = find_sdk()
+        if existing:
+            state["sdk_path"] = existing
+            self._log(f"SDK already found at:  {existing}")
+            self._finish_ok(existing)
+            return
+
+        # ── step 1: Java check ────────────────────────────────────────────────
+        self._set_status("☕", "Checking for Java…", color=T2)
+        self._set_progress(8, "Checking Java…")
+        if not self._has_java():
+            self._log("Java not found. The SDK tools need Java to run.")
+            self._log(f"Download Java here:  {JAVA_DOWNLOAD_URL}")
+            self._set_status(
+                "☕",
+                "Java is required — please install it first.",
+                detail="Click the button below, install Java, then click 'Try Again'.",
+                color=YELLOW,
+            )
+            self._set_progress(0, "")
+            self.after(0, self._show_java_button)
+            self._working = False
+            self._install_btn.config(state="normal", text="⬇   Try Again  (after installing Java)")
+            return
+        self._log("Java found ✅")
+
+        # ── step 2: create SDK folder ─────────────────────────────────────────
+        self._set_status("📁", "Creating SDK folder…", color=T2)
+        self._set_progress(12, "Creating folders…")
+        tools_dir = sdk_path / "cmdline-tools"
+        tools_dir.mkdir(parents=True, exist_ok=True)
+        self._log(f"SDK folder:  {sdk_path}")
+
+        # ── step 3: download cmdline-tools zip ────────────────────────────────
+        zip_path = sdk_path / "cmdline-tools" / "cmdline-tools.zip"
+        if zip_path.exists():
+            self._log("Zip already downloaded — skipping download.")
+            self._set_progress(50, "Already downloaded.")
+        else:
+            self._set_status("⬇", "Downloading Android SDK tools…",
+                             detail="~130 MB — this takes a minute on slow connections.",
+                             color=ACCENT)
+            self._log(f"Downloading from:\n  {CMDLINE_TOOLS_URL}")
+
+            def _progress_hook(block_num, block_size, total_size):
+                if total_size > 0:
+                    pct = min(12 + int(block_num * block_size / total_size * 38), 50)
+                    mb_done = block_num * block_size / 1_048_576
+                    mb_total = total_size / 1_048_576
+                    self._set_progress(pct, f"Downloading…  {mb_done:.0f} / {mb_total:.0f} MB")
+
+            try:
+                urllib.request.urlretrieve(CMDLINE_TOOLS_URL, zip_path, _progress_hook)
+            except Exception as e:
+                self._log(f"Download failed: {e}")
+                self._set_status("❌", "Download failed — check internet connection.", color=RED)
+                self._set_progress(0, "")
+                return
+
+            self._log("Download complete ✅")
+
+        # ── step 4: extract zip ───────────────────────────────────────────────
+        self._set_status("📦", "Extracting files…", color=T2)
+        self._set_progress(55, "Extracting…")
+        self._log("Extracting zip…")
+
+        extract_tmp = tools_dir / "_extract_tmp"
+        if extract_tmp.exists():
+            shutil.rmtree(extract_tmp)
+
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(extract_tmp)
+
+        # The zip contains a single top-level folder called "cmdline-tools"
+        # We need it at sdk/cmdline-tools/latest/
+        inner = extract_tmp / "cmdline-tools"
+        latest_dir = tools_dir / "latest"
+        if latest_dir.exists():
+            shutil.rmtree(latest_dir)
+        shutil.move(str(inner), str(latest_dir))
+        shutil.rmtree(extract_tmp)
+        zip_path.unlink(missing_ok=True)
+        self._log("Extraction done ✅")
+        self._set_progress(62, "Extracted.")
+
+        # ── step 5: run sdkmanager to install platform-tools + emulator ───────
+        self._set_status("⚙", "Installing platform-tools and emulator…",
+                         detail="This downloads ~200 MB. Please wait — do not close the window.",
+                         color=YELLOW)
+        self._set_progress(65, "Running sdkmanager…")
+        self._log("Installing platform-tools and emulator via sdkmanager…")
+
+        sdkmgr = str(latest_dir / "bin" / ("sdkmanager.bat" if IS_WIN else "sdkmanager"))
+        ok, out = run_cmd(
+            [sdkmgr,
+             f"--sdk_root={sdk_path}",
+             "--install",
+             "platform-tools",
+             "emulator"],
+            timeout=600,
+        )
+
+        tail = out[-600:] if len(out) > 600 else out
+        if tail:
+            self._log(tail)
+
+        if not ok:
+            self._log("sdkmanager reported an error — checking if tools are present anyway…")
+
+        self._set_progress(92, "Verifying…")
+        state["sdk_path"] = str(sdk_path)
+
+        if not Path(sdk_tool("emulator")).exists():
+            self._log("❌  Emulator not found after install. See log above.")
+            self._set_status("❌", "Install failed — see log above.", color=RED)
+            self._set_progress(0, "")
+            return
+
+        self._log("emulator   ✅")
+        self._log("platform-tools  ✅")
+        self._finish_ok(str(sdk_path))
+
+    def _finish_ok(self, sdk_path):
+        self._set_status("✅", "Android SDK is ready!",
+                         detail=f"SDK installed at:  {sdk_path}",
+                         color=GREEN)
+        self._set_progress(100, "Done!")
+        self._log(f"\n✅  All good. Click Next → to continue.")
+        self._ready = True
+        self._install_btn.config(
+            state="normal",
+            text="✅  SDK Ready — click Next →",
+            bg=GREEN,
+        )
+
+    def _show_java_button(self):
+        if hasattr(self, "_java_btn"):
+            return
+        self._java_btn = tk.Button(
+            self,
+            text="☕  Download Java for Windows ARM64  (opens browser)",
+            font=("Segoe UI", 11, "bold"),
+            bg=YELLOW, fg="#000000",
+            relief="flat", cursor="hand2",
+            padx=16, pady=10,
+            command=lambda: webbrowser.open(JAVA_DOWNLOAD_URL),
+        )
+        self._java_btn.pack(fill="x", pady=(6, 0))
+
+    # ── standard page hooks ───────────────────────────────────────────────────
 
     def on_enter(self):
         self._check()
@@ -576,62 +812,44 @@ class AndroidStudioPage(PageBase):
         manual = self._path_var.get().strip()
         if manual and Path(manual, "platform-tools").exists():
             state["sdk_path"] = manual
-        else:
-            sdk = find_sdk()
-            if sdk:
-                state["sdk_path"] = sdk
-                self._path_var.set(sdk)
+
+        sdk = find_sdk()
+        if sdk:
+            state["sdk_path"] = sdk
+            self._path_var.set(sdk)
 
         sdk = state.get("sdk_path", "")
         if not sdk:
-            self._sdk_lbl.config(text="❌  Android SDK not found.", fg=RED)
-            self._path_lbl.config(text="Install Android Studio, let it finish setup, then click Check Again.")
-            self._result_lbl.config(text="", fg=T2)
+            self._set_status("⬇", "Android SDK not installed yet.",
+                             detail="Click the green button above to install it automatically.",
+                             color=T2)
             self._ready = False
             return False
 
         has_emu = Path(sdk_tool("emulator")).exists()
         has_avd = Path(sdk_tool("avdmanager")).exists()
         has_sdk = Path(sdk_tool("sdkmanager")).exists()
-        has_adb = run_cmd(["adb", "version"])[0]
 
         if has_emu and has_avd and has_sdk:
-            self._sdk_lbl.config(
-                text="✅  Android Studio SDK found — emulator + tools ready!",
-                fg=GREEN)
-            self._path_lbl.config(text=f"SDK: {sdk}", fg=T3)
-            self._result_lbl.config(text="All good — click Next →", fg=GREEN)
-            self._ready = True
-        elif sdk:
-            missing = []
-            if not has_emu: missing.append("emulator")
-            if not has_avd: missing.append("avdmanager")
-            if not has_sdk: missing.append("sdkmanager")
-            self._sdk_lbl.config(
-                text=f"⚠  SDK found but missing: {', '.join(missing)}",
-                fg=YELLOW)
-            self._path_lbl.config(
-                text="Open Android Studio → SDK Manager → install 'Android SDK Command-line Tools'",
-                fg=YELLOW)
-            self._result_lbl.config(text="", fg=T2)
-            self._ready = False
+            self._finish_ok(sdk)
+            return True
 
-        if not has_adb:
-            self._result_lbl.config(
-                text="  ⚠  ADB not in PATH. Open a new Terminal after Android Studio installs.",
-                fg=YELLOW)
-
-        return self._ready
+        missing = []
+        if not has_emu: missing.append("emulator")
+        if not has_avd: missing.append("avdmanager")
+        if not has_sdk: missing.append("sdkmanager")
+        self._set_status("⚙", f"SDK found but incomplete — missing: {', '.join(missing)}",
+                         detail="Click the green button to finish the install.",
+                         color=YELLOW)
+        self._ready = False
+        return False
 
     def can_advance(self):
-        if not self._check():
-            messagebox.showerror(
-                "Android Studio not ready",
-                "Android Studio SDK is required.\n\n"
-                "1. Download from developer.android.com/studio (ARM64 version)\n"
-                "2. Install and open it — let Setup Wizard finish\n"
-                "3. Click 'Check Again' here\n\n"
-                "If SDK is installed but not found, click Browse and select your SDK folder."
+        if not self._ready:
+            messagebox.showinfo(
+                "SDK not ready yet",
+                "Click the green 'Install Android SDK' button and wait for it to finish.\n\n"
+                "The wizard will download and set everything up automatically."
             )
             return False
         return True
@@ -1760,7 +1978,7 @@ class CPharmWizard(tk.Tk):
     ]
     PAGE_NAMES = [
         "Welcome",
-        "Android Studio",
+        "Android SDK",
         "Create Phones",
         "Start Phones",
         "Play Store",

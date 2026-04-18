@@ -219,8 +219,8 @@ class WelcomePage(PageBase):
         tk.Label(self, text="Welcome to CPharm Setup",
                  font=("Segoe UI", 22, "bold"), bg=BG, fg=T1).pack()
         tk.Label(self,
-                 text="This wizard will get everything installed on your Windows PC\n"
-                      "and help you run different tasks on different groups of phones at the same time.\n\n"
+                 text="This wizard sets up virtual Android phones on your Linux computer\n"
+                      "using Waydroid — runs natively on ARM, no BIOS changes needed.\n\n"
                       "You do NOT need to know anything about computers.\n"
                       "Just click Next and follow along.",
                  font=FONT_BIG, bg=BG, fg=T2, justify="center").pack(pady=16)
@@ -230,10 +230,10 @@ class WelcomePage(PageBase):
         tk.Label(box, text="Before you start, make sure you have:",
                  font=("Segoe UI", 10, "bold"), bg=BG3, fg=YELLOW, anchor="w").pack(fill="x")
         for item in [
-            "✅  A Windows 10 or 11 computer",
+            "✅  Ubuntu 20.04+ or Debian 11+ Linux (ARM or x86 — both work)",
             "✅  An internet connection",
-            "✅  At least one Android phone plugged in or on WiFi",
-            "✅  About 10 minutes of free time",
+            "✅  About 15 minutes of free time (Waydroid downloads ~500 MB)",
+            "✅  sudo / administrator access on this computer",
         ]:
             tk.Label(box, text=item, font=FONT_BODY, bg=BG3, fg=T1,
                      anchor="w").pack(fill="x", pady=2)
@@ -252,66 +252,59 @@ class SoftwarePage(PageBase):
         terminal_box.pack(fill="x", pady=(0, 12))
         tk.Label(terminal_box,
                  text="💡  HOW TO OPEN A TERMINAL (you'll need this a lot):\n\n"
-                      "   1.  Press the  Windows  key on your keyboard\n"
-                      "   2.  Type:  cmd\n"
-                      "   3.  Press  Enter\n\n"
-                      "   A black window opens. That is the Terminal.\n"
+                      "   • Ubuntu:  Press  Ctrl+Alt+T  on your keyboard\n"
+                      "   • Or: right-click the desktop → Open Terminal\n"
+                      "   • Or: search for 'Terminal' in your apps menu\n\n"
+                      "   A window with a blinking cursor opens. That is the Terminal.\n"
                       "   You type commands in there and press Enter to run them.",
                  font=FONT_BODY, bg=BG3, fg=T2, justify="left", anchor="w").pack(fill="x")
 
         self._rows = {}
         items = [
             ("python",
-             "Python 3.11+",
-             "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe",
+             "Python 3",
+             "sudo apt install python3 python3-pip -y",
              "HOW TO INSTALL PYTHON:\n\n"
-             "1. Click 'Open Download Page'\n"
-             "2. Download the file (python-3.11.9-amd64.exe)\n"
-             "3. Double-click the downloaded file to run it\n"
-             "4. VERY IMPORTANT: Before you click anything else, look for a checkbox\n"
-             "   at the bottom that says 'Add Python to PATH' — TICK THAT BOX\n"
-             "5. Click 'Install Now'\n"
-             "6. Wait for it to finish\n"
-             "7. Come back here and click 'Check Again'"),
+             "1. Open a Terminal (Ctrl+Alt+T)\n"
+             "2. Type this and press Enter:\n\n"
+             "   sudo apt install python3 python3-pip -y\n\n"
+             "3. It will ask for your password — type it and press Enter\n"
+             "   (you won't see the password as you type — that's normal)\n"
+             "4. Wait for it to finish, then come back here and click 'Check Again'"),
             ("git",
-             "Git for Windows",
-             "https://git-scm.com/download/win",
+             "Git",
+             "sudo apt install git -y",
              "HOW TO INSTALL GIT:\n\n"
-             "1. Click 'Open Download Page'\n"
-             "2. Download the installer (Git-X.X.X-64-bit.exe)\n"
-             "3. Double-click it\n"
-             "4. Click Next on EVERY screen — all the defaults are fine\n"
-             "5. Click Finish when done\n"
-             "6. Come back here and click 'Check Again'"),
+             "1. Open a Terminal\n"
+             "2. Type this and press Enter:\n\n"
+             "   sudo apt install git -y\n\n"
+             "3. Enter your password if asked\n"
+             "4. Wait for it to finish\n"
+             "5. Come back here and click 'Check Again'"),
             ("adb",
              "ADB (Android Debug Bridge)",
-             "https://dl.google.com/android/repository/platform-tools-latest-windows.zip",
+             "sudo apt install adb -y",
              "HOW TO INSTALL ADB:\n\n"
-             "1. Click 'Open Download Page' — it downloads a .zip file automatically\n"
-             "2. Open your Downloads folder\n"
-             "3. Right-click the zip file → Extract All → Extract\n"
-             "4. Move the 'platform-tools' folder somewhere easy, like  C:\\platform-tools\n"
-             "5. Now add it to Windows PATH:\n"
-             "   a. Press Windows key, type: environment variables, press Enter\n"
-             "   b. Click 'Environment Variables'\n"
-             "   c. Under 'System variables', click 'Path', then 'Edit'\n"
-             "   d. Click 'New'\n"
-             "   e. Type:  C:\\platform-tools  (or wherever you put the folder)\n"
-             "   f. Click OK on all windows\n"
-             "6. Close and reopen Terminal\n"
-             "7. Come back here and click 'Check Again'"),
+             "1. Open a Terminal\n"
+             "2. Type this and press Enter:\n\n"
+             "   sudo apt install adb -y\n\n"
+             "3. Enter your password if asked\n"
+             "4. Wait for it to finish\n"
+             "5. Come back here and click 'Check Again'\n\n"
+             "If  sudo apt install adb  doesn't work, try:\n"
+             "   sudo apt install android-tools-adb -y"),
         ]
 
-        for key, label, url, tip in items:
+        for key, label, cmd, tip in items:
             row = tk.Frame(self, bg=BG2, pady=4, padx=12)
             row.pack(fill="x", pady=3)
             status = tk.Label(row, text="…", font=FONT_MONO, bg=BG2, fg=T2, width=3)
             status.pack(side="left")
             tk.Label(row, text=label, font=FONT_BODY, bg=BG2, fg=T1,
-                     width=24, anchor="w").pack(side="left")
-            tk.Button(row, text="Open Download Page", font=FONT_SUB,
+                     width=28, anchor="w").pack(side="left")
+            tk.Button(row, text="Copy install command", font=FONT_SUB,
                       bg=ACCENT, fg=BG, relief="flat", cursor="hand2", padx=10,
-                      command=lambda u=url: webbrowser.open(u)).pack(side="left", padx=6)
+                      command=lambda c=cmd: (self.clipboard_clear(), self.clipboard_append(c))).pack(side="left", padx=6)
             tk.Button(row, text="How to install?", font=FONT_SUB,
                       bg=BG3, fg=T2, relief="flat", cursor="hand2", padx=8,
                       command=lambda t=tip, l=label: messagebox.showinfo(
@@ -381,22 +374,26 @@ class RepoPage(PageBase):
         box.pack(fill="x", pady=(0, 14))
         tk.Label(box,
                  text="📋  DO THIS:\n\n"
-                      "1.  Open Terminal\n"
-                      "    (Windows key → type  cmd  → Enter)\n\n"
-                      "2.  Copy this line below and paste it into the Terminal (Ctrl+V), then press Enter:\n",
+                      "1.  Open Terminal  (Ctrl+Alt+T)\n\n"
+                      "2.  Copy this line below, paste it into the Terminal (Ctrl+Shift+V), then press Enter:\n",
                  font=FONT_BODY, bg=BG3, fg=T2, justify="left", anchor="w").pack(fill="x")
 
+        clone_cmd = f"git clone {REPO_URL} ~/CPharm"
         cmd_frame = tk.Frame(box, bg="#000", padx=12, pady=10)
         cmd_frame.pack(fill="x")
-        cmd_lbl = tk.Label(cmd_frame,
-                           text=f"git clone {REPO_URL}  C:\\CPharm",
-                           font=FONT_MONO, bg="#000", fg=GREEN, anchor="w")
-        cmd_lbl.pack(fill="x")
+        cmd_row2 = tk.Frame(cmd_frame, bg="#000")
+        cmd_row2.pack(fill="x")
+        tk.Label(cmd_row2, text=clone_cmd, font=FONT_MONO, bg="#000", fg=GREEN,
+                 anchor="w").pack(side="left", fill="x", expand=True)
+        tk.Button(cmd_row2, text="Copy", font=FONT_SUB, bg=BG3, fg=T1,
+                  relief="flat", cursor="hand2", padx=8,
+                  command=lambda: (self.clipboard_clear(),
+                                   self.clipboard_append(clone_cmd))).pack(side="right")
 
         tk.Label(box,
-                 text="\n3.  Wait for it to finish. You'll see a bunch of text scroll by.\n"
-                      "    When it stops and you see a new line starting with  C:\\>,  it's done.\n\n"
-                      "4.  A folder called  C:\\CPharm  now exists on your computer.\n\n"
+                 text="\n3.  Wait for it to finish. You'll see text scroll by.\n"
+                      "    When it stops and you see a new line with  $  at the start, it's done.\n\n"
+                      "4.  A folder called  CPharm  is now in your home folder  (~/CPharm).\n\n"
                       "5.  Click the button below to tell me where you put it:",
                  font=FONT_BODY, bg=BG3, fg=T2, justify="left", anchor="w").pack(fill="x")
 
@@ -414,12 +411,14 @@ class RepoPage(PageBase):
         self._lbl.pack(side="left", padx=10)
 
     def on_enter(self):
-        if Path("C:/CPharm/automation/dashboard.py").exists():
-            state["cpharm_dir"] = "C:/CPharm"
-            self._lbl.config(text="C:/CPharm  ✅", fg=GREEN)
+        home_path = Path.home() / "CPharm"
+        if (home_path / "automation" / "dashboard.py").exists():
+            state["cpharm_dir"] = str(home_path)
+            self._lbl.config(text=f"{home_path}  ✅", fg=GREEN)
 
     def _pick(self):
-        d = filedialog.askdirectory(title="Select the CPharm folder", initialdir="C:/")
+        d = filedialog.askdirectory(title="Select the CPharm folder",
+                                    initialdir=str(Path.home()))
         if not d:
             return
         if not Path(d).joinpath("automation", "dashboard.py").exists():
@@ -439,8 +438,8 @@ class RepoPage(PageBase):
                 "No folder selected",
                 "Please select the CPharm folder.\n\n"
                 "If you haven't downloaded it yet:\n"
-                "1. Open Terminal\n"
-                f"2. Type:  git clone {REPO_URL} C:\\CPharm\n"
+                "1. Open Terminal  (Ctrl+Alt+T)\n"
+                f"2. Type:  git clone {REPO_URL} ~/CPharm\n"
                 "3. Press Enter and wait\n"
                 "4. Click 'Select the CPharm Folder' above"
             )
@@ -524,22 +523,23 @@ class PhonesPage(PageBase):
         info = tk.Frame(self, bg=BG3, padx=14, pady=14)
         info.pack(fill="x", pady=(0, 14))
         tk.Label(info,
-                 text="📱  USB PHONE:\n"
-                      "   1. Plug the phone into your computer with a USB cable\n"
-                      "   2. On the phone: Settings → Developer Options → turn on USB Debugging\n"
-                      "      (If you don't see Developer Options: Settings → About Phone → tap\n"
-                      "       'Build Number' 7 times fast. A message says 'You are a developer!')\n"
-                      "   3. A popup appears on the phone asking to 'Allow USB Debugging' → tap Allow\n\n"
-                      "📡  EMULATOR or WIFI PHONE:\n"
-                      "   Type the IP address and port in the box below and click Connect.\n"
-                      "   BlueStacks: 127.0.0.1:5555   |   Waydroid: 192.168.250.1:5555   |   MEmu: 127.0.0.1:21503",
+                 text="🤖  WAYDROID (recommended — virtual Android on Linux):\n"
+                      "   Make sure you completed Step 3 (Waydroid setup).\n"
+                      "   Waydroid address:  192.168.250.1:5555\n"
+                      "   Just click 'Scan for Phones' — it auto-detects Waydroid.\n\n"
+                      "📡  OTHER ADDRESS:\n"
+                      "   Type a custom IP:port below and click Connect.\n"
+                      "   Multiple Waydroid instances use different ports (5555, 5556, 5557…)\n\n"
+                      "⚡  QUICK TIP:\n"
+                      "   If Scan finds nothing, run:  adb connect 192.168.250.1:5555\n"
+                      "   in a Terminal, then click Scan again.",
                  font=FONT_BODY, bg=BG3, fg=T2, justify="left", anchor="w").pack(fill="x")
 
         ctrl = tk.Frame(self, bg=BG)
         ctrl.pack(fill="x", pady=6)
         self.btn(ctrl, "🔍  Scan for Phones", self._scan)
-        tk.Label(ctrl, text="  WiFi address:", font=FONT_SUB, bg=BG, fg=T2).pack(side="left")
-        self._ip = tk.StringVar(value="127.0.0.1:5555")
+        tk.Label(ctrl, text="  Address:", font=FONT_SUB, bg=BG, fg=T2).pack(side="left")
+        self._ip = tk.StringVar(value="192.168.250.1:5555")
         tk.Entry(ctrl, textvariable=self._ip, font=FONT_MONO, bg=BG2, fg=T1,
                  insertbackground=T1, relief="flat", width=22).pack(side="left", padx=4)
         self.btn(ctrl, "Connect", self._connect)
@@ -583,12 +583,13 @@ class PhonesPage(PageBase):
     def can_advance(self):
         if not state["phones"]:
             messagebox.showwarning(
-                "No phones",
-                "No phones were found. You need at least one.\n\n"
+                "No phones found",
+                "No virtual phones were found. You need at least one.\n\n"
                 "Try:\n"
-                "• USB: Make sure USB Debugging is ON in Developer Options\n"
-                "• Emulator: Open BlueStacks first, then click Scan\n"
-                "• WiFi: Type the IP:port and click Connect"
+                "• Make sure you completed Step 3 (Waydroid setup)\n"
+                "• Run:  waydroid session start &  in a Terminal\n"
+                "• Then run:  adb connect 192.168.250.1:5555\n"
+                "• Then click 'Scan for Phones' again"
             )
             return False
         return True
@@ -997,6 +998,138 @@ class AddStepDialog(tk.Toplevel):
         self.destroy()
 
 
+class WaydroidPage(PageBase):
+    """
+    Step-by-step guide to install and start Waydroid on Ubuntu/Debian Linux.
+    Waydroid runs Android natively in an LXC container — ARM-compatible, no emulator.
+    """
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._done = False
+        self.header(
+            "Step 3 — Install Waydroid (Virtual Android)",
+            "Waydroid runs real Android inside Linux — works on ARM, no special BIOS settings needed!"
+        )
+
+        what_box = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        what_box.pack(fill="x", pady=(0, 10))
+        tk.Label(what_box,
+                 text="💡  WHAT IS WAYDROID?\n\n"
+                      "Waydroid puts Android inside a lightweight Linux container (LXC).\n"
+                      "It runs at full native speed — no virtualization, no emulation.\n"
+                      "Each container looks like a real Android phone to ADB.\n"
+                      "ARM processors are fully supported because Android IS ARM-native.",
+                 font=FONT_BODY, bg=BG3, fg=T2, justify="left", anchor="w").pack(fill="x")
+
+        tk.Label(self, text="Copy each command below into your Terminal and press Enter:",
+                 font=("Segoe UI", 10, "bold"), bg=BG, fg=T1, anchor="w").pack(fill="x", pady=(6, 4))
+
+        self._steps_data = [
+            ("1 — Install curl and Python D-Bus",
+             "sudo apt install curl python3-dbus -y",
+             "Two tools Waydroid depends on. Enter your password when asked."),
+            ("2 — Add the Waydroid software source",
+             "curl -s https://repo.waydro.id | sudo bash",
+             "Tells your computer where to download Waydroid from."),
+            ("3 — Install Waydroid",
+             "sudo apt install waydroid -y",
+             "Downloads and installs Waydroid. Takes 1-3 minutes."),
+            ("4 — Download the Android image  (first time only, ~500 MB)",
+             "sudo waydroid init",
+             "Downloads the Android system. Only needed once. Takes 5-15 min depending on internet speed."),
+            ("5 — Start the Waydroid session",
+             "waydroid session start &",
+             "Launches the Android container in the background. The & keeps Terminal usable."),
+            ("6 — Show the Android home screen",
+             "waydroid show-full-ui",
+             "Opens an Android window on your desktop. You should see a normal Android home screen."),
+            ("7 — Connect ADB to Waydroid",
+             "adb connect 192.168.250.1:5555",
+             "Links ADB to the running Waydroid container so CPharm can control it."),
+        ]
+
+        scroll_outer = tk.Frame(self, bg=BG)
+        scroll_outer.pack(fill="both", expand=True)
+        canvas = tk.Canvas(scroll_outer, bg=BG, highlightthickness=0, height=280)
+        sb = tk.Scrollbar(scroll_outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(canvas, bg=BG)
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfig(win_id, width=e.width))
+
+        for title, cmd, desc in self._steps_data:
+            sf = tk.Frame(inner, bg=BG2, padx=12, pady=8,
+                          highlightthickness=1, highlightbackground=BORDER)
+            sf.pack(fill="x", pady=2, padx=2)
+            tk.Label(sf, text=title, font=("Segoe UI", 9, "bold"),
+                     bg=BG2, fg=T1, anchor="w").pack(fill="x")
+            tk.Label(sf, text=desc, font=FONT_SUB, bg=BG2, fg=T2, anchor="w").pack(fill="x")
+            cmd_row = tk.Frame(sf, bg="#0d1117", padx=10, pady=6)
+            cmd_row.pack(fill="x", pady=(4, 0))
+            tk.Label(cmd_row, text=cmd, font=FONT_MONO, bg="#0d1117", fg=GREEN,
+                     anchor="w").pack(side="left", fill="x", expand=True)
+            tk.Button(cmd_row, text="Copy", font=FONT_SUB, bg=BG3, fg=T1,
+                      relief="flat", cursor="hand2", padx=8,
+                      command=lambda c=cmd: (self.clipboard_clear(),
+                                             self.clipboard_append(c))).pack(side="right")
+
+        check_row = tk.Frame(self, bg=BG)
+        check_row.pack(fill="x", pady=8)
+        tk.Button(check_row, text="🔍  Check Waydroid Status", font=("Segoe UI", 10, "bold"),
+                  bg=ACCENT, fg=BG, relief="flat", cursor="hand2", padx=14, pady=7,
+                  command=self._check).pack(side="left", padx=(0, 8))
+        tk.Button(check_row, text="⚡  Quick Connect ADB", font=("Segoe UI", 10, "bold"),
+                  bg=GREEN, fg=BG, relief="flat", cursor="hand2", padx=14, pady=7,
+                  command=self._connect_adb).pack(side="left", padx=(0, 8))
+        self._status_lbl = tk.Label(check_row, text="Run steps 1-7 above first",
+                                    font=FONT_SUB, bg=BG, fg=T2)
+        self._status_lbl.pack(side="left", padx=8)
+
+    def on_enter(self):
+        self._check()
+
+    def _check(self):
+        ok, out = run_cmd(["waydroid", "status"])
+        if ok and "RUNNING" in out.upper():
+            self._status_lbl.config(text="✅  Waydroid is running!", fg=GREEN)
+            self._done = True
+        elif ok and out.strip():
+            self._status_lbl.config(
+                text="⚠  Waydroid installed but session not started — run step 5", fg=YELLOW)
+        else:
+            self._status_lbl.config(
+                text="❌  Waydroid not found — follow the steps above", fg=RED)
+
+    def _connect_adb(self):
+        adb("connect", "192.168.250.1:5555", timeout=10)
+        time.sleep(1)
+        devs = list_adb_devices()
+        if any("192.168.250" in d["serial"] for d in devs):
+            self._status_lbl.config(text="✅  Waydroid connected via ADB!", fg=GREEN)
+            state["phones"] = devs
+            self._done = True
+        else:
+            self._status_lbl.config(
+                text="⚠  ADB couldn't connect — make sure Waydroid is running (step 5)", fg=YELLOW)
+
+    def can_advance(self):
+        if not self._done:
+            messagebox.showwarning(
+                "Waydroid not ready",
+                "Please complete the Waydroid setup first.\n\n"
+                "Follow steps 1-7 in order, then click 'Check Waydroid Status'.\n\n"
+                "If step 4 (sudo waydroid init) seems stuck — it's downloading Android.\n"
+                "A slow connection can take 20+ minutes. Just leave it running."
+            )
+            return False
+        return True
+
+
 class LaunchPage(PageBase):
     """
     Full control center inside the wizard.
@@ -1218,6 +1351,7 @@ class CPharmWizard(tk.Tk):
     PAGES = [
         WelcomePage,
         SoftwarePage,
+        WaydroidPage,
         RepoPage,
         DepsPage,
         PhonesPage,
@@ -1227,6 +1361,7 @@ class CPharmWizard(tk.Tk):
     PAGE_NAMES = [
         "Welcome",
         "Software",
+        "Waydroid",
         "Get CPharm",
         "Install Deps",
         "Phones",

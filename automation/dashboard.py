@@ -68,6 +68,17 @@ def _adb(serial: str, *args, timeout: int = 15) -> str:
         return ""
 
 
+def _ld(*args) -> str:
+    from pathlib import Path as _P
+    if not _P(LDPLAYER).exists():
+        return ""
+    try:
+        r = subprocess.run([LDPLAYER, *args], capture_output=True, text=True, timeout=30)
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+
 def _adb_global(*args, timeout: int = 10) -> str:
     try:
         return subprocess.run(
@@ -480,9 +491,14 @@ async def handle_post(path: str, body: bytes) -> bytes:
             for i, p in enumerate(phones):
                 if i > 0 and stagger > 0:
                     await asyncio.sleep(stagger)
+                # Use Chrome package explicitly — avoids browser chooser and
+                # first-run ToS screens that swallow the URL on fresh emulators.
                 _adb(p["serial"], "shell", "am", "start",
-                     "-a", "android.intent.action.VIEW", "-d", url)
-                await broadcast({"type": "log", "msg": f"Opened on {p['name']}"})
+                     "-a", "android.intent.action.VIEW",
+                     "-d", url,
+                     "-n", "com.android.chrome/com.google.android.apps.chrome.Main",
+                     "--ez", "create_new_tab", "true")
+                await broadcast({"type": "log", "msg": f"Opened {url} on {p['name']}"})
                 if auto_rotate:
                     threading.Thread(
                         target=_rotate_after, args=(p, i, dwell_secs), daemon=True
@@ -568,6 +584,51 @@ async def handle_post(path: str, body: bytes) -> bytes:
     if path == "/api/proxy/teardown":
         tor_manager.stop_all()
         await broadcast({"type": "log", "msg": "Tor turned off — phones using normal connection"})
+        return json_ok({"ok": True})
+
+    # ── LDPlayer controls (optional — only works if LDPlayer is installed) ──
+    if path == "/api/ldplayer/available":
+        from pathlib import Path as _P
+        ok = _P(LDPLAYER).exists()
+        return json_ok({"available": ok, "path": LDPLAYER if ok else ""})
+
+    if path == "/api/ldplayer/list":
+        raw = _ld("list2")
+        vms = []
+        for line in raw.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 2 and parts[0].isdigit():
+                vms.append({"index": int(parts[0]), "name": parts[1]})
+        return json_ok({"vms": vms})
+
+    if path == "/api/ldplayer/start":
+        idx = int(data.get("index", 0))
+        _ld("launch", "--index", str(idx))
+        await broadcast({"type": "log", "msg": f"LDPlayer: starting VM {idx}"})
+        return json_ok({"ok": True})
+
+    if path == "/api/ldplayer/stop":
+        idx = int(data.get("index", 0))
+        _ld("quit", "--index", str(idx))
+        await broadcast({"type": "log", "msg": f"LDPlayer: stopped VM {idx}"})
+        return json_ok({"ok": True})
+
+    if path == "/api/ldplayer/clone":
+        src_idx  = int(data.get("from_index", 0))
+        count    = min(int(data.get("count", 1)), 20)
+        loop     = asyncio.get_event_loop()
+
+        def do_clone():
+            for i in range(count):
+                _ld("copy", "--index", str(src_idx + i + 1), "--from", str(src_idx))
+                asyncio.run_coroutine_threadsafe(
+                    broadcast({"type": "log",
+                               "msg": f"LDPlayer: cloned VM {src_idx} → VM {src_idx + i + 1}"}),
+                    loop)
+            asyncio.run_coroutine_threadsafe(
+                broadcast({"type": "log", "msg": f"LDPlayer: {count} clone(s) ready"}), loop)
+
+        threading.Thread(target=do_clone, daemon=True).start()
         return json_ok({"ok": True})
 
     # ── Groups: run different sequences on different phone sets in parallel ──

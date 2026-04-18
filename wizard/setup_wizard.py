@@ -266,6 +266,51 @@ def rotate_android_id(serial):
     return new_id
 
 
+def setup_chrome(serial):
+    """
+    Kill Chrome first-run experience so URLs open immediately every time.
+
+    Fresh AVDs show ToS / sync screens that swallow the target URL.
+    Writing the chrome-command-line flags file disables all of that.
+    Works without root — shell user can write to /data/local/tmp.
+    """
+    flags = (
+        "chrome --disable-first-run-experience "
+        "--no-default-browser-check --no-first-run "
+        "--disable-fre --disable-sync-by-default"
+    )
+    adb("shell", "sh", "-c",
+        f"mkdir -p /data/local/tmp && "
+        f"echo '{flags}' > /data/local/tmp/chrome-command-line",
+        serial=serial)
+    adb("shell", "am", "force-stop", "com.android.chrome", serial=serial)
+    time.sleep(0.8)
+    # Open about:blank so Chrome initialises with the new flags
+    adb("shell", "am", "start",
+        "-a", "android.intent.action.VIEW",
+        "-d", "about:blank",
+        "-n", "com.android.chrome/com.google.android.apps.chrome.Main",
+        "--ez", "create_new_tab", "true",
+        serial=serial)
+    time.sleep(3)
+    # Dismiss any residual dialog (ToS accept / "No thanks" / sign-in)
+    for _ in range(3):
+        adb("shell", "input", "keyevent", "4", serial=serial)
+        time.sleep(0.4)
+    adb("shell", "am", "force-stop", "com.android.chrome", serial=serial)
+    return True
+
+
+def chrome_open_url(serial, url):
+    """Open a URL directly in Chrome, bypassing browser chooser."""
+    adb("shell", "am", "start",
+        "-a", "android.intent.action.VIEW",
+        "-d", url,
+        "-n", "com.android.chrome/com.google.android.apps.chrome.Main",
+        "--ez", "create_new_tab", "true",
+        serial=serial)
+
+
 def describe_step(step):
     t    = step.get("type", "")
     icon = STEP_ICONS.get(t, "•")
@@ -286,8 +331,8 @@ def execute_steps(steps, serial):
     for step in steps:
         t = step.get("type", "")
         if t == "open_url":
-            adb("shell", "am", "start", "-a", "android.intent.action.VIEW",
-                "-d", step.get("url", ""), serial=serial)
+            chrome_open_url(serial, step.get("url", ""))
+            time.sleep(0.8)
         elif t == "tap":
             adb("shell", "input", "tap",
                 str(step.get("x", 0)), str(step.get("y", 0)), serial=serial)
@@ -761,12 +806,93 @@ class BootPage(PageBase):
 
         log_fr = tk.Frame(self, bg=BG2)
         log_fr.pack(fill="both", expand=True, pady=6)
-        self._log = tk.Text(log_fr, height=8, font=FM, bg=BG2, fg=T1,
+        self._log = tk.Text(log_fr, height=6, font=FM, bg=BG2, fg=T1,
                             relief="flat", state="disabled", wrap="word")
         sb = tk.Scrollbar(log_fr, orient="vertical", command=self._log.yview)
         self._log.configure(yscrollcommand=sb.set)
         self._log.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
+
+        # ── Chrome setup + URL test ───────────────────────────────────────────
+        chrome_box = tk.Frame(self, bg=BG3, padx=14, pady=10)
+        chrome_box.pack(fill="x", pady=(6, 0))
+
+        tk.Label(chrome_box,
+                 text="Fix Chrome  (run once after phones boot)",
+                 font=("Segoe UI", 10, "bold"), bg=BG3, fg=YELLOW,
+                 anchor="w").pack(fill="x")
+        tk.Label(chrome_box,
+                 text="Disables first-run screens so URLs open instantly every time.",
+                 font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 6))
+
+        chrome_ctrl = tk.Frame(chrome_box, bg=BG3)
+        chrome_ctrl.pack(fill="x")
+
+        self._chrome_btn = tk.Button(chrome_ctrl,
+                                     text="🔧  Setup Chrome on All Phones",
+                                     font=("Segoe UI", 10, "bold"),
+                                     bg=YELLOW, fg=BG, relief="flat",
+                                     cursor="hand2", padx=14, pady=6,
+                                     command=self._setup_chrome_all)
+        self._chrome_btn.pack(side="left", padx=(0, 10))
+        self._chrome_lbl = tk.Label(chrome_ctrl, text="", font=FS, bg=BG3, fg=T2)
+        self._chrome_lbl.pack(side="left")
+
+        # Test URL row
+        test_row = tk.Frame(chrome_box, bg=BG3)
+        test_row.pack(fill="x", pady=(8, 0))
+        tk.Label(test_row, text="Test URL on Phone 1:",
+                 font=FS, bg=BG3, fg=T2).pack(side="left")
+        self._test_url_var = tk.StringVar(value="https://google.com")
+        tk.Entry(test_row, textvariable=self._test_url_var, font=FM,
+                 bg=BG2, fg=T1, insertbackground=T1, relief="flat",
+                 width=34).pack(side="left", padx=6)
+        tk.Button(test_row, text="▶ Open",
+                  font=("Segoe UI", 10, "bold"),
+                  bg=ACCENT, fg=BG, relief="flat", cursor="hand2",
+                  padx=10, pady=5,
+                  command=self._test_url).pack(side="left")
+
+    def _setup_chrome_all(self):
+        phones = state.get("phones", [])
+        if not phones:
+            messagebox.showwarning("No phones running",
+                                   "Start the phones first, then setup Chrome.")
+            return
+        self._chrome_btn.config(state="disabled", text="Setting up Chrome…")
+        self._chrome_lbl.config(text="", fg=T2)
+
+        def go():
+            ok_count = 0
+            for p in phones:
+                self._chrome_lbl.config(
+                    text=f"Setting up {p['name']}…", fg=YELLOW)
+                try:
+                    setup_chrome(p["serial"])
+                    ok_count += 1
+                except Exception as e:
+                    self._log_write(f"  Chrome setup error on {p['name']}: {e}\n")
+            self._chrome_btn.config(state="normal",
+                                    text="🔧  Setup Chrome on All Phones")
+            self._chrome_lbl.config(
+                text=f"✅  Done ({ok_count}/{len(phones)} phones)",
+                fg=GREEN)
+            self._log_write(
+                f"Chrome setup complete on {ok_count} phone(s). "
+                "URLs will now open directly.\n")
+
+        threading.Thread(target=go, daemon=True).start()
+
+    def _test_url(self):
+        phones = state.get("phones", [])
+        if not phones:
+            messagebox.showwarning("No phones", "Boot phones first.")
+            return
+        serial = phones[0]["serial"]
+        url    = self._test_url_var.get().strip() or "https://google.com"
+        self._log_write(f"Opening {url} on {phones[0]['name']}…\n")
+        threading.Thread(
+            target=lambda: chrome_open_url(serial, url), daemon=True).start()
 
     def on_enter(self):
         self._rebuild_grid()

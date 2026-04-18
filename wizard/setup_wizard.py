@@ -266,6 +266,27 @@ def rotate_android_id(serial):
     return new_id
 
 
+def _serial_to_idx(serial: str) -> int:
+    try:
+        return (int(serial.split("-")[1]) - 5554) // 2
+    except (IndexError, ValueError):
+        return 0
+
+
+def _try_newnym(serial: str) -> bool:
+    import socket
+    idx       = _serial_to_idx(serial)
+    ctrl_port = 10050 + idx
+    try:
+        with socket.create_connection(("127.0.0.1", ctrl_port), timeout=2) as s:
+            s.sendall(b'AUTHENTICATE ""\r\n')
+            s.recv(256)
+            s.sendall(b"SIGNAL NEWNYM\r\n")
+            return b"250" in s.recv(256)
+    except OSError:
+        return False
+
+
 def setup_chrome(serial):
     """
     Kill Chrome first-run experience so URLs open immediately every time.
@@ -355,6 +376,7 @@ def execute_steps(steps, serial):
             adb("shell", "input", "text", text, serial=serial)
         elif t == "rotate_identity":
             rotate_android_id(serial)
+            _try_newnym(serial)
         time.sleep(0.4)
 
 

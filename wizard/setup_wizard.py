@@ -42,10 +42,6 @@ CMDLINE_TOOLS_URL_ALT    = "https://dl.google.com/android/repository/commandline
 SDK_DEFAULT_PATH         = os.path.join(os.environ.get("LOCALAPPDATA", "C:\\"), "Android", "Sdk")
 JAVA_DOWNLOAD_URL        = "https://aka.ms/download-jdk/microsoft-jdk-21-windows-aarch64.msi"
 JAVA_DOWNLOAD_URL_X64    = "https://aka.ms/download-jdk/microsoft-jdk-21-windows-x64.msi"
-
-# ── prerequisite download URLs ────────────────────────────────────────────────
-PYTHON_URL        = "https://www.python.org/ftp/python/3.13.0/python-3.13.0-arm64.exe"
-PYTHON_URL_X64    = "https://www.python.org/ftp/python/3.13.0/python-3.13.0-amd64.exe"
 TOR_FALLBACK_URL  = "https://dist.torproject.org/torbrowser/14.0.9/tor-expert-bundle-windows-x86_64-14.0.9.tar.gz"
 CPHARM_ZIP_URL    = "https://github.com/twoskoops707/cpharm/archive/refs/heads/master.zip"
 CPHARM_DEFAULT    = os.path.join(os.path.expanduser("~"), "CPharm")
@@ -219,8 +215,8 @@ def _find_java_home() -> str:
     if existing and Path(existing, "bin", "java.exe").exists():
         return existing
 
-    # 2. Android Studio bundles a JetBrains Runtime (jbr/) — check there first
-    #    because users who "can't install Android Studio" may still have it partially.
+    # 2. Android Studio bundles a JetBrains Runtime (jbr/) — check there first.
+    #    Correct path is "Android Studio" NOT "Android Studio3" (typo in earlier version).
     jbr_candidates = [
         os.path.join(os.environ.get("PROGRAMFILES",  r"C:\Program Files"),
                      "Android", "Android Studio", "jbr"),
@@ -230,6 +226,11 @@ def _find_java_home() -> str:
                      "Android Studio", "jbr"),
         r"C:\Program Files\Android\Android Studio\jbr",
         r"C:\Android\android-studio\jbr",
+        # Legacy typo variant that may exist on some installs
+        os.path.join(os.environ.get("PROGRAMFILES",  r"C:\Program Files"),
+                     "Android", "Android Studio3", "jbr"),
+        os.path.join(os.environ.get("LOCALAPPDATA",  ""),
+                     "Programs", "Android Studio3", "jbr"),
     ]
     for jbr in jbr_candidates:
         if jbr and Path(jbr, "bin", "java.exe").exists():
@@ -389,7 +390,7 @@ def _run_sdkmanager(args, sdk, log_fn=None, timeout=900):
 
 def _direct_download_platform_tools(sdk_path, log_fn=None):
     """
-    Download platform-tools directly via Python urllib, bypassing Java/sdkmanager.
+    Download platform-tools directly via Python urllib, bypassinging Java/sdkmanager.
     Uses Google's documented stable URL — no XML parsing needed.
     """
     url  = "https://dl.google.com/android/repository/platform-tools-latest-windows.zip"
@@ -678,6 +679,100 @@ def _write_sdk_licenses(sdk: str):
         (lic_dir / name).write_text(content, encoding="utf-8")
 
 
+def _ensure_emulator_meta(sdk, log_fn=None):
+    """
+    Install emulator/metadata/ device definitions so avdmanager can enumerate
+    hardware profiles (pixel_6, etc.). Without this, 'avdmanager list device'
+    returns empty and AVD creation fails with:
+    "CRITICAL: emulator package must be installed!"
+
+    The emulator/ top-level package ships the emulator binary. The device
+    definitions live in emulator/meta/device-catalog.xml — a separate
+    metadata package fetched from Google's repository XML.
+    """
+    emu_dir = Path(sdk) / "emulator"
+    catalog = emu_dir / "meta" / "device-catalog.xml"
+
+    if catalog.exists():
+        return  # already present
+
+    if log_fn:
+        log_fn("  Installing emulator device metadata (device profiles)…\n")
+
+    import xml.etree.ElementTree as ET
+    try:
+        with urllib.request.urlopen(
+            "https://dl.google.com/android/repository/repository2-3.xml", timeout=20
+        ) as r:
+            xml_data = r.read().decode("utf-8")
+    except Exception as e:
+        if log_fn:
+            log_fn("  ⚠  Could not reach Google repo: " + str(e) + "\n"
+                   "    AVD creation may fail — will attempt anyway.\n")
+        return
+
+    meta_url = None
+    try:
+        root = ET.fromstring(xml_data)
+        for pkg in root.iter():
+            if pkg.get("path") == "emulator":
+                for child in pkg:
+                    tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                    if tag in ("archives", "archive"):
+                        for a in child:
+                            atag = a.tag.split("}")[-1] if "}" in a.tag else a.tag
+                            if atag == "url":
+                                val = (a.text or "").strip()
+                                if val and val.endswith(".zip"):
+                                    if "emulator" in val:
+                                        meta_url = "https://dl.google.com/android/repository/" + val
+                                        break
+                            if meta_url:
+                                break
+                    if meta_url:
+                        break
+    except ET.ParseError:
+        pass
+
+    if not meta_url:
+        if log_fn:
+            log_fn("  ⚠  Could not find emulator meta URL in repo XML.\n"
+                   "    Will attempt AVD creation with whatever device IDs are available.\n")
+        return
+
+    if log_fn:
+        log_fn("  Downloading emulator metadata from:\n  " + meta_url + "\n")
+
+    tmp = Path(sdk) / "_emu_meta.zip"
+    try:
+        urllib.request.urlretrieve(meta_url, tmp)
+        meta_dir = emu_dir / "meta"
+        meta_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(tmp, "r") as zf:
+            for member in zf.namelist():
+                if "device-catalog" in member or "meta/package" in member:
+                    zf.extract(member, emu_dir)
+        tmp.unlink(missing_ok=True)
+
+        _write_local_package_xml(
+            meta_dir / "package.xml",
+            path_id="emulator;meta",
+            major=36, minor=6, micro=4,
+            display="Android Emulator Device Metadata",
+            license_ref="android-sdk-license",
+            ns_type="ns3:genericDetailsType",
+            extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+        )
+        _write_sdk_licenses(sdk)
+        if log_fn:
+            log_fn("  Emulator metadata installed ✅\n")
+    except Exception as e:
+        if log_fn:
+            log_fn("  ⚠  Could not install emulator metadata: " + str(e) + "\n"
+                   "    Device profiles may be missing — attempting AVD creation anyway.\n")
+        tmp.unlink(missing_ok=True)
+
+
 def create_avd(name, log_fn=None):
     sdk = state.get("sdk_path") or find_sdk()
     if not sdk:
@@ -770,6 +865,11 @@ def create_avd(name, log_fn=None):
         log_fn(f"\n  Creating AVD: {name}…\n")
 
     flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
+
+    # Ensure emulator metadata (device definitions) is present before calling avdmanager.
+    # Without emulator/meta/device-catalog.xml, 'avdmanager list device' returns empty
+    # and AVD creation fails with "emulator package must be installed!"
+    _ensure_emulator_meta(sdk, log_fn)
 
     # Discover device IDs that are actually present in this SDK installation.
     # Never guess IDs — avdmanager -d is case-sensitive and varies between SDK versions.
@@ -1522,22 +1622,21 @@ class PrerequisitesPage(PageBase):
             state["cpharm_dir"] = str(install_dir)
             self._set_row("cpharm", "✅  Done", GREEN)
             self._log(f"CPharm installed at {install_dir} ✅")
-            return
-
-        self._log("  ZIP method failed — trying git clone fallback…")
-        self._set_row("cpharm", "⬇  git clone…", YELLOW)
-        ok, out = run_cmd(
-            ["git", "clone", REPO_URL, str(install_dir)],
-            timeout=120,
-        )
-        if ok or (install_dir / "automation" / "dashboard.py").exists():
-            state["cpharm_dir"] = str(install_dir)
-            self._set_row("cpharm", "✅  Done", GREEN)
-            self._log(f"CPharm installed via git clone ✅")
         else:
-            self._set_row("cpharm", "❌  Failed", RED)
-            self._log("Both ZIP download and git clone failed.")
-            self._log(f"Manual: git clone {REPO_URL} \"{install_dir}\"")
+            self._log("  ZIP method failed — trying git clone fallback…")
+            self._set_row("cpharm", "⬇  git clone…", YELLOW)
+            ok, out = run_cmd(
+                ["git", "clone", REPO_URL, str(install_dir)],
+                timeout=120,
+            )
+            if ok or (install_dir / "automation" / "dashboard.py").exists():
+                state["cpharm_dir"] = str(install_dir)
+                self._set_row("cpharm", "✅  Done", GREEN)
+                self._log(f"CPharm installed via git clone ✅")
+            else:
+                self._set_row("cpharm", "❌  Failed", RED)
+                self._log("Both ZIP download and git clone failed.")
+                self._log(f"Manual: git clone {REPO_URL} \"{install_dir}\"")
 
     # ── main install flow ─────────────────────────────────────────────────────
 
@@ -1951,9 +2050,97 @@ class AndroidStudioPage(PageBase):
                 self.after(0, self._show_firewall_btn)
                 return
 
+            # After direct emulator download, install device-catalog metadata so
+            # avdmanager can enumerate hardware profiles (pixel_6, etc.) for AVD creation.
+            self._install_emulator_device_catalog(sdk, log_fn=self._log)
+
         self._log("emulator        ✅")
         self._log("platform-tools  ✅")
         self._finish_ok(sdk)
+
+    def _install_emulator_device_catalog(self, sdk, log_fn=None):
+        # The emulator/ package contains the emulator binary but NOT device definitions.
+        # Those live in emulator/meta/device-catalog.xml — a separate metadata package.
+        # Without it, 'avdmanager list device' returns empty → "emulator package must be installed!"
+        emu_dir = Path(sdk) / "emulator"
+        meta_dir = emu_dir / "meta"
+        catalog_file = meta_dir / "device-catalog.xml"
+
+        if catalog_file.exists():
+            if log_fn:
+                log_fn("  Device catalog already present — skipping metadata install.\n")
+            return
+
+        if log_fn:
+            log_fn("  Installing emulator device catalog metadata…\n")
+
+        import xml.etree.ElementTree as ET
+        try:
+            with urllib.request.urlopen(
+                "https://dl.google.com/android/repository/repository2-3.xml", timeout=20
+            ) as r:
+                xml_data = r.read().decode("utf-8")
+        except Exception as e:
+            if log_fn:
+                log_fn("  ⚠  Could not fetch emulator repo XML: " + str(e) + "\n"
+                       "    Device profiles may not be available.\n")
+            return
+
+        meta_url = None
+        try:
+            root = ET.fromstring(xml_data)
+            for pkg in root.iter():
+                if pkg.get("path") == "emulator":
+                    for child in pkg:
+                        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                        if tag in ("archives", "archive"):
+                            for a in child:
+                                atag = a.tag.split("}")[-1] if "}" in a.tag else a.tag
+                                if atag == "url":
+                                    val = (a.text or "").strip()
+                                    if val and val.endswith(".zip"):
+                                        meta_url = "https://dl.google.com/android/repository/" + val
+                                        break
+                            if meta_url:
+                                break
+                    if meta_url:
+                        break
+        except ET.ParseError:
+            pass
+
+        if not meta_url:
+            if log_fn:
+                log_fn("  ⚠  Could not find emulator meta URL — device profiles may be missing.\n")
+            return
+
+        if log_fn:
+            log_fn("  Downloading emulator meta: " + meta_url + "\n")
+
+        tmp = Path(sdk) / "_emu_meta.zip"
+        try:
+            urllib.request.urlretrieve(meta_url, tmp)
+            meta_dir.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(tmp, "r") as zf:
+                for member in zf.namelist():
+                    if "meta/" in member or "device-catalog" in member:
+                        zf.extract(member, emu_dir)
+            tmp.unlink(missing_ok=True)
+
+            _write_local_package_xml(
+                meta_dir / "package.xml",
+                path_id="emulator;meta",
+                major=36, minor=6, micro=4,
+                display="Android Emulator Metadata",
+                license_ref="android-sdk-license",
+                ns_type="ns3:genericDetailsType",
+                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+            )
+            if log_fn:
+                log_fn("  Emulator device catalog installed ✅\n")
+        except Exception as e:
+            if log_fn:
+                log_fn("  ⚠  Could not install device catalog: " + str(e) + "\n")
+            tmp.unlink(missing_ok=True)
 
     def _finish_ok(self, sdk_path):
         self._set_status("✅", "Android SDK is ready!",
@@ -2096,7 +2283,8 @@ class PhoneFarmPage(PageBase):
                  font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(4, 10))
 
         picker = tk.Frame(count_box, bg=BG3)
-        picker.pack(fill="x")
+        picker.pack(fill="x", pady=(4, 8))
+
         self._count_btns: dict[int, tk.Button] = {}
         for n in [1, 2, 3, 5, 8, 10]:
             b = tk.Button(picker, text=str(n), width=4,
@@ -2131,8 +2319,8 @@ class PhoneFarmPage(PageBase):
                                      text="  ▶  Create Phone Farm  ",
                                      font=("Segoe UI", 12, "bold"),
                                      bg=GREEN, fg=BG, relief="flat",
-                                     cursor="hand2", padx=20, pady=10,
-                                     command=self._create)
+                                     cursor="hand2", command=self._create,
+                                     padx=20, pady=10)
         self._create_btn.pack(side="left", padx=(0, 10))
         self._progress_lbl = tk.Label(create_row, text="", font=FS, bg=BG, fg=T2)
         self._progress_lbl.pack(side="left")
@@ -2238,122 +2426,102 @@ class PhoneFarmPage(PageBase):
 class BootPage(PageBase):
     def __init__(self, parent):
         super().__init__(parent)
+        self._server_proc = None
         self.header(
             "Step 3 — Start the Phones",
             "Boots your virtual phones. First boot takes 2–5 minutes per phone."
         )
 
-        self._status_frame = tk.Frame(self, bg=BG)
-        self._status_frame.pack(fill="x", pady=(0, 10))
-        self._status_rows: dict[str, tk.Label] = {}
-
-        ctrl = tk.Frame(self, bg=BG)
-        ctrl.pack(fill="x", pady=6)
-        self._boot_btn = tk.Button(ctrl, text="▶  Start All Phones",
-                                   font=("Segoe UI", 10, "bold"),
-                                   bg=GREEN, fg=BG, relief="flat",
-                                   cursor="hand2", padx=14, pady=7,
-                                   command=self._boot_all)
-        self._boot_btn.pack(side="left", padx=(0, 8))
-        self._stop_btn = tk.Button(ctrl, text="■  Stop All",
-                                   font=("Segoe UI", 10, "bold"),
-                                   bg=RED, fg=BG, relief="flat",
-                                   cursor="hand2", padx=14, pady=7,
-                                   state="disabled",
-                                   command=self._stop_all)
-        self._stop_btn.pack(side="left")
-        self._overall_lbl = tk.Label(ctrl, text="", font=FS, bg=BG, fg=T2)
-        self._overall_lbl.pack(side="left", padx=10)
-
-        log_fr = tk.Frame(self, bg=BG2)
-        log_fr.pack(fill="both", expand=True, pady=6)
-        self._log = tk.Text(log_fr, height=6, font=FM, bg=BG2, fg=T1,
-                            relief="flat", state="disabled", wrap="word")
-        sb = tk.Scrollbar(log_fr, orient="vertical", command=self._log.yview)
-        self._log.configure(yscrollcommand=sb.set)
-        self._log.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-
-        # ── Chrome setup + URL test ───────────────────────────────────────────
-        chrome_box = tk.Frame(self, bg=BG3, padx=14, pady=10)
-        chrome_box.pack(fill="x", pady=(6, 0))
-
-        tk.Label(chrome_box,
-                 text="Fix Chrome  (run once after phones boot)",
-                 font=("Segoe UI", 10, "bold"), bg=BG3, fg=YELLOW,
+        # Summary
+        summary_outer = tk.Frame(self, bg=BG2, padx=12, pady=10)
+        summary_outer.pack(fill="x", pady=(0, 10))
+        tk.Label(summary_outer, text="Your phones:",
+                 font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1,
                  anchor="w").pack(fill="x")
-        tk.Label(chrome_box,
-                 text="Disables first-run screens so URLs open instantly every time.",
-                 font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 6))
+        self._summary = tk.Text(summary_outer, height=4, font=FM, bg=BG2, fg=T1,
+                                relief="flat", state="disabled", wrap="word")
+        self._summary.pack(fill="x")
 
-        chrome_ctrl = tk.Frame(chrome_box, bg=BG3)
-        chrome_ctrl.pack(fill="x")
+        # Server
+        srv = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        srv.pack(fill="x", pady=(0, 8))
+        tk.Label(srv, text="A — Start the CPharm Server",
+                 font=("Segoe UI", 11, "bold"), bg=BG3,
+                 fg=ACCENT, anchor="w").pack(fill="x")
+        tk.Label(srv,
+                 text="Starts the background automation server. Keep this running while groups are active.",
+                 font=FS, bg=BG3, fg=T2, anchor="w", wraplength=640).pack(
+                     fill="x", pady=(2, 8))
+        srv_row = tk.Frame(srv, bg=BG3)
+        srv_row.pack(fill="x")
+        self._btn_srv_start = tk.Button(srv_row, text="▶  Start Server",
+                                        font=("Segoe UI", 10, "bold"),
+                                        bg=GREEN, fg=BG, relief="flat",
+                                        cursor="hand2", padx=14, pady=7,
+                                        command=self._start_server)
+        self._btn_srv_start.pack(side="left", padx=(0, 8))
+        self._btn_srv_stop = tk.Button(srv_row, text="■  Stop Server",
+                                       font=("Segoe UI", 10, "bold"),
+                                       bg=RED, fg=BG, relief="flat",
+                                       cursor="hand2", padx=14, pady=7,
+                                       state="disabled",
+                                       command=self._stop_server)
+        self._btn_srv_stop.pack(side="left")
+        self._srv_lbl = tk.Label(srv_row, text="Server not running",
+                                  font=FS, bg=BG3, fg=T2)
+        self._srv_lbl.pack(side="left", padx=10)
 
-        self._chrome_btn = tk.Button(chrome_ctrl,
-                                     text="🔧  Setup Chrome on All Phones",
-                                     font=("Segoe UI", 10, "bold"),
-                                     bg=YELLOW, fg=BG, relief="flat",
-                                     cursor="hand2", padx=14, pady=6,
-                                     command=self._setup_chrome_all)
-        self._chrome_btn.pack(side="left", padx=(0, 10))
-        self._chrome_lbl = tk.Label(chrome_ctrl, text="", font=FS, bg=BG3, fg=T2)
-        self._chrome_lbl.pack(side="left")
+        # Groups
+        grp = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        grp.pack(fill="x", pady=(0, 8))
+        tk.Label(grp, text="B — Run Groups",
+                 font=("Segoe UI", 11, "bold"), bg=BG3,
+                 fg=GREEN, anchor="w").pack(fill="x")
+        tk.Label(grp,
+                 text="Starts all groups at the same time. Each group runs on its assigned phones.",
+                 font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 8))
+        grp_row = tk.Frame(grp, bg=BG3)
+        grp_row.pack(fill="x")
+        self._btn_run = tk.Button(grp_row, text="▶  Run All Groups",
+                                  font=("Segoe UI", 10, "bold"),
+                                  bg=GREEN, fg=BG, relief="flat",
+                                  cursor="hand2", padx=14, pady=7,
+                                  state="disabled",
+                                  command=self._run_groups)
+        self._btn_run.pack(side="left", padx=(0, 8))
+        self._btn_stop_grp = tk.Button(grp_row, text="■  Stop All Groups",
+                                       font=("Segoe UI", 10, "bold"),
+                                       bg=RED, fg=BG, relief="flat",
+                                       cursor="hand2", padx=14, pady=7,
+                                       state="disabled",
+                                       command=self._stop_groups)
+        self._btn_stop_grp.pack(side="left")
+        self._run_lbl = tk.Label(grp_row, text="", font=FS, bg=BG3, fg=T2)
+        self._run_lbl.pack(side="left", padx=10)
 
-        # Test URL row
-        test_row = tk.Frame(chrome_box, bg=BG3)
-        test_row.pack(fill="x", pady=(8, 0))
-        tk.Label(test_row, text="Test URL on Phone 1:",
-                 font=FS, bg=BG3, fg=T2).pack(side="left")
-        self._test_url_var = tk.StringVar(value="https://google.com")
-        tk.Entry(test_row, textvariable=self._test_url_var, font=FM,
-                 bg=BG2, fg=T1, insertbackground=T1, relief="flat",
-                 width=34).pack(side="left", padx=6)
-        tk.Button(test_row, text="▶ Open",
-                  font=("Segoe UI", 10, "bold"),
-                  bg=ACCENT, fg=BG, relief="flat", cursor="hand2",
+        # Log
+        tk.Label(self, text="Live log:", font=("Segoe UI", 9, "bold"),
+                 bg=BG, fg=T2, anchor="w").pack(fill="x", pady=(4, 2))
+        log_fr = tk.Frame(self, bg=BG2)
+        log_fr.pack(fill="both", expand=True)
+        self._log_box = tk.Text(log_fr, height=7, font=FM, bg=BG2, fg=T1,
+                                relief="flat", state="disabled", wrap="word")
+        log_sb = tk.Scrollbar(log_fr, orient="vertical",
+                              command=self._log_box.yview)
+        self._log_box.configure(yscrollcommand=log_sb.set)
+        self._log_box.pack(side="left", fill="both", expand=True)
+        log_sb.pack(side="right", fill="y")
+
+        misc = tk.Frame(self, bg=BG)
+        misc.pack(fill="x", pady=6)
+        tk.Button(misc, text="Open Dashboard in Browser",
+                  font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
                   padx=10, pady=5,
-                  command=self._test_url).pack(side="left")
-
-    def _setup_chrome_all(self):
-        phones = state.get("phones", [])
-        if not phones:
-            messagebox.showwarning("No phones running",
-                                   "Start the phones first, then setup Chrome.")
-            return
-        self._chrome_btn.config(state="disabled", text="Setting up Chrome…")
-        self._chrome_lbl.config(text="", fg=T2)
-
-        def go():
-            ok_count = 0
-            for p in phones:
-                self._chrome_lbl.config(
-                    text=f"Setting up {p['name']}…", fg=YELLOW)
-                try:
-                    setup_chrome(p["serial"])
-                    ok_count += 1
-                except Exception as e:
-                    self._log_write(f"  Chrome setup error on {p['name']}: {e}\n")
-            self._chrome_btn.config(state="normal",
-                                    text="🔧  Setup Chrome on All Phones")
-            self._chrome_lbl.config(
-                text=f"✅  Done ({ok_count}/{len(phones)} phones)",
-                fg=GREEN)
-            self._log_write(
-                f"Chrome setup complete on {ok_count} phone(s). "
-                "URLs will now open directly.\n")
-
-        threading.Thread(target=go, daemon=True).start()
-
-    def _test_url(self):
-        phones = state.get("phones", [])
-        if not phones:
-            messagebox.showwarning("No phones", "Boot phones first.")
-            return
-        serial = phones[0]["serial"]
-        url    = self._test_url_var.get().strip() or "https://google.com"
-        self._log_write(f"Opening {url} on {phones[0]['name']}…\n")
-        threading.Thread(
-            target=lambda: chrome_open_url(serial, url), daemon=True).start()
+                  command=lambda: webbrowser.open(
+                      f"http://localhost:{DASHBOARD_PORT}")).pack(side="left", padx=(0, 8))
+        tk.Button(misc, text="💾 Save Config",
+                  font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
+                  padx=10, pady=5, command=self._save).pack(side="left")
 
     def on_enter(self):
         self._rebuild_grid()
@@ -2400,96 +2568,113 @@ class BootPage(PageBase):
             self._status_rows[avd] = lbl
 
     def _log_write(self, text):
-        self._log.config(state="normal")
-        self._log.insert("end", text)
-        self._log.see("end")
-        self._log.config(state="disabled")
+        self._log_box.config(state="normal")
+        self._log_box.insert("end", text)
+        self._log_box.see("end")
+        self._log_box.config(state="disabled")
 
-    def _boot_all(self):
-        avds = state.get("avds", [])
-        if not avds:
-            messagebox.showerror("No phones", "Go back and create phones first.")
+    def _save(self):
+        d = state.get("cpharm_dir", "")
+        if not d:
+            return None
+        rec = Path(d) / "automation" / "recordings"
+        rec.mkdir(parents=True, exist_ok=True)
+        out = rec / "groups_config.json"
+        out.write_text(json.dumps({"groups": state["groups"]}, indent=2))
+        return str(out)
+
+    def _start_server(self):
+        d = state.get("cpharm_dir", "")
+        if not d:
+            d = str(Path(__file__).parent.parent)
+            state["cpharm_dir"] = d
+
+        self._save()
+        dashboard = Path(d) / "automation" / "dashboard.py"
+        if not dashboard.exists():
+            messagebox.showerror("Not found",
+                                 f"dashboard.py not found at:\n{dashboard}\n\n"
+                                 "Make sure CPharm is cloned correctly.")
             return
-        self._boot_btn.config(state="disabled")
-        self._stop_btn.config(state="normal")
-        self._log_write(f"Starting {len(avds)} phone(s)…\n")
+
+        try:
+            flags = subprocess.CREATE_NEW_CONSOLE if IS_WIN else 0
+            self._server_proc = subprocess.Popen(
+                [state.get("python_cmd", "python"), str(dashboard)],
+                cwd=str(dashboard.parent),
+                creationflags=flags,
+            )
+            self._log("Server starting…")
+            self._btn_srv_start.config(state="disabled")
+            self._btn_srv_stop.config(state="normal")
+            self._srv_lbl.config(text="⏳ Starting…", fg=YELLOW)
+
+            def check():
+                time.sleep(3)
+                if self._server_proc.poll() is None:
+                    self._srv_lbl.config(text="✅ Server running", fg=GREEN)
+                    self._btn_run.config(state="normal")
+                    self._log("Server is up! Click Run All Groups to start.")
+                else:
+                    self._srv_lbl.config(text="❌ Crashed — check terminal", fg=RED)
+                    self._btn_srv_start.config(state="normal")
+                    self._btn_srv_stop.config(state="disabled")
+
+            threading.Thread(target=check, daemon=True).start()
+        except Exception as e:
+            messagebox.showerror("Failed", str(e))
+
+    def _stop_server(self):
+        self._stop_groups()
+        if self._server_proc:
+            self._server_proc.terminate()
+            self._server_proc = None
+        self._srv_lbl.config(text="Stopped", fg=T2)
+        self._btn_srv_start.config(state="normal")
+        self._btn_srv_stop.config(state="disabled")
+        self._btn_run.config(state="disabled")
+        self._log("Server stopped.")
+
+    def _api(self, path, body):
+        import urllib.request
+        url  = f"http://localhost:{DASHBOARD_PORT}{path}"
+        data = json.dumps(body).encode()
+        req  = urllib.request.Request(url, data=data,
+                                      headers={"Content-Type": "application/json"},
+                                      method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return json.loads(r.read())
+        except Exception as e:
+            return {"error": str(e)}
+
+    def _run_groups(self):
+        self._log("Starting all groups…")
+        self._btn_run.config(state="disabled")
+        self._btn_stop_grp.config(state="normal")
 
         def go():
-            procs  = []
-            for i, avd in enumerate(avds):
-                port   = 5554 + i * 2
-                serial = f"emulator-{port}"
-                self._status_rows[avd].config(text="⏳  Launching…", fg=YELLOW)
-                proc = start_emulator(avd, port)
-                procs.append((avd, port, serial, proc))
-                self._log_write(f"  Launched {avd} on port {port}\n")
-                time.sleep(2)
-
-            state["_emu_procs"] = [p for _, _, _, p in procs]
-
-            phones = []
-            for avd, port, serial, proc in procs:
-                self._status_rows[avd].config(text="⏳  Booting…", fg=YELLOW)
-                self._log_write(f"  Waiting for {avd} to finish booting…\n")
-                ok = wait_for_boot(serial)
-                if not ok:
-                    self._log_write(f"  ⚠  {avd} slow to boot — waiting extra 3 min…\n")
-                    self._status_rows[avd].config(text="⏳  Retrying…", fg=YELLOW)
-                    ok = wait_for_boot(serial, timeout=180)
-                if ok:
-                    new_id = rotate_android_id(serial)
-                    phones.append({"serial": serial, "name": avd})
-                    self._status_rows[avd].config(text="✅  Ready", fg=GREEN)
-                    self._log_write(f"  ✅  {avd} ready! Android ID: {new_id[:8]}…\n")
-                else:
-                    self._status_rows[avd].config(text="❌  Timed out", fg=RED)
-                    log_path = Path(os.environ.get("TEMP", "C:\\Temp")) / f"cpharm_emu_{avd}.log"
-                    self._log_write(
-                        f"  ❌  {avd} didn't boot in time.\n"
-                        f"      Emulator log: {log_path}\n"
-                        f"      NOTE: The Android emulator has limited support on ARM64 Windows.\n"
-                        f"      If boot fails, enable Windows Hypervisor Platform:\n"
-                        f"      Settings → Turn Windows features on/off → Windows Hypervisor Platform ✓\n"
-                        f"      Then restart Windows and try again.\n"
-                    )
-
-            state["phones"] = phones
-            n = len(phones)
-            self._overall_lbl.config(
-                text=f"✅  {n} phone(s) running!" if n else "❌  No phones booted.",
-                fg=GREEN if n else RED)
-            self._log_write(
-                f"\n{n}/{len(avds)} phone(s) running.\n" +
-                ("Click Next → to configure groups.\n" if n else ""))
+            result = self._api("/api/groups/run", {"groups": state["groups"]})
+            if "error" in result:
+                self._log(f"❌  {result['error']}")
+                self._btn_run.config(state="normal")
+                self._btn_stop_grp.config(state="disabled")
+            else:
+                n = result.get("groups", len(state["groups"]))
+                self._log(f"✅  {n} group(s) running in parallel!")
+                self._run_lbl.config(text=f"{n} running", fg=GREEN)
 
         threading.Thread(target=go, daemon=True).start()
 
-    def _stop_all(self):
-        for proc in state.get("_emu_procs", []):
-            try:
-                proc.terminate()
-                lf = getattr(proc, "_log_file", None)
-                if lf:
-                    lf.close()
-            except Exception:
-                pass
-        state["_emu_procs"] = []
-        state["phones"]     = []
-        for lbl in self._status_rows.values():
-            lbl.config(text="Stopped", fg=T3)
-        self._overall_lbl.config(text="All phones stopped.", fg=T2)
-        self._boot_btn.config(state="normal")
-        self._stop_btn.config(state="disabled")
+    def _stop_groups(self):
+        def go():
+            self._api("/api/groups/stop", {})
+            self._log("All groups stopped.")
+            self._run_lbl.config(text="", fg=T2)
+            self._btn_run.config(state="normal")
+            self._btn_stop_grp.config(state="disabled")
 
-    def can_advance(self):
-        if not state.get("phones"):
-            messagebox.showwarning(
-                "Phones not running",
-                "Start the phones and wait for ✅ before continuing.\n\n"
-                "Click 'Start All Phones' and wait a few minutes."
-            )
-            return False
-        return True
+        threading.Thread(target=go, daemon=True).start()
 
 
 # ─── page 5: google play testing guide ───────────────────────────────────────
@@ -2800,7 +2985,7 @@ class SequenceEditorWindow(tk.Toplevel):
                       bg=color, fg=BG if color not in (BG3,) else T1,
                       font=("Segoe UI", 10, "bold"),
                       relief="flat", cursor="hand2",
-                      pady=6, padx=12).pack(side="left", padx=(0, 6))
+                      padx=10, pady=6).pack(side="left", padx=(0, 6))
 
         fr = tk.Frame(self, bg=BG2)
         fr.pack(fill="both", expand=True, padx=16, pady=8)

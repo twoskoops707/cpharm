@@ -1916,6 +1916,12 @@ class AndroidStudioPage(PageBase):
         Install platform-tools and emulator via sdkmanager.
         Uses _run_sdkmanager so Java env is injected and licenses are auto-accepted.
         """
+        # Before downloading anything, check if the emulator directory exists but is
+        # missing device-catalog.xml (avdmanager needs it to list device profiles).
+        # Install it now so avdmanager can enumerate hardware profiles for AVD creation.
+        if Path(sdk_tool("emulator")).exists():
+            self._install_emulator_device_catalog(sdk, log_fn=self._log)
+
         missing = []
         if not Path(sdk_tool("emulator")).exists():
             missing.append("emulator")

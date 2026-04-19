@@ -2171,18 +2171,14 @@ class AndroidStudioPage(PageBase):
         return False
 
     def can_advance(self):
-        if not state.get("avds"):
-            existing = [a for a in list_avds() if a.startswith("CPharm_Phone_")]
-            if existing:
-                state["avds"] = existing
-                return True
-            messagebox.showinfo(
-                "Phones not created yet",
-                "Click the green 'Install Android SDK' button and wait for it to finish.\n\n"
-                "The wizard will download and set everything up automatically."
-            )
-            return False
-        return True
+        if self._ready:
+            return True
+        messagebox.showinfo(
+            "Not ready yet",
+            "Click 'Install Android SDK' and wait for it to finish first.\n\n"
+            "The wizard will download and set everything up automatically."
+        )
+        return False
 
 
 # ─── page 3: phone farm setup ─────────────────────────────────────────────────
@@ -2332,18 +2328,14 @@ class PhoneFarmPage(PageBase):
         threading.Thread(target=go, daemon=True).start()
 
     def can_advance(self):
-        if not state.get("avds"):
-            existing = [a for a in list_avds() if a.startswith("CPharm_Phone_")]
-            if existing:
-                state["avds"] = existing
-                return True
-            messagebox.showinfo(
-                "Phones not created yet",
-                "Click 'Create Phone Farm' and wait for it to finish.\n\n"
-                "This only needs to happen once. If it's slow, it's downloading Android — just wait."
-            )
-            return False
-        return True
+        if self._done:
+            return True
+        messagebox.showinfo(
+            "Phones not created yet",
+            "Click 'Create Phone Farm' and wait for it to finish.\n\n"
+            "This downloads Android 14 and sets up virtual phones — only happens once."
+        )
+        return False
 
 
 # ─── page 4: boot phones ──────────────────────────────────────────────────────

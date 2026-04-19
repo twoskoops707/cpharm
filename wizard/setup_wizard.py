@@ -658,21 +658,25 @@ def create_avd(name, log_fn=None):
     _run_sdkmanager(["--licenses"], sdk, log_fn=None, timeout=60)
 
     # ── install system image ──────────────────────────────────────────────────
-    if log_fn:
-        log_fn(f"  Installing Android 14 image — this downloads ~1 GB, please wait…\n")
-    ok, out = _run_sdkmanager([image], sdk, log_fn=log_fn, timeout=1200)
+    img_path = Path(sdk) / "system-images" / "android-34" / "google_apis" / arch
+    if img_path.exists() and (img_path / "package.xml").exists():
+        if log_fn:
+            log_fn(f"  System image already installed at {img_path} — skipping download.\n")
+    else:
+        if log_fn:
+            log_fn(f"  Installing Android 14 image — this downloads ~1 GB, please wait…\n")
+        ok, out = _run_sdkmanager([image], sdk, log_fn=log_fn, timeout=1200)
 
-    if not ok:
-        img_path = Path(sdk) / "system-images" / "android-34" / "google_apis" / arch
-        if img_path.exists():
-            if log_fn:
-                log_fn("  Image present on disk — continuing despite sdkmanager exit code.\n")
-        else:
-            if log_fn:
-                log_fn("  sdkmanager failed — trying direct download fallback…\n")
-            ok2 = _direct_download_system_image(arch, sdk, log_fn=log_fn)
-            if not ok2:
-                return False, f"sdkmanager failed and direct download also failed.\nLast sdkmanager output:\n{out[-400:]}"
+        if not ok:
+            if img_path.exists():
+                if log_fn:
+                    log_fn("  Image present on disk — continuing despite sdkmanager exit code.\n")
+            else:
+                if log_fn:
+                    log_fn("  sdkmanager failed — trying direct download fallback…\n")
+                ok2 = _direct_download_system_image(arch, sdk, log_fn=log_fn)
+                if not ok2:
+                    return False, f"sdkmanager failed and direct download also failed.\nLast sdkmanager output:\n{out[-400:]}"
 
     # ── create the AVD ────────────────────────────────────────────────────────
     if log_fn:
@@ -1245,6 +1249,20 @@ class PrerequisitesPage(PageBase):
                     all_required = False
         return all_required
 
+    def _show_java_manual_btn(self):
+        if hasattr(self, "_java_manual_btn"):
+            return
+        self._java_manual_btn = tk.Button(
+            self,
+            text="☕  Download Java for Windows ARM64  (opens browser)",
+            font=("Segoe UI", 11, "bold"),
+            bg=YELLOW, fg="#000000",
+            relief="flat", cursor="hand2",
+            padx=16, pady=10,
+            command=lambda: webbrowser.open(JAVA_DOWNLOAD_URL),
+        )
+        self._java_manual_btn.pack(fill="x", pady=(6, 0))
+
     # ── installers ────────────────────────────────────────────────────────────
 
     def _install_java(self):
@@ -1276,7 +1294,7 @@ class PrerequisitesPage(PageBase):
         self._set_row("java", "❌  Failed", RED)
         self._log("Java install failed on both ARM64 and x64 installers.")
         self._log(f"Manual download:  {JAVA_DOWNLOAD_URL}")
-        self.after(0, self._show_java_button)
+        self.after(0, self._show_java_manual_btn)
 
     def _install_python(self):
         for label, url, fname in [

@@ -196,6 +196,50 @@ def list_avds():
     return [ln.strip() for ln in out.splitlines() if ln.strip() and not ln.startswith("Error")]
 
 
+def _find_java_home() -> str:
+    """
+    Find an installed JDK/JRE directory on Windows and return its root path.
+    Checks JAVA_HOME env var first, then searches common install locations.
+    """
+    existing = os.environ.get("JAVA_HOME", "")
+    if existing and Path(existing, "bin", "java.exe").exists():
+        return existing
+
+    search_roots = [
+        os.environ.get("PROGRAMFILES", r"C:\Program Files"),
+        os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
+        os.environ.get("LOCALAPPDATA", ""),
+        r"C:\Program Files",
+        r"C:\Program Files\Microsoft",
+        r"C:\Program Files\Eclipse Adoptium",
+        r"C:\Program Files\Java",
+        r"C:\Program Files\OpenJDK",
+    ]
+    import glob
+    for root in search_roots:
+        if not root:
+            continue
+        # Search one level deep for java.exe
+        for java_exe in glob.glob(os.path.join(root, "**", "bin", "java.exe"),
+                                  recursive=True):
+            jdk_bin = Path(java_exe).parent
+            return str(jdk_bin.parent)
+    return ""
+
+
+def _sdk_env() -> dict:
+    """
+    Return a copy of os.environ with JAVA_HOME and PATH set so sdkmanager can find Java.
+    """
+    env = os.environ.copy()
+    java_home = _find_java_home()
+    if java_home:
+        env["JAVA_HOME"] = java_home
+        java_bin = str(Path(java_home) / "bin")
+        env["PATH"] = java_bin + os.pathsep + env.get("PATH", "")
+    return env
+
+
 def _machine_arch():
     """
     Return the Android ABI for the HOST machine.
@@ -219,11 +263,14 @@ def _run_sdkmanager(args, sdk, log_fn=None, timeout=900):
     """
     Run sdkmanager, piping 'y' answers so license prompts never block.
     Streams output line-by-line to log_fn if provided.
+    Injects JAVA_HOME + PATH so sdkmanager finds Java even if PATH not updated yet.
     Returns (success, full_output).
     """
     sdkmgr = sdk_tool("sdkmanager")
     cmd = [sdkmgr] + args + [f"--sdk_root={sdk}"]
+    env = _sdk_env()
     if log_fn:
+        log_fn(f"  JAVA_HOME = {env.get('JAVA_HOME', '(not found)')}\n")
         log_fn(f"  $ {' '.join(cmd)}\n")
     flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
     try:
@@ -233,6 +280,7 @@ def _run_sdkmanager(args, sdk, log_fn=None, timeout=900):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            env=env,
             creationflags=flags,
         )
         # Feed unlimited 'y' responses so license prompts never block
@@ -268,10 +316,19 @@ def create_avd(name, log_fn=None):
     arch   = _machine_arch()
     image  = f"system-images;android-34;google_apis;{arch}"
 
+    java_home = _find_java_home()
     if log_fn:
         log_fn(f"  Host architecture: {arch}\n")
         log_fn(f"  System image: {image}\n")
-        log_fn(f"  SDK root: {sdk}\n\n")
+        log_fn(f"  SDK root: {sdk}\n")
+        log_fn(f"  Java home: {java_home or '❌ NOT FOUND — install Java first'}\n\n")
+
+    if not java_home:
+        return False, (
+            "Java not found.\n\n"
+            "Go back to Step 1 (Install Tools) and make sure Java installed successfully,\n"
+            "then come back and try again."
+        )
 
     # ── accept all licenses first ─────────────────────────────────────────────
     if log_fn:
@@ -304,6 +361,7 @@ def create_avd(name, log_fn=None):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=_sdk_env(),
         creationflags=flags,
     )
     try:

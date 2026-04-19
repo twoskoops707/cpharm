@@ -432,12 +432,137 @@ def _direct_download_emulator(sdk_path, log_fn=None):
         with zipfile.ZipFile(tmp, "r") as zf:
             zf.extractall(Path(sdk_path))
         tmp.unlink(missing_ok=True)
+
+        # The ZIP ships a remotePackage package.xml (for distribution).
+        # sdkmanager reads localPackage format when scanning installed packages.
+        # Write the correct localPackage package.xml so sdkmanager sees emulator
+        # as installed and doesn't block system image install with a dependency error.
+        _write_local_package_xml(
+            Path(sdk_path) / "emulator" / "package.xml",
+            path="emulator",
+            major=36, minor=6, micro=4,
+            display="Android Emulator",
+            license_ref="android-sdk-preview-license",
+            ns_type="ns3:genericDetailsType",
+            extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+        )
         if log_fn:
             log_fn("  emulator installed ✅\n")
         return True
     except Exception as e:
         if log_fn:
             log_fn(f"  ❌  Emulator direct download failed: {e}\n")
+        tmp.unlink(missing_ok=True)
+        return False
+
+
+def _write_local_package_xml(path: Path, *, path_id, major, minor, micro,
+                              display, license_ref, ns_type, extra_ns="",
+                              extra_details=""):
+    """Write a localPackage package.xml that sdkmanager accepts as an installed package."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        f'<ns2:repository\n'
+        f'    xmlns:ns2="http://schemas.android.com/repository/android/common/02"\n'
+        f'    {extra_ns}\n'
+        f'    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n'
+        f'  <localPackage path="{path_id}" obsolete="false">\n'
+        f'    <type-details xsi:type="{ns_type}">{extra_details}</type-details>\n'
+        f'    <revision>\n'
+        f'      <major>{major}</major><minor>{minor}</minor><micro>{micro}</micro>\n'
+        f'    </revision>\n'
+        f'    <display-name>{display}</display-name>\n'
+        f'    <uses-license ref="{license_ref}"/>\n'
+        f'  </localPackage>\n'
+        f'</ns2:repository>\n',
+        encoding="utf-8",
+    )
+
+
+def _direct_download_system_image(arch, sdk_path, log_fn=None):
+    """
+    Download system-images;android-34;google_apis;arm64-v8a directly via Python.
+    Parses Google's sys-img repository XML to find the current URL.
+    """
+    import xml.etree.ElementTree as ET
+    SYS_IMG_XML = "https://dl.google.com/android/repository/sys-img/google_apis/sys-img2-1.xml"
+    BASE_URL    = "https://dl.google.com/android/repository/sys-img/google_apis/"
+    TARGET_PATH = f"system-images;android-34;google_apis;{arch}"
+
+    if log_fn:
+        log_fn("  Fetching system image catalog via Python…\n")
+    try:
+        with urllib.request.urlopen(SYS_IMG_XML, timeout=30) as r:
+            xml_data = r.read().decode("utf-8")
+    except Exception as e:
+        if log_fn:
+            log_fn(f"  ❌  Cannot reach Google system image repo: {e}\n")
+        return False
+
+    img_url = None
+    try:
+        root = ET.fromstring(xml_data)
+        for pkg in root.iter():
+            if pkg.get("path") == TARGET_PATH:
+                for el in pkg.iter():
+                    tag = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+                    if tag == "url":
+                        val = (el.text or "").strip()
+                        if val.endswith(".zip"):
+                            img_url = BASE_URL + val
+                            break
+                if img_url:
+                    break
+    except ET.ParseError:
+        pass
+
+    if not img_url:
+        matches = re.findall(rf"{re.escape(arch)}-34[^\"<\s]+\.zip", xml_data)
+        if matches:
+            img_url = BASE_URL + matches[-1]
+
+    if not img_url:
+        if log_fn:
+            log_fn(f"  ❌  System image URL for {arch} API 34 not found.\n")
+        return False
+
+    if log_fn:
+        log_fn(f"  System image URL: {img_url}\n")
+        log_fn("  Downloading system image (~1.5 GB) — this takes a while…\n")
+
+    dest_dir = Path(sdk_path) / "system-images" / "android-34" / "google_apis" / arch
+    tmp = Path(sdk_path) / "_sysimg_tmp.zip"
+    try:
+        urllib.request.urlretrieve(img_url, tmp)
+        dest_dir.parent.mkdir(parents=True, exist_ok=True)
+        if dest_dir.exists():
+            shutil.rmtree(dest_dir)
+        with zipfile.ZipFile(tmp, "r") as zf:
+            zf.extractall(dest_dir.parent)
+        tmp.unlink(missing_ok=True)
+
+        # Write localPackage package.xml so avdmanager finds the image
+        _write_local_package_xml(
+            dest_dir / "package.xml",
+            path_id=TARGET_PATH,
+            major=14, minor=0, micro=0,
+            display=f"Google APIs ARM 64 v8a System Image",
+            license_ref="android-sdk-license",
+            ns_type="ns4:sysImgDetailsType",
+            extra_ns='xmlns:ns4="http://schemas.android.com/sdk/android/repo/sys-img2/03"',
+            extra_details=(
+                f"<api-level>34</api-level>"
+                f"<tag><id>google_apis</id><display>Google APIs</display></tag>"
+                f"<abi>{arch}</abi>"
+            ),
+        )
+        if log_fn:
+            log_fn("  System image installed ✅\n")
+        return True
+    except Exception as e:
+        if log_fn:
+            log_fn(f"  ❌  System image direct download failed: {e}\n")
         tmp.unlink(missing_ok=True)
         return False
 
@@ -508,13 +633,16 @@ def create_avd(name, log_fn=None):
     ok, out = _run_sdkmanager([image], sdk, log_fn=log_fn, timeout=1200)
 
     if not ok:
-        # Check if image actually landed despite non-zero exit (sdkmanager quirk)
         img_path = Path(sdk) / "system-images" / "android-34" / "google_apis" / arch
         if img_path.exists():
             if log_fn:
                 log_fn("  Image present on disk — continuing despite sdkmanager exit code.\n")
         else:
-            return False, f"sdkmanager failed. Last output:\n{out[-400:]}"
+            if log_fn:
+                log_fn("  sdkmanager failed — trying direct download fallback…\n")
+            ok2 = _direct_download_system_image(arch, sdk, log_fn=log_fn)
+            if not ok2:
+                return False, f"sdkmanager failed and direct download also failed.\nLast sdkmanager output:\n{out[-400:]}"
 
     # ── create the AVD ────────────────────────────────────────────────────────
     if log_fn:

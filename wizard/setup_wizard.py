@@ -681,96 +681,109 @@ def _write_sdk_licenses(sdk: str):
 
 def _ensure_emulator_meta(sdk, log_fn=None):
     """
-    Install emulator/metadata/ device definitions so avdmanager can enumerate
-    hardware profiles (pixel_6, etc.). Without this, 'avdmanager list device'
-    returns empty and AVD creation fails with:
-    "CRITICAL: emulator package must be installed!"
+    Install emulator device definitions (device-catalog.xml) so avdmanager can
+    enumerate hardware profiles (pixel_6, etc.) and AVD creation succeeds.
 
-    The emulator/ top-level package ships the emulator binary. The device
-    definitions live in emulator/meta/device-catalog.xml — a separate
-    metadata package fetched from Google's repository XML.
+    Without this, 'avdmanager list device' returns empty and AVD creation fails
+    with: "CRITICAL: emulator package must be installed!"
+
+    Strategy (in order):
+      1. Android Studio: copy device-catalog.xml from Android Studio's own copy
+         of the emulator, if Android Studio is installed.
+      2. sdkmanager: run sdkmanager "emulator" (the authoritative install path).
+         This downloads and installs the emulator package including device-catalog.xml.
+      3. Direct Python download: if sdkmanager fails (network blocked), download
+         the emulator ZIP directly from Google's repo XML.
+    After each path, verify emulator/meta/device-catalog.xml exists.
     """
     emu_dir = Path(sdk) / "emulator"
     catalog = emu_dir / "meta" / "device-catalog.xml"
 
+    # Already present — nothing to do
     if catalog.exists():
-        return  # already present
-
-    if log_fn:
-        log_fn("  Installing emulator device metadata (device profiles)…\n")
-
-    import xml.etree.ElementTree as ET
-    try:
-        with urllib.request.urlopen(
-            "https://dl.google.com/android/repository/repository2-3.xml", timeout=20
-        ) as r:
-            xml_data = r.read().decode("utf-8")
-    except Exception as e:
         if log_fn:
-            log_fn("  ⚠  Could not reach Google repo: " + str(e) + "\n"
-                   "    AVD creation may fail — will attempt anyway.\n")
-        return
-
-    meta_url = None
-    try:
-        root = ET.fromstring(xml_data)
-        for pkg in root.iter():
-            if pkg.get("path") == "emulator":
-                for child in pkg:
-                    tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
-                    if tag in ("archives", "archive"):
-                        for a in child:
-                            atag = a.tag.split("}")[-1] if "}" in a.tag else a.tag
-                            if atag == "url":
-                                val = (a.text or "").strip()
-                                if val and val.endswith(".zip"):
-                                    if "emulator" in val:
-                                        meta_url = "https://dl.google.com/android/repository/" + val
-                                        break
-                            if meta_url:
-                                break
-                    if meta_url:
-                        break
-    except ET.ParseError:
-        pass
-
-    if not meta_url:
-        if log_fn:
-            log_fn("  ⚠  Could not find emulator meta URL in repo XML.\n"
-                   "    Will attempt AVD creation with whatever device IDs are available.\n")
+            log_fn("  Emulator device metadata already present.\n")
         return
 
     if log_fn:
-        log_fn("  Downloading emulator metadata from:\n  " + meta_url + "\n")
+        log_fn("  Installing emulator device definitions (device-catalog.xml)…\n")
 
-    tmp = Path(sdk) / "_emu_meta.zip"
-    try:
-        urllib.request.urlretrieve(meta_url, tmp)
-        meta_dir = emu_dir / "meta"
-        meta_dir.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(tmp, "r") as zf:
-            for member in zf.namelist():
-                if "device-catalog" in member or "meta/package" in member:
-                    zf.extract(member, emu_dir)
-        tmp.unlink(missing_ok=True)
+    installed = False
 
-        _write_local_package_xml(
-            meta_dir / "package.xml",
-            path_id="emulator;meta",
-            major=36, minor=6, micro=4,
-            display="Android Emulator Device Metadata",
-            license_ref="android-sdk-license",
-            ns_type="ns3:genericDetailsType",
-            extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
-        )
-        _write_sdk_licenses(sdk)
+    # ── Path 1: Android Studio bundled emulator ─────────────────────────
+    # Android Studio ships a complete copy of the emulator with device-catalog.xml.
+    # Copy from there instead of downloading.
+    studio_emulator = None
+    for studio_root in [
+        Path(os.environ.get("PROGRAMFILES",  "")) / "Android" / "Android Studio",
+        Path(os.environ.get("LOCALAPPDATA",    "")) / "Programs" / "Android Studio",
+        Path(os.environ.get("PROGRAMFILES",    "")) / "Android Studio",
+    ]:
+        if studio_root.exists():
+            candidate = studio_root / "emulator"
+            if (candidate / "meta" / "device-catalog.xml").exists():
+                studio_emulator = candidate
+                break
+
+    if studio_emulator:
         if log_fn:
-            log_fn("  Emulator metadata installed ✅\n")
-    except Exception as e:
+            log_fn(f"  Copying device-catalog.xml from Android Studio:\n"
+                   f"  {studio_emulator}\n")
+        try:
+            meta_dest = emu_dir / "meta"
+            meta_dest.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(
+                studio_emulator / "meta" / "device-catalog.xml",
+                meta_dest / "device-catalog.xml",
+            )
+            _write_local_package_xml(
+                meta_dest / "package.xml",
+                path_id="emulator;meta",
+                major=36, minor=6, micro=4,
+                display="Android Emulator Device Metadata",
+                license_ref="android-sdk-license",
+                ns_type="ns3:genericDetailsType",
+                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+            )
+            _write_sdk_licenses(sdk)
+            if log_fn:
+                log_fn("  Copied device definitions from Android Studio ✅\n")
+            installed = True
+        except Exception as e:
+            if log_fn:
+                log_fn(f"  Could not copy from Android Studio: {e}\n")
+
+    # ── Path 2: sdkmanager "emulator" (authoritative) ──────────────────
+    if not installed:
         if log_fn:
-            log_fn("  ⚠  Could not install emulator metadata: " + str(e) + "\n"
-                   "    Device profiles may be missing — attempting AVD creation anyway.\n")
-        tmp.unlink(missing_ok=True)
+            log_fn("  Trying sdkmanager 'emulator' install (authoritative)…\n")
+
+        ok, out = _run_sdkmanager(["emulator"], sdk, log_fn=log_fn, timeout=300)
+        if catalog.exists():
+            if log_fn:
+                log_fn("  Emulator + device metadata installed via sdkmanager ✅\n")
+            installed = True
+        else:
+            if log_fn:
+                log_fn(f"  sdkmanager 'emulator' did not produce device-catalog.xml.\n"
+                       f"  Output preview: {out[:300]}\n")
+
+    # ── Path 3: Direct Python download (sdkmanager failed or network blocked) ──
+    if not installed:
+        if log_fn:
+            log_fn("  Falling back to direct Python download of emulator.\n"
+                   "  (This bypasses Java's network stack.)\n")
+        _direct_download_emulator(sdk, log_fn=log_fn)
+
+    # ── Final verdict ────────────────────────────────────────────────────
+    if catalog.exists():
+        if log_fn:
+            log_fn("  Emulator device metadata installed ✅\n")
+    else:
+        if log_fn:
+            log_fn("  ⚠  device-catalog.xml still missing after all fallbacks.\n"
+                   "    AVD creation will fail. Consider installing Android Studio\n"
+                   "    to get the full emulator package with device definitions.\n")
 
 
 def create_avd(name, log_fn=None):
@@ -1496,8 +1509,7 @@ class PrerequisitesPage(PageBase):
             self._log(f"  Install failed ({label}): {out[-200:]}")
         self._set_row("java", "❌  Failed", RED)
         self._log("Java install failed on both ARM64 and x64 installers.")
-        self._log(f"Manual download:  {JAVA_DOWNLOAD_URL}")
-        self.after(0, self._show_java_manual_btn)
+        self._show_java_manual_btn()
 
     def _install_python(self):
         for label, url, fname in [
@@ -1959,8 +1971,10 @@ class AndroidStudioPage(PageBase):
         shutil.move(str(inner), str(latest_dir))
         shutil.rmtree(extract_tmp)
         zip_path.unlink(missing_ok=True)
-        # The zip ships a remotePackage package.xml — write localPackage so
-        # avdmanager can find cmdline-tools as an installed package.
+        # The zip ships a remotePackage package.xml (for distribution).
+        # sdkmanager reads localPackage format when scanning installed packages.
+        # Write the correct localPackage package.xml so sdkmanager sees emulator
+        # as installed and doesn't block system image install with a dependency error.
         _write_local_package_xml(
             latest_dir / "package.xml",
             path_id="cmdline-tools;latest",
@@ -2091,7 +2105,7 @@ class AndroidStudioPage(PageBase):
             root = ET.fromstring(xml_data)
             for pkg in root.iter():
                 if pkg.get("path") == "emulator":
-                    for child in pkg:
+                    for child in pkg.iter():
                         tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
                         if tag in ("archives", "archive"):
                             for a in child:
@@ -2209,7 +2223,6 @@ class AndroidStudioPage(PageBase):
         manual = self._path_var.get().strip()
         if manual and Path(manual, "platform-tools").exists():
             state["sdk_path"] = manual
-
         sdk = find_sdk()
         if sdk:
             state["sdk_path"] = sdk
@@ -2218,7 +2231,7 @@ class AndroidStudioPage(PageBase):
         sdk = state.get("sdk_path", "")
         if not sdk:
             self._set_status("⬇", "Android SDK not installed yet.",
-                             detail="Click the green button above to install it automatically.",
+                             detail="Click the button below to install it automatically.",
                              color=T2)
             self._ready = False
             return False

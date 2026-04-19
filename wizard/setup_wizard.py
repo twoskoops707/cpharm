@@ -303,7 +303,8 @@ def _run_sdkmanager(args, sdk, log_fn=None, timeout=900):
     Returns (success, full_output).
     """
     sdkmgr = _canonical_sdkmanager(sdk)
-    cmd = [sdkmgr] + args + [f"--sdk_root={sdk}"]
+    # --sdk_root MUST come before the subcommand/packages
+    cmd = [sdkmgr, f"--sdk_root={sdk}"] + args
     env = _sdk_env()
     if log_fn:
         log_fn(f"  JAVA_HOME = {env.get('JAVA_HOME', '(not found)')}\n")
@@ -1234,19 +1235,8 @@ class AndroidStudioPage(PageBase):
         self._progress_lbl.config(text=label)
 
     def _has_java(self):
-        ok, _ = run_cmd(["java", "-version"])
-        if ok:
-            return True
-        if IS_WIN:
-            for root in [
-                os.environ.get("JAVA_HOME", ""),
-                "C:\\Program Files\\Java",
-                "C:\\Program Files\\Eclipse Adoptium",
-                "C:\\Program Files\\Microsoft",
-            ]:
-                if root and any(Path(root).glob("**/java.exe")):
-                    return True
-        return False
+        # Delegate to the shared helper which checks JBR, all common locations, etc.
+        return bool(_find_java_home())
 
     # ── auto install ──────────────────────────────────────────────────────────
 
@@ -1384,9 +1374,15 @@ class AndroidStudioPage(PageBase):
         self._set_status("⚙", "Installing Android tools…",
                          detail="Downloads ~200 MB. Please wait — do not close the window.",
                          color=YELLOW)
+        self._set_progress(60, "Accepting licenses…")
+        self._log(f"JAVA_HOME: {_find_java_home() or '(not found — Java required)'}")
+
+        # Accept all pending SDK licenses first — required before any --install on fresh SDK
+        self._log("Accepting SDK licenses…")
+        _run_sdkmanager(["--licenses"], sdk, log_fn=self._log, timeout=60)
+
         self._set_progress(65, "Running sdkmanager…")
         self._log(f"Installing: {', '.join(missing)}")
-        self._log(f"JAVA_HOME will be: {_find_java_home() or '(searching…)'}")
 
         ok, out = _run_sdkmanager(
             ["--install"] + missing,
@@ -1401,6 +1397,11 @@ class AndroidStudioPage(PageBase):
             self._log("\n❌  Emulator still not found after install.")
             self._log("    Check that JAVA_HOME was found above.")
             self._log("    If Java shows as '(not found)', go back to Step 1 and re-run Install Everything.")
+            self._log("\n    Listing available packages to diagnose…")
+            _, pkg_out = _run_sdkmanager(["--list"], sdk, log_fn=None, timeout=60)
+            if pkg_out:
+                for line in pkg_out.splitlines()[:40]:
+                    self._log("    " + line)
             self._set_status("❌", "Emulator install failed — see log", color=RED)
             self._set_progress(0, "")
             self._install_btn.config(state="normal", text="⬇   Try Again")

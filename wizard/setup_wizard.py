@@ -515,14 +515,26 @@ def _direct_download_emulator(sdk_path, log_fn=None):
 def _write_local_package_xml(path: Path, *, path_id, major, minor, micro,
                               display, license_ref, ns_type, extra_ns="",
                               extra_details=""):
-    """Write a localPackage package.xml that sdkmanager accepts as an installed package."""
+    """Write a localPackage package.xml that sdkmanager and avdmanager accept.
+
+    Structure must match Google's official package XML format exactly,
+    including all xmlns namespace declarations and the <dependencies> block.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Build the full namespace string — avdmanager validates these
+    base_ns = 'xmlns:ns2="http://schemas.android.com/repository/android/common/01"'
+    addon2  = 'xmlns:ns3="http://schemas.android.com/sdk/android/repo/addon2/01"'
+    sysimg  = 'xmlns:ns4="http://schemas.android.com/sdk/android/repo/sys-img2/01"'
+    generic = 'xmlns:ns5="http://schemas.android.com/repository/android/generic/01"'
+    repo2   = 'xmlns:ns6="http://schemas.android.com/repository/android/repository2/01"'
+    xsi     = 'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+    all_ns  = f"{base_ns} {addon2} {sysimg} {generic} {repo2} {xsi} {extra_ns}"
+
     path.write_text(
         f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
         f'<ns2:repository\n'
-        f'    xmlns:ns2="http://schemas.android.com/repository/android/common/02"\n'
-        f'    {extra_ns}\n'
-        f'    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n'
+        f'    {all_ns}>\n'
         f'  <localPackage path="{path_id}" obsolete="false">\n'
         f'    <type-details xsi:type="{ns_type}">{extra_details}</type-details>\n'
         f'    <revision>\n'
@@ -536,121 +548,35 @@ def _write_local_package_xml(path: Path, *, path_id, major, minor, micro,
     )
 
 
-def _direct_download_system_image(arch, sdk_path, log_fn=None):
+def _write_emulator_package_xml(emu_dir: Path):
+    """Write the official emulator top-level package.xml with all namespaces and dependencies.
+
+    This is the exact format Google ships in sdk/emulator/package.xml.
+    avdmanager validates both the namespace declarations AND the dependencies block.
     """
-    Download system-images;android-34;google_apis;arm64-v8a directly via Python.
-    Parses Google's sys-img repository XML to find the current URL.
-    """
-    import xml.etree.ElementTree as ET
-    SYS_IMG_XML = "https://dl.google.com/android/repository/sys-img/google_apis/sys-img2-1.xml"
-    BASE_URL    = "https://dl.google.com/android/repository/sys-img/google_apis/"
-    TARGET_PATH = f"system-images;android-34;google_apis;{arch}"
-
-    if log_fn:
-        log_fn("  Fetching system image catalog via Python…\n")
-    try:
-        with urllib.request.urlopen(SYS_IMG_XML, timeout=30) as r:
-            xml_data = r.read().decode("utf-8")
-    except Exception as e:
-        if log_fn:
-            log_fn(f"  ❌  Cannot reach Google system image repo: {e}\n")
-        return False
-
-    img_url = None
-    try:
-        root = ET.fromstring(xml_data)
-        for pkg in root.iter():
-            if pkg.get("path") == TARGET_PATH:
-                for el in pkg.iter():
-                    tag = el.tag.split("}")[-1] if "}" in el.tag else el.tag
-                    if tag == "url":
-                        val = (el.text or "").strip()
-                        if val.endswith(".zip"):
-                            img_url = BASE_URL + val
-                            break
-                if img_url:
-                    break
-    except ET.ParseError:
-        pass
-
-    if not img_url:
-        matches = re.findall(rf"{re.escape(arch)}-34[^\"<\s]+\.zip", xml_data)
-        if matches:
-            img_url = BASE_URL + matches[-1]
-
-    if not img_url:
-        if log_fn:
-            log_fn(f"  ❌  System image URL for {arch} API 34 not found.\n")
-        return False
-
-    if log_fn:
-        log_fn(f"  System image URL: {img_url}\n")
-        log_fn("  Downloading system image (~1.5 GB) — this takes a while…\n")
-
-    dest_dir = Path(sdk_path) / "system-images" / "android-34" / "google_apis" / arch
-    tmp = Path(sdk_path) / "_sysimg_tmp.zip"
-    try:
-        urllib.request.urlretrieve(img_url, tmp)
-        dest_dir.parent.mkdir(parents=True, exist_ok=True)
-        if dest_dir.exists():
-            shutil.rmtree(dest_dir)
-        with zipfile.ZipFile(tmp, "r") as zf:
-            zf.extractall(dest_dir.parent)
-        tmp.unlink(missing_ok=True)
-
-        # Write localPackage package.xml so avdmanager finds the image
-        _write_local_package_xml(
-            dest_dir / "package.xml",
-            path_id=TARGET_PATH,
-            major=14, minor=0, micro=0,
-            display="Google APIs ARM 64 v8a System Image",
-            license_ref="android-sdk-arm-dbt-license",
-            ns_type="ns4:sysImgDetailsType",
-            extra_ns='xmlns:ns4="http://schemas.android.com/sdk/android/repo/sys-img2/03"',
-            extra_details=(
-                f"<ns4:api-level>34</ns4:api-level>"
-                f"<ns4:tag><ns4:id>google_apis</ns4:id>"
-                f"<ns4:display>Google APIs</ns4:display></ns4:tag>"
-                f"<ns4:vendor><ns4:id>google</ns4:id>"
-                f"<ns4:display>Google Inc.</ns4:display></ns4:vendor>"
-                f"<ns4:abi>{arch}</ns4:abi>"
-            ),
-        )
-        if log_fn:
-            log_fn("  System image installed ✅\n")
-        return True
-    except Exception as e:
-        if log_fn:
-            log_fn(f"  ❌  System image direct download failed: {e}\n")
-        tmp.unlink(missing_ok=True)
-        return False
-
-
-def _add_firewall_exception_for_java():
-    """
-    Run an elevated PowerShell command to add a Windows Defender Firewall
-    outbound rule allowing Java (sdkmanager's runtime) through.
-    Shows a UAC prompt — user must click Yes.
-    """
-    java_home = _find_java_home()
-    if not java_home:
-        return False
-    java_exe = str(Path(java_home) / "bin" / "java.exe").replace("\\", "\\\\")
-    ps_cmd = (
-        f'New-NetFirewallRule -DisplayName \\"CPharm Java SDK\\" '
-        f'-Direction Outbound -Program \\"{java_exe}\\" '
-        f'-Action Allow -Profile Any; '
-        f'Write-Host \\"Done.\\"'
+    pkg_xml = emu_dir / "package.xml"
+    pkg_xml.write_text(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<ns2:repository '
+        'xmlns:ns2="http://schemas.android.com/repository/android/common/01" '
+        'xmlns:ns3="http://schemas.android.com/sdk/android/repo/addon2/01" '
+        'xmlns:ns4="http://schemas.android.com/sdk/android/repo/sys-img2/01" '
+        'xmlns:ns5="http://schemas.android.com/repository/android/generic/01" '
+        'xmlns:ns6="http://schemas.android.com/repository/android/repository2/01" '
+        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+        '<localPackage path="emulator" obsolete="false">'
+        '<type-details xsi:type="ns5:genericDetailsType"/>'
+        '<revision><major>36</major><minor>6</minor><micro>4</micro></revision>'
+        '<display-name>Android Emulator</display-name>'
+        '<uses-license ref="android-sdk-license"/>'
+        '<dependencies>'
+        '<dependency path="patcher;v4"/>'
+        '<dependency path="tools"><min-revision><major>25</major><minor>3</minor></min-revision></dependency>'
+        '</dependencies>'
+        '</localPackage>'
+        '</ns2:repository>',
+        encoding="utf-8",
     )
-    try:
-        subprocess.Popen(
-            ["powershell", "-Command",
-             f"Start-Process powershell -Verb RunAs -ArgumentList '-Command {ps_cmd}'"],
-            creationflags=subprocess.CREATE_NO_WINDOW if IS_WIN else 0,
-        )
-        return True
-    except Exception:
-        return False
 
 
 def _write_sdk_licenses(sdk: str):
@@ -850,7 +776,7 @@ def create_avd(name, log_fn=None):
                     display="Google APIs ARM 64 v8a System Image",
                     license_ref="android-sdk-arm-dbt-license",
                     ns_type="ns4:sysImgDetailsType",
-                    extra_ns='xmlns:ns4="http://schemas.android.com/sdk/android/repo/sys-img2/03"',
+                    extra_ns='xmlns:ns4="http://schemas.android.com/sdk/android/repo/sys-img2/01"',
                     extra_details=(
                         f"<ns4:api-level>34</ns4:api-level>"
                         f"<ns4:tag><ns4:id>google_apis</ns4:id>"

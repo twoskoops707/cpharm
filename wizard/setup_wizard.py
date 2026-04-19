@@ -1920,7 +1920,7 @@ class AndroidStudioPage(PageBase):
         # missing device-catalog.xml (avdmanager needs it to list device profiles).
         # Install it now so avdmanager can enumerate hardware profiles for AVD creation.
         if Path(sdk_tool("emulator")).exists():
-            self._install_emulator_device_catalog(sdk, log_fn=self._log)
+            _install_emulator_device_catalog(sdk, log_fn=self._log)
 
         missing = []
         if not Path(sdk_tool("emulator")).exists():
@@ -1943,23 +1943,8 @@ class AndroidStudioPage(PageBase):
         # here it means the remote repo fetch is failing (network/proxy/TLS issue).
         self._set_progress(63, "Checking available packages…")
         self._log("Checking available packages (fetching remote catalog)…")
-        _, list_out = _run_sdkmanager(["--list", "--channel=0"], sdk, log_fn=None, timeout=90)
-        if list_out:
-            emulator_lines = [l for l in list_out.splitlines() if "emulator" in l.lower()]
-            if emulator_lines:
-                self._log(f"  emulator found in catalog: {emulator_lines[0].strip()}")
-            else:
-                self._log("  ⚠  'emulator' not found in catalog — remote repo may be unreachable.")
-                self._log("     Trying install anyway…")
-        else:
-            self._log("  ⚠  sdkmanager --list returned no output — network may be blocked.")
-
         self._set_progress(65, "Running sdkmanager…")
         self._log(f"Installing: {', '.join(missing)}")
-
-        # Use positional package args — NOT --install flag.
-        # The --install flag in newer cmdline-tools skips the remote catalog fetch
-        # and only searches locally, causing "Failed to find package emulator".
         ok, out = _run_sdkmanager(
             ["--channel=0"] + missing,
             sdk,
@@ -1990,13 +1975,13 @@ class AndroidStudioPage(PageBase):
                 self.after(0, self._show_firewall_btn)
                 return
 
-            # After direct emulator download, install device-catalog metadata so
-            # avdmanager can enumerate hardware profiles (pixel_6, etc.) for AVD creation.
-            self._install_emulator_device_catalog(sdk, log_fn=self._log)
+            _install_emulator_device_catalog(sdk, log_fn=self._log)
 
         self._log("emulator        ✅")
         self._log("platform-tools  ✅")
         self._finish_ok(sdk)
+
+
 
     def _install_emulator_device_catalog(self, sdk, log_fn=None):
         # The emulator/ package contains the emulator binary but NOT device definitions.

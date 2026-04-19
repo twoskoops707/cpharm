@@ -344,6 +344,131 @@ def _run_sdkmanager(args, sdk, log_fn=None, timeout=900):
         return False, str(e)
 
 
+def _direct_download_platform_tools(sdk_path, log_fn=None):
+    """
+    Download platform-tools directly via Python urllib, bypassing Java/sdkmanager.
+    Uses Google's documented stable URL — no XML parsing needed.
+    """
+    url  = "https://dl.google.com/android/repository/platform-tools-latest-windows.zip"
+    dest = Path(sdk_path)
+    tmp  = dest / "_pt_tmp.zip"
+    if log_fn:
+        log_fn(f"  Downloading platform-tools directly…\n")
+    try:
+        urllib.request.urlretrieve(url, tmp)
+        with zipfile.ZipFile(tmp, "r") as zf:
+            zf.extractall(dest)
+        tmp.unlink(missing_ok=True)
+        if log_fn:
+            log_fn("  platform-tools installed ✅\n")
+        return True
+    except Exception as e:
+        if log_fn:
+            log_fn(f"  ❌  platform-tools direct download failed: {e}\n")
+        tmp.unlink(missing_ok=True)
+        return False
+
+
+def _direct_download_emulator(sdk_path, log_fn=None):
+    """
+    Download emulator directly via Python urllib, bypassing Java/sdkmanager.
+    Fetches Google's repository manifest XML to find the current emulator URL,
+    then downloads and extracts the ZIP.
+    """
+    import xml.etree.ElementTree as ET
+    REPO_XML = "https://dl.google.com/android/repository/repository2-3.xml"
+    BASE_URL = "https://dl.google.com/android/repository/"
+
+    if log_fn:
+        log_fn("  Fetching SDK catalog via Python (bypassing Java network)…\n")
+    try:
+        with urllib.request.urlopen(REPO_XML, timeout=30) as r:
+            xml_data = r.read().decode("utf-8")
+    except Exception as e:
+        if log_fn:
+            log_fn(f"  ❌  Cannot reach dl.google.com from Python either: {e}\n")
+            log_fn("      Your network is blocking Google entirely.\n")
+            log_fn("      Check VPN, proxy, or router DNS settings.\n")
+        return False
+
+    # Find the emulator Windows ZIP URL in the manifest
+    emulator_url = None
+    try:
+        root = ET.fromstring(xml_data)
+        for pkg in root.iter():
+            if pkg.get("path") == "emulator":
+                for archive in pkg.iter():
+                    tag = archive.tag.split("}")[-1] if "}" in archive.tag else archive.tag
+                    if tag == "url":
+                        val = (archive.text or "").strip()
+                        if "windows" in val and val.endswith(".zip"):
+                            emulator_url = BASE_URL + val
+                            break
+                if emulator_url:
+                    break
+    except ET.ParseError:
+        pass
+
+    if not emulator_url:
+        matches = re.findall(r"emulator-windows[^\"<\s]+\.zip", xml_data)
+        if matches:
+            emulator_url = BASE_URL + matches[-1]
+
+    if not emulator_url:
+        if log_fn:
+            log_fn("  ❌  Emulator URL not found in repository XML.\n")
+        return False
+
+    if log_fn:
+        log_fn(f"  Emulator URL: {emulator_url}\n")
+        log_fn("  Downloading emulator (~300 MB)…\n")
+
+    tmp = Path(sdk_path) / "_emu_tmp.zip"
+    try:
+        urllib.request.urlretrieve(emulator_url, tmp)
+        emu_dest = Path(sdk_path) / "emulator"
+        if emu_dest.exists():
+            shutil.rmtree(emu_dest)
+        with zipfile.ZipFile(tmp, "r") as zf:
+            zf.extractall(Path(sdk_path))
+        tmp.unlink(missing_ok=True)
+        if log_fn:
+            log_fn("  emulator installed ✅\n")
+        return True
+    except Exception as e:
+        if log_fn:
+            log_fn(f"  ❌  Emulator direct download failed: {e}\n")
+        tmp.unlink(missing_ok=True)
+        return False
+
+
+def _add_firewall_exception_for_java():
+    """
+    Run an elevated PowerShell command to add a Windows Defender Firewall
+    outbound rule allowing Java (sdkmanager's runtime) through.
+    Shows a UAC prompt — user must click Yes.
+    """
+    java_home = _find_java_home()
+    if not java_home:
+        return False
+    java_exe = str(Path(java_home) / "bin" / "java.exe").replace("\\", "\\\\")
+    ps_cmd = (
+        f'New-NetFirewallRule -DisplayName \\"CPharm Java SDK\\" '
+        f'-Direction Outbound -Program \\"{java_exe}\\" '
+        f'-Action Allow -Profile Any; '
+        f'Write-Host \\"Done.\\"'
+    )
+    try:
+        subprocess.Popen(
+            ["powershell", "-Command",
+             f"Start-Process powershell -Verb RunAs -ArgumentList '-Command {ps_cmd}'"],
+            creationflags=subprocess.CREATE_NO_WINDOW if IS_WIN else 0,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def create_avd(name, log_fn=None):
     sdk = state.get("sdk_path") or find_sdk()
     if not sdk:
@@ -1415,19 +1540,25 @@ class AndroidStudioPage(PageBase):
         self._set_progress(92, "Verifying…")
 
         if not Path(sdk_tool("emulator")).exists():
-            self._log("\n❌  Emulator still not found after install.")
-            self._log("    Check that JAVA_HOME was found above.")
-            self._log("    If the catalog check above showed '⚠ remote repo may be unreachable',")
-            self._log("    the issue is network/firewall — try disabling antivirus temporarily.")
-            self._log("\n    Available packages (first 40 lines):")
-            _, pkg_out = _run_sdkmanager(["--list"], sdk, log_fn=None, timeout=60)
-            if pkg_out:
-                for line in pkg_out.splitlines()[:40]:
-                    self._log("    " + line)
-            self._set_status("❌", "Emulator install failed — see log", color=RED)
-            self._set_progress(0, "")
-            self._install_btn.config(state="normal", text="⬇   Try Again")
-            return
+            self._log("\n⚠  sdkmanager couldn't install emulator — Java network blocked by firewall.")
+            self._log("   Switching to direct Python download (bypasses Java network stack)…\n")
+            self._set_status("⬇", "Downloading emulator directly…",
+                             detail="Java is blocked by firewall — using Python downloader instead.",
+                             color=YELLOW)
+            self._set_progress(70, "Direct downloading emulator…")
+            ok_emu = _direct_download_emulator(sdk, log_fn=self._log)
+            self._set_progress(85, "Direct downloading platform-tools…")
+            ok_pt  = _direct_download_platform_tools(sdk, log_fn=self._log)
+            self._set_progress(92, "Verifying…")
+
+            if not Path(sdk_tool("emulator")).exists():
+                self._log("\n❌  Both sdkmanager and direct download failed.")
+                self._log("    Your network is blocking dl.google.com entirely.")
+                self._set_status("❌", "Network blocked — see options below", color=RED)
+                self._set_progress(0, "")
+                self._install_btn.config(state="normal", text="⬇   Try Again")
+                self.after(0, self._show_firewall_btn)
+                return
 
         self._log("emulator        ✅")
         self._log("platform-tools  ✅")
@@ -1445,6 +1576,30 @@ class AndroidStudioPage(PageBase):
             text="✅  SDK Ready — click Next →",
             bg=GREEN,
         )
+
+    def _show_firewall_btn(self):
+        if hasattr(self, "_fw_btn"):
+            return
+        self._fw_btn = tk.Button(
+            self,
+            text="🛡  Allow Java through Windows Firewall  (click → approve UAC prompt)",
+            font=("Segoe UI", 11, "bold"),
+            bg=YELLOW, fg="#000000",
+            relief="flat", cursor="hand2",
+            padx=16, pady=10,
+            command=self._do_firewall,
+        )
+        self._fw_btn.pack(fill="x", pady=(6, 0))
+
+    def _do_firewall(self):
+        ok = _add_firewall_exception_for_java()
+        if ok:
+            self._log("\nFirewall rule submitted — approve the UAC prompt that appeared.")
+            self._log("Then click Try Again.\n")
+        else:
+            self._log("\n❌  Could not launch PowerShell — add the rule manually:\n")
+            self._log('   Windows Security → Firewall → Advanced → Outbound Rules')
+            self._log('   → New Rule → Program → browse to java.exe → Allow\n')
 
     def _show_java_button(self):
         if hasattr(self, "_java_btn"):

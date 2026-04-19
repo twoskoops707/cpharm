@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 import urllib.request
@@ -39,6 +40,12 @@ IS_WIN              = platform.system() == "Windows"
 CMDLINE_TOOLS_URL   = "https://dl.google.com/android/repository/commandlinetools-win-14742923_latest.zip"
 SDK_DEFAULT_PATH    = os.path.join(os.environ.get("LOCALAPPDATA", "C:\\"), "Android", "Sdk")
 JAVA_DOWNLOAD_URL   = "https://aka.ms/download-jdk/microsoft-jdk-21-windows-aarch64.msi"
+
+# ── prerequisite download URLs ────────────────────────────────────────────────
+PYTHON_URL        = "https://www.python.org/ftp/python/3.13.0/python-3.13.0-arm64.exe"
+TOR_FALLBACK_URL  = "https://dist.torproject.org/torbrowser/14.0.9/tor-expert-bundle-windows-x86_64-14.0.9.tar.gz"
+CPHARM_ZIP_URL    = "https://github.com/twoskoops707/cpharm/archive/refs/heads/master.zip"
+CPHARM_DEFAULT    = os.path.join(os.path.expanduser("~"), "CPharm")
 
 BG     = "#0d1117"
 BG2    = "#161b22"
@@ -502,7 +509,456 @@ class WelcomePage(PageBase):
                      anchor="w").pack(side="left")
 
 
-# ─── page 2: android sdk auto-install ────────────────────────────────────────
+# ─── page 2: prerequisites auto-install ──────────────────────────────────────
+
+def _fetch_latest_tor_url() -> str:
+    try:
+        with urllib.request.urlopen(
+            "https://dist.torproject.org/torbrowser/", timeout=8
+        ) as r:
+            content = r.read().decode()
+        versions = re.findall(r'href="(\d+\.\d+\.\d+)/"', content)
+        if versions:
+            latest = sorted(versions,
+                            key=lambda v: tuple(int(x) for x in v.split(".")))[-1]
+            return (
+                f"https://dist.torproject.org/torbrowser/{latest}/"
+                f"tor-expert-bundle-windows-x86_64-{latest}.tar.gz"
+            )
+    except Exception:
+        pass
+    return TOR_FALLBACK_URL
+
+
+def _find_python() -> str:
+    for cmd in ["python", "python3", "py"]:
+        try:
+            r = subprocess.run(
+                [cmd, "--version"], capture_output=True, text=True, timeout=6
+            )
+            if r.returncode == 0 and "Python 3" in (r.stdout + r.stderr):
+                return cmd
+        except Exception:
+            pass
+    for guess in [
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Python",
+                     "Python313", "python.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Python",
+                     "Python312", "python.exe"),
+        r"C:\Python313\python.exe",
+        r"C:\Python312\python.exe",
+    ]:
+        if os.path.exists(guess):
+            return guess
+    return ""
+
+
+class PrerequisitesPage(PageBase):
+    """
+    Installs every tool CPharm needs — Java, Python, pip packages, Tor, CPharm files.
+    One button. Fully automatic. User just watches the progress.
+    """
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._ready   = False
+        self._working = False
+        self._rows    = {}
+
+        self.header(
+            "Step 1 — Install Everything",
+            "The wizard downloads and installs all tools automatically.\n"
+            "Click the big button and wait — everything will be ready."
+        )
+
+        # ── install path row ──────────────────────────────────────────────────
+        path_card = tk.Frame(self, bg=BG3, padx=14, pady=10)
+        path_card.pack(fill="x", pady=(0, 10))
+        tk.Label(path_card, text="Install CPharm to:",
+                 font=("Segoe UI", 10, "bold"), bg=BG3, fg=T1).pack(side="left")
+        self._install_dir = tk.StringVar(value=CPHARM_DEFAULT)
+        tk.Entry(path_card, textvariable=self._install_dir, font=FM,
+                 bg=BG2, fg=T1, insertbackground=T1, relief="flat",
+                 width=36).pack(side="left", padx=8)
+        tk.Button(path_card, text="Browse", font=FS, bg=BG3, fg=T1,
+                  relief="flat", cursor="hand2", padx=8, pady=4,
+                  command=self._browse_dir).pack(side="left")
+
+        # ── prerequisite list ─────────────────────────────────────────────────
+        list_card = tk.Frame(self, bg=BG2, padx=14, pady=12,
+                             highlightthickness=1, highlightbackground=BORDER)
+        list_card.pack(fill="x", pady=(0, 10))
+
+        items = [
+            ("java",     "☕", "Java JDK 21",             "Needed to run the Android SDK tools",        True),
+            ("python",   "🐍", "Python 3.13",             "Needed to run CPharm automation scripts",    True),
+            ("packages", "📦", "Python packages",         "websockets + psutil for the dashboard",      True),
+            ("tor",      "🧅", "Tor",                     "IP rotation between sessions  (optional)",   False),
+            ("cpharm",   "⚡", "CPharm automation files", "The bot scripts and dashboard",              True),
+        ]
+        for key, icon, name, desc, required in items:
+            row = tk.Frame(list_card, bg=BG2, pady=5)
+            row.pack(fill="x")
+            tk.Label(row, text=icon, font=("Segoe UI", 15), bg=BG2,
+                     width=3).pack(side="left")
+            info = tk.Frame(row, bg=BG2)
+            info.pack(side="left", fill="x", expand=True)
+            tk.Label(info, text=name + ("" if required else "  (optional)"),
+                     font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1,
+                     anchor="w").pack(fill="x")
+            tk.Label(info, text=desc, font=FS, bg=BG2, fg=T3,
+                     anchor="w").pack(fill="x")
+            status_lbl = tk.Label(row, text="—", font=("Segoe UI", 10, "bold"),
+                                  bg=BG2, fg=T3, width=22, anchor="e")
+            status_lbl.pack(side="right")
+            self._rows[key] = status_lbl
+
+        # ── big install button ────────────────────────────────────────────────
+        self._install_btn = tk.Button(
+            self,
+            text="⬇   Install Everything  —  Click Here",
+            font=("Segoe UI", 14, "bold"),
+            bg=GREEN, fg="#000000",
+            relief="flat", cursor="hand2",
+            padx=24, pady=14,
+            command=self._install_all,
+        )
+        self._install_btn.pack(fill="x", pady=(0, 8))
+
+        # ── progress ──────────────────────────────────────────────────────────
+        self._progress = ttk.Progressbar(self, mode="determinate", maximum=100)
+        self._progress.pack(fill="x", pady=(0, 4))
+        self._progress_lbl = tk.Label(self, text="", font=FS, bg=BG, fg=T2)
+        self._progress_lbl.pack(anchor="w")
+
+        # ── log ───────────────────────────────────────────────────────────────
+        log_fr = tk.Frame(self, bg=BG2)
+        log_fr.pack(fill="both", expand=True, pady=(6, 0))
+        self._log_box = tk.Text(log_fr, height=5, font=FM, bg=BG2, fg=T1,
+                                relief="flat", state="disabled", wrap="word")
+        sb = tk.Scrollbar(log_fr, orient="vertical", command=self._log_box.yview)
+        self._log_box.configure(yscrollcommand=sb.set)
+        self._log_box.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _browse_dir(self):
+        d = filedialog.askdirectory(title="Choose where to install CPharm")
+        if d:
+            self._install_dir.set(d)
+
+    def _log(self, text):
+        self._log_box.config(state="normal")
+        self._log_box.insert("end", text + "\n")
+        self._log_box.see("end")
+        self._log_box.config(state="disabled")
+
+    def _set_row(self, key, text, color=T2):
+        lbl = self._rows.get(key)
+        if lbl:
+            lbl.config(text=text, fg=color)
+
+    def _set_progress(self, pct, label=""):
+        self._progress["value"] = pct
+        self._progress_lbl.config(text=label)
+
+    def _download(self, url, dest, label, start_pct, end_pct):
+        def hook(block, bsize, total):
+            if total > 0:
+                done = block * bsize
+                frac = min(done / total, 1.0)
+                pct  = int(start_pct + frac * (end_pct - start_pct))
+                mb   = done / 1_048_576
+                tot  = total / 1_048_576
+                self._set_progress(pct, f"{label}  {mb:.0f} / {tot:.0f} MB")
+        urllib.request.urlretrieve(url, dest, hook)
+
+    # ── checks ────────────────────────────────────────────────────────────────
+
+    def _check_java(self) -> bool:
+        ok, _ = run_cmd(["java", "-version"])
+        if ok:
+            return True
+        for pattern in [
+            os.path.join(os.environ.get("PROGRAMFILES", ""), "**", "java.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "**", "java.exe"),
+        ]:
+            import glob
+            if glob.glob(pattern, recursive=True):
+                return True
+        return False
+
+    def _check_python(self) -> bool:
+        return bool(_find_python())
+
+    def _check_packages(self) -> bool:
+        py = _find_python()
+        if not py:
+            return False
+        ok, out = run_cmd([py, "-c", "import websockets, psutil"])
+        return ok
+
+    def _check_tor(self) -> bool:
+        d = state.get("cpharm_dir", "") or self._install_dir.get()
+        if d:
+            tor_exe = Path(d) / "automation" / "tor" / "tor.exe"
+            if tor_exe.exists():
+                return True
+        for p in [r"C:\Tor\tor.exe", r"C:\Program Files\Tor\tor.exe"]:
+            if Path(p).exists():
+                return True
+        return False
+
+    def _check_cpharm(self) -> bool:
+        d = state.get("cpharm_dir", "") or self._install_dir.get()
+        if d and (Path(d) / "automation" / "dashboard.py").exists():
+            return True
+        if (Path(__file__).parent.parent / "automation" / "dashboard.py").exists():
+            state["cpharm_dir"] = str(Path(__file__).parent.parent)
+            return True
+        return False
+
+    def _check_all(self):
+        checks = {
+            "java":     self._check_java,
+            "python":   self._check_python,
+            "packages": self._check_packages,
+            "tor":      self._check_tor,
+            "cpharm":   self._check_cpharm,
+        }
+        all_required = True
+        for key, fn in checks.items():
+            try:
+                ok = fn()
+            except Exception:
+                ok = False
+            if ok:
+                self._set_row(key, "✅  Ready", GREEN)
+            else:
+                self._set_row(key, "⬇  Not installed", YELLOW)
+                if key in ("java", "python", "packages", "cpharm"):
+                    all_required = False
+        return all_required
+
+    # ── installers ────────────────────────────────────────────────────────────
+
+    def _install_java(self):
+        self._set_row("java", "⬇  Downloading…", ACCENT)
+        self._log("Downloading Java JDK 21 (ARM64)…")
+        tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / "microsoft-jdk-21-arm64.msi"
+        self._download(JAVA_DOWNLOAD_URL, tmp, "Java JDK", 2, 18)
+        self._set_row("java", "⚙  Installing…", YELLOW)
+        self._log("Installing Java (silent, no restart)…")
+        ok, out = run_cmd(
+            ["msiexec", "/i", str(tmp), "/quiet", "/norestart"],
+            timeout=300,
+        )
+        tmp.unlink(missing_ok=True)
+        if ok or self._check_java():
+            self._set_row("java", "✅  Done", GREEN)
+            self._log("Java installed ✅")
+        else:
+            self._set_row("java", "❌  Failed", RED)
+            self._log(f"Java install failed: {out[-200:]}")
+
+    def _install_python(self):
+        self._set_row("python", "⬇  Downloading…", ACCENT)
+        self._log("Downloading Python 3.13 (ARM64)…")
+        tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / "python-3.13-arm64.exe"
+        self._download(PYTHON_URL, tmp, "Python", 20, 36)
+        self._set_row("python", "⚙  Installing…", YELLOW)
+        self._log("Installing Python (no admin needed, adds to PATH)…")
+        ok, out = run_cmd(
+            [str(tmp), "/quiet",
+             "InstallAllUsers=0", "PrependPath=1", "Include_launcher=0"],
+            timeout=300,
+        )
+        tmp.unlink(missing_ok=True)
+        if ok or self._check_python():
+            state["python_cmd"] = _find_python() or "python"
+            self._set_row("python", "✅  Done", GREEN)
+            self._log(f"Python installed ✅  ({state['python_cmd']})")
+        else:
+            self._set_row("python", "❌  Failed", RED)
+            self._log(f"Python install failed: {out[-200:]}")
+
+    def _install_packages(self):
+        py = _find_python() or "python"
+        state["python_cmd"] = py
+        self._set_row("packages", "⚙  Installing…", YELLOW)
+        self._set_progress(55, "Installing Python packages…")
+        self._log("Running: pip install websockets psutil…")
+        ok, out = run_cmd(
+            [py, "-m", "pip", "install", "--upgrade", "websockets", "psutil"],
+            timeout=120,
+        )
+        if ok or self._check_packages():
+            self._set_row("packages", "✅  Done", GREEN)
+            self._log("Packages installed ✅")
+        else:
+            self._set_row("packages", "❌  Failed", RED)
+            self._log(f"pip failed: {out[-300:]}")
+
+    def _install_tor(self):
+        install_dir = Path(state.get("cpharm_dir", "") or self._install_dir.get())
+        tor_dir = install_dir / "automation" / "tor"
+        tor_dir.mkdir(parents=True, exist_ok=True)
+
+        self._set_row("tor", "⬇  Finding latest…", ACCENT)
+        self._log("Looking up latest Tor version…")
+        tor_url = _fetch_latest_tor_url()
+        self._log(f"Downloading: {tor_url}")
+        self._set_row("tor", "⬇  Downloading…", ACCENT)
+
+        tmp = tor_dir / "_tor_bundle.tar.gz"
+        self._download(tor_url, tmp, "Tor", 58, 72)
+
+        self._set_row("tor", "📦  Extracting…", YELLOW)
+        self._log("Extracting Tor…")
+        with tarfile.open(tmp, "r:gz") as tf:
+            for member in tf.getmembers():
+                if member.name.startswith("tor/"):
+                    member.name = member.name[len("tor/"):]
+                    tf.extract(member, tor_dir)
+        tmp.unlink(missing_ok=True)
+
+        if (tor_dir / "tor.exe").exists():
+            self._set_row("tor", "✅  Done", GREEN)
+            self._log("Tor installed ✅")
+        else:
+            self._set_row("tor", "⚠  Skipped", T3)
+            self._log("Tor not found after extract — IP rotation will use system Tor if available.")
+
+    def _install_cpharm(self):
+        install_dir = Path(self._install_dir.get())
+        if self._check_cpharm():
+            self._set_row("cpharm", "✅  Already here", GREEN)
+            self._log(f"CPharm files already present at {state.get('cpharm_dir', install_dir)}")
+            return
+
+        self._set_row("cpharm", "⬇  Downloading…", ACCENT)
+        self._log("Downloading CPharm files from GitHub…")
+        tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / "cpharm.zip"
+        self._download(CPHARM_ZIP_URL, tmp, "CPharm", 76, 88)
+
+        self._set_row("cpharm", "📦  Extracting…", YELLOW)
+        self._log(f"Extracting to {install_dir}…")
+        extract_tmp = install_dir.parent / "_cpharm_extract"
+        if extract_tmp.exists():
+            shutil.rmtree(extract_tmp)
+        with zipfile.ZipFile(tmp, "r") as zf:
+            zf.extractall(extract_tmp)
+        tmp.unlink(missing_ok=True)
+
+        inner = next(extract_tmp.iterdir(), None)
+        if inner and inner.is_dir():
+            if install_dir.exists():
+                shutil.rmtree(install_dir)
+            shutil.move(str(inner), str(install_dir))
+        shutil.rmtree(extract_tmp, ignore_errors=True)
+
+        if (install_dir / "automation" / "dashboard.py").exists():
+            state["cpharm_dir"] = str(install_dir)
+            self._set_row("cpharm", "✅  Done", GREEN)
+            self._log(f"CPharm installed at {install_dir} ✅")
+        else:
+            self._set_row("cpharm", "❌  Failed", RED)
+            self._log("CPharm files not found after extraction.")
+
+    # ── main install flow ─────────────────────────────────────────────────────
+
+    def _install_all(self):
+        if self._working:
+            return
+        self._working = True
+        self._install_btn.config(state="disabled", text="Working… please wait")
+        threading.Thread(target=self._install_thread, daemon=True).start()
+
+    def _install_thread(self):
+        try:
+            self._set_progress(0, "Starting…")
+
+            if not self._check_java():
+                self._install_java()
+            else:
+                self._set_row("java", "✅  Already installed", GREEN)
+
+            self._set_progress(20, "")
+
+            if not self._check_python():
+                self._install_python()
+            else:
+                self._set_row("python", "✅  Already installed", GREEN)
+                state["python_cmd"] = _find_python() or "python"
+
+            self._set_progress(40, "")
+
+            if not self._check_packages():
+                self._install_packages()
+            else:
+                self._set_row("packages", "✅  Already installed", GREEN)
+
+            self._set_progress(56, "")
+
+            if not self._check_tor():
+                self._install_tor()
+            else:
+                self._set_row("tor", "✅  Already installed", GREEN)
+
+            self._set_progress(74, "")
+
+            if not self._check_cpharm():
+                self._install_cpharm()
+            else:
+                self._set_row("cpharm", "✅  Already here", GREEN)
+
+            self._set_progress(100, "Done!")
+            self._log("\n✅  All done. Click Next → to continue.")
+            self._ready = True
+            self._install_btn.config(
+                state="normal",
+                text="✅  Ready — click Next →",
+                bg=GREEN,
+            )
+        except Exception as exc:
+            self._log(f"\n❌  Error: {exc}")
+            self._install_btn.config(state="normal", text="⬇   Try Again")
+        finally:
+            self._working = False
+
+    # ── page hooks ────────────────────────────────────────────────────────────
+
+    def on_enter(self):
+        threading.Thread(target=self._scan_thread, daemon=True).start()
+
+    def _scan_thread(self):
+        all_ok = self._check_all()
+        if all_ok:
+            self._set_progress(100, "All tools already installed!")
+            self._install_btn.config(
+                text="✅  Everything Ready — click Next →",
+                bg=GREEN,
+            )
+            self._ready = True
+        else:
+            self._set_progress(0, "")
+
+    def can_advance(self):
+        if not self._ready:
+            if self._check_all() and self._check_cpharm():
+                self._ready = True
+                return True
+            messagebox.showinfo(
+                "Not ready yet",
+                "Click 'Install Everything' and wait for it to finish.\n\n"
+                "The wizard will handle every download automatically."
+            )
+            return False
+        return True
+
+
+# ─── page 3: android sdk auto-install ────────────────────────────────────────
 
 class AndroidStudioPage(PageBase):
     """
@@ -1969,6 +2425,7 @@ class LaunchPage(PageBase):
 class CPharmWizard(tk.Tk):
     PAGES = [
         WelcomePage,
+        PrerequisitesPage,
         AndroidStudioPage,
         PhoneFarmPage,
         BootPage,
@@ -1978,6 +2435,7 @@ class CPharmWizard(tk.Tk):
     ]
     PAGE_NAMES = [
         "Welcome",
+        "Install Tools",
         "Android SDK",
         "Create Phones",
         "Start Phones",

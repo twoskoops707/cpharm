@@ -402,6 +402,17 @@ def _direct_download_platform_tools(sdk_path, log_fn=None):
         with zipfile.ZipFile(tmp, "r") as zf:
             zf.extractall(dest)
         tmp.unlink(missing_ok=True)
+        # Google's platform-tools zip ships a remotePackage package.xml.
+        # avdmanager needs localPackage format to recognise it as installed.
+        _write_local_package_xml(
+            dest / "platform-tools" / "package.xml",
+            path_id="platform-tools",
+            major=35, minor=0, micro=2,
+            display="Android SDK Platform-Tools",
+            license_ref="android-sdk-license",
+            ns_type="ns3:genericDetailsType",
+            extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+        )
         if log_fn:
             log_fn("  platform-tools installed ✅\n")
         return True
@@ -485,10 +496,11 @@ def _direct_download_emulator(sdk_path, log_fn=None):
             path_id="emulator",
             major=36, minor=6, micro=4,
             display="Android Emulator",
-            license_ref="android-sdk-preview-license",
+            license_ref="android-sdk-license",
             ns_type="ns3:genericDetailsType",
             extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
         )
+        _write_sdk_licenses(sdk_path)
         if log_fn:
             log_fn("  emulator installed ✅\n")
         return True
@@ -590,14 +602,16 @@ def _direct_download_system_image(arch, sdk_path, log_fn=None):
             dest_dir / "package.xml",
             path_id=TARGET_PATH,
             major=14, minor=0, micro=0,
-            display=f"Google APIs ARM 64 v8a System Image",
-            license_ref="android-sdk-license",
+            display="Google APIs ARM 64 v8a System Image",
+            license_ref="android-sdk-arm-dbt-license",
             ns_type="ns4:sysImgDetailsType",
             extra_ns='xmlns:ns4="http://schemas.android.com/sdk/android/repo/sys-img2/03"',
             extra_details=(
                 f"<ns4:api-level>34</ns4:api-level>"
                 f"<ns4:tag><ns4:id>google_apis</ns4:id>"
                 f"<ns4:display>Google APIs</ns4:display></ns4:tag>"
+                f"<ns4:vendor><ns4:id>google</ns4:id>"
+                f"<ns4:display>Google Inc.</ns4:display></ns4:vendor>"
                 f"<ns4:abi>{arch}</ns4:abi>"
             ),
         )
@@ -638,6 +652,32 @@ def _add_firewall_exception_for_java():
         return False
 
 
+def _write_sdk_licenses(sdk: str):
+    """
+    Write Android SDK license files to sdk/licenses/.
+    avdmanager validates <uses-license ref="..."/> against these files at startup.
+    Without them it logs "package.XML parsing problem undefined ID <license-name>".
+    SHA-1 hashes are the official values from Google's SDK license agreements.
+    """
+    lic_dir = Path(sdk) / "licenses"
+    lic_dir.mkdir(parents=True, exist_ok=True)
+    licenses = {
+        "android-sdk-license": (
+            "\n8933bad161af4178b1185d1a37fbf41ea5269c55\n"
+            "d56f5187479451eabf01fb78af6dfcb131a6481e\n"
+            "24333f8a63b6825ea9c5514f83c2829b004d1fee"
+        ),
+        "android-sdk-preview-license": (
+            "\n84831b9409646a918e30573bab4c9c91346d8abd"
+        ),
+        "android-sdk-arm-dbt-license": (
+            "\n859f317696f67ef3d7f30a50a5560e7834b43903"
+        ),
+    }
+    for name, content in licenses.items():
+        (lic_dir / name).write_text(content, encoding="utf-8")
+
+
 def create_avd(name, log_fn=None):
     sdk = state.get("sdk_path") or find_sdk()
     if not sdk:
@@ -666,14 +706,18 @@ def create_avd(name, log_fn=None):
             "then come back and try again."
         )
 
-    # ── accept all licenses first ─────────────────────────────────────────────
+    # ── write license files + accept all licenses ─────────────────────────────
+    if log_fn:
+        log_fn("  Writing SDK license files…\n")
+    _write_sdk_licenses(sdk)
     if log_fn:
         log_fn("  Accepting SDK licenses…\n")
     _run_sdkmanager(["--licenses"], sdk, log_fn=None, timeout=60)
 
     # ── install system image ──────────────────────────────────────────────────
     img_path = Path(sdk) / "system-images" / "android-34" / "google_apis" / arch
-    img_ready = (img_path / "system.img").exists()
+    # system.img may be gzipped (system.img.gz) in downloaded zips — check both
+    img_ready = (img_path / "system.img.gz").exists() or (img_path / "system.img").exists()
     if img_ready:
         # Ensure package.xml is in localPackage format — Google's zip ships a
         # remotePackage XML that avdmanager cannot use; re-write it if needed.
@@ -686,13 +730,15 @@ def create_avd(name, log_fn=None):
                     path_id=TARGET_PATH,
                     major=14, minor=0, micro=0,
                     display="Google APIs ARM 64 v8a System Image",
-                    license_ref="android-sdk-license",
+                    license_ref="android-sdk-arm-dbt-license",
                     ns_type="ns4:sysImgDetailsType",
                     extra_ns='xmlns:ns4="http://schemas.android.com/sdk/android/repo/sys-img2/03"',
                     extra_details=(
                         f"<ns4:api-level>34</ns4:api-level>"
                         f"<ns4:tag><ns4:id>google_apis</ns4:id>"
                         f"<ns4:display>Google APIs</ns4:display></ns4:tag>"
+                        f"<ns4:vendor><ns4:id>google</ns4:id>"
+                        f"<ns4:display>Google Inc.</ns4:display></ns4:vendor>"
                         f"<ns4:abi>{arch}</ns4:abi>"
                     ),
                 )
@@ -709,7 +755,7 @@ def create_avd(name, log_fn=None):
         ok, out = _run_sdkmanager([image], sdk, log_fn=log_fn, timeout=1200)
 
         if not ok:
-            if (img_path / "system.img").exists():
+            if (img_path / "system.img.gz").exists() or (img_path / "system.img").exists():
                 if log_fn:
                     log_fn("  Image present on disk — continuing despite sdkmanager exit code.\n")
             else:
@@ -798,33 +844,19 @@ def create_avd(name, log_fn=None):
     return False, last_err or "avdmanager failed with all device profiles"
 
 
-def _whpx_available() -> bool:
-    """
-    Check if Windows Hypervisor Platform is enabled.
-    Uses DLL presence — no admin rights needed.
-    Get-WindowsOptionalFeature requires elevation and would always fail for normal users.
-    """
-    if not IS_WIN:
-        return False
-    dll = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WinHvPlatform.dll"
-    return dll.exists()
-
-
 def start_emulator(avd_name, port):
     emu   = sdk_tool("emulator")
     flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
     env   = _sdk_env()
 
-    # -accel whpx   — Windows Hypervisor Platform (ARM64 Snapdragon; HAXM is Intel-only)
+    # -accel auto — let the emulator pick the best accelerator available
+    # (HAXM on Intel, WHPX on ARM64 Windows, KVM on Linux)
     # -gpu swiftshader_indirect — software renderer; prevents GPU crash without Vulkan
     # -no-snapshot-save         — don't save state on shutdown (faster, cleaner)
     # -no-boot-anim             — skip boot animation (faster boot)
     # -no-audio                 — prevent audio device errors on ARM
     # -wipe-data                — start with clean userdata (fresh identity each run)
-    if IS_WIN:
-        accel = ["-accel", "whpx"] if _whpx_available() else ["-accel", "auto"]
-    else:
-        accel = ["-accel", "auto"]
+    accel = ["-accel", "auto"]
 
     try:
         log_dir = Path(os.environ.get("TEMP", r"C:\Temp"))
@@ -1828,6 +1860,17 @@ class AndroidStudioPage(PageBase):
         shutil.move(str(inner), str(latest_dir))
         shutil.rmtree(extract_tmp)
         zip_path.unlink(missing_ok=True)
+        # The zip ships a remotePackage package.xml — write localPackage so
+        # avdmanager can find cmdline-tools as an installed package.
+        _write_local_package_xml(
+            latest_dir / "package.xml",
+            path_id="cmdline-tools;latest",
+            major=16, minor=0, micro=0,
+            display="Android SDK Command-line Tools (latest)",
+            license_ref="android-sdk-license",
+            ns_type="ns3:genericDetailsType",
+            extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+        )
         self._log("Extraction done ✅")
         self._set_progress(62, "Extracted.")
 
@@ -2404,8 +2447,10 @@ class BootPage(PageBase):
                     self._log_write(
                         f"  ❌  {avd} didn't boot in time.\n"
                         f"      Emulator log: {log_path}\n"
-                        f"      If log says 'WHPX not available', enable it:\n"
-                        f"      Settings → Turn Windows features on → Windows Hypervisor Platform ✓\n"
+                        f"      NOTE: The Android emulator has limited support on ARM64 Windows.\n"
+                        f"      If boot fails, enable Windows Hypervisor Platform:\n"
+                        f"      Settings → Turn Windows features on/off → Windows Hypervisor Platform ✓\n"
+                        f"      Then restart Windows and try again.\n"
                     )
 
             state["phones"] = phones

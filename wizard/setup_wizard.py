@@ -2328,7 +2328,12 @@ class PhoneFarmPage(PageBase):
         threading.Thread(target=go, daemon=True).start()
 
     def can_advance(self):
-        if self._done:
+        avds = state.get("avds", [])
+        if avds:
+            return True
+        running = [a for a in list_avds() if a.startswith("CPharm_Phone_")]
+        if running:
+            state["avds"] = running
             return True
         messagebox.showinfo(
             "Phones not created yet",
@@ -2348,6 +2353,70 @@ class BootPage(PageBase):
             "Step 3 — Start the Phones",
             "Boots your virtual phones. First boot takes 2–5 minutes per phone."
         )
+
+        # Start Phones
+        phone_ctrl = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        phone_ctrl.pack(fill="x", pady=(0, 8))
+        tk.Label(phone_ctrl, text="Start Phones",
+                 font=("Segoe UI", 11, "bold"), bg=BG3,
+                 fg=ACCENT, anchor="w").pack(fill="x")
+        tk.Label(phone_ctrl,
+                 text="Boot the virtual phones. First boot takes 2–5 min per phone.",
+                 font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 8))
+        phone_row = tk.Frame(phone_ctrl, bg=BG3)
+        phone_row.pack(fill="x")
+        self._boot_btn = tk.Button(phone_row, text="▶  Start All Phones",
+                                  font=("Segoe UI", 10, "bold"),
+                                  bg=GREEN, fg=BG, relief="flat",
+                                  cursor="hand2", padx=14, pady=7,
+                                  command=self._boot_all)
+        self._boot_btn.pack(side="left", padx=(0, 8))
+        self._stop_btn = tk.Button(phone_row, text="■  Stop All",
+                                  font=("Segoe UI", 10, "bold"),
+                                  bg=RED, fg=BG, relief="flat",
+                                  cursor="hand2", padx=14, pady=7,
+                                  state="disabled",
+                                  command=self._stop_all)
+        self._stop_btn.pack(side="left")
+        self._overall_lbl = tk.Label(phone_row, text="",
+                                     font=FS, bg=BG3, fg=T2)
+        self._overall_lbl.pack(side="left", padx=10)
+
+        # Chrome setup + URL test
+        chrome_box = tk.Frame(self, bg=BG3, padx=14, pady=10)
+        chrome_box.pack(fill="x", pady=(0, 8))
+        tk.Label(chrome_box,
+                 text="Fix Chrome  (run once after phones boot)",
+                 font=("Segoe UI", 10, "bold"), bg=BG3, fg=YELLOW,
+                 anchor="w").pack(fill="x")
+        tk.Label(chrome_box,
+                 text="Disables first-run screens so URLs open instantly every time.",
+                 font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 6))
+        chrome_ctrl = tk.Frame(chrome_box, bg=BG3)
+        chrome_ctrl.pack(fill="x")
+        self._chrome_btn = tk.Button(chrome_ctrl,
+                                   text="🔧  Setup Chrome on All Phones",
+                                   font=("Segoe UI", 10, "bold"),
+                                   bg=YELLOW, fg=BG, relief="flat",
+                                   cursor="hand2", padx=14, pady=6,
+                                   command=self._setup_chrome_all)
+        self._chrome_btn.pack(side="left", padx=(0, 10))
+        self._chrome_lbl = tk.Label(chrome_ctrl, text="", font=FS, bg=BG3, fg=T2)
+        self._chrome_lbl.pack(side="left")
+        # Test URL row
+        test_row = tk.Frame(chrome_box, bg=BG3)
+        test_row.pack(fill="x", pady=(8, 0))
+        tk.Label(test_row, text="Test URL on Phone 1:",
+                 font=FS, bg=BG3, fg=T2).pack(side="left")
+        self._test_url_var = tk.StringVar(value="https://google.com")
+        tk.Entry(test_row, textvariable=self._test_url_var, font=FM,
+                 bg=BG2, fg=T1, insertbackground=T1, relief="flat",
+                 width=34).pack(side="left", padx=6)
+        tk.Button(test_row, text="▶ Open",
+                  font=("Segoe UI", 10, "bold"),
+                  bg=ACCENT, fg=BG, relief="flat", cursor="hand2",
+                  padx=10, pady=5,
+                  command=self._test_url).pack(side="left")
 
         # Summary
         summary_outer = tk.Frame(self, bg=BG2, padx=12, pady=10)
@@ -2540,6 +2609,124 @@ class BootPage(PageBase):
             threading.Thread(target=check, daemon=True).start()
         except Exception as e:
             messagebox.showerror("Failed", str(e))
+
+    def _boot_all(self):
+        avds = state.get("avds", [])
+        if not avds:
+            messagebox.showerror("No phones", "Go back and create phones first.")
+            return
+        self._boot_btn.config(state="disabled")
+        self._stop_btn.config(state="normal")
+        self._log_write(f"Starting {len(avds)} phone(s)...\n")
+
+        def go():
+            procs = []
+            for i, avd in enumerate(avds):
+                port = 5554 + i * 2
+                serial = f"emulator-{port}"
+                self._after(0, lambda a=avd: (
+                    self._overall_lbl.config(text=f"Launching {a}...", fg=YELLOW)
+                ))
+                try:
+                    proc = start_emulator(avd, port)
+                    procs.append((avd, serial, proc))
+                    self._log_write(f"  Launched {avd} on port {port}\n")
+                except Exception as e:
+                    self._log_write(f"  ❌ {avd} failed: {e}\n")
+
+            state["_emu_procs"] = [p for _, _, p in procs]
+            phones = []
+
+            for avd, serial, _ in procs:
+                self._after(0, lambda a=avd: (
+                    self._overall_lbl.config(text=f"Booting {a}...", fg=YELLOW)
+                ))
+                self._log_write(f"  Waiting for {avd} to boot (can take 2-5 min)...\n")
+                ok = wait_for_boot(serial)
+                if not ok:
+                    self._log_write(f"  ⚠ {avd} slow — waiting extra 3 min...\n")
+                    ok = wait_for_boot(serial, timeout=180)
+                if ok:
+                    new_id = rotate_android_id(serial)
+                    phones.append({"serial": serial, "name": avd})
+                    try:
+                        setup_chrome(serial)
+                    except Exception:
+                        pass
+                    self._log_write(
+                        f"  ✅ {avd} ready! Android ID: {new_id[:8]}...\n")
+                    self._after(0, lambda a=avd: (
+                        self._overall_lbl.config(text=f"✅ {a} running", fg=GREEN)
+                    ))
+                else:
+                    self._log_write(
+                        f"  ❌ {avd} timed out. Enable Windows Hypervisor Platform:\n"
+                        f"     Settings → Turn Windows features on/off → Windows Hypervisor Platform ✅\n")
+                    self._after(0, lambda a=avd: (
+                        self._overall_lbl.config(text=f"❌ {a} failed", fg=RED)
+                    ))
+
+            state["phones"] = phones
+            n = len(phones)
+            self._after(0, lambda: (
+                self._boot_btn.config(state="normal"),
+                self._stop_btn.config(
+                    state="disabled" if not phones else "normal"),
+                self._overall_lbl.config(
+                    text=f"✅ {n}/{len(avds)} phone(s) running" if phones
+                        else "❌ No phones booted",
+                    fg=GREEN if phones else RED),
+            ))
+            self._log_write(f"\n{n}/{len(avds)} phone(s) running.\n")
+
+        threading.Thread(target=go, daemon=True).start()
+
+    def _stop_all(self):
+        for proc in state.get("_emu_procs", []):
+            try:
+                proc.terminate()
+                lf = getattr(proc, "_log_file", None)
+                if lf and lf is not None:
+                    lf.close()
+            except Exception:
+                pass
+        state["_emu_procs"] = []
+        state["phones"] = []
+        self._boot_btn.config(state="normal")
+        self._stop_btn.config(state="disabled")
+        self._overall_lbl.config(text="All phones stopped.", fg=T2)
+        self._log_write("All phones stopped.\n")
+
+    def _setup_chrome_all(self):
+        phones = state.get("phones", [])
+        if not phones:
+            messagebox.showwarning("No phones", "Boot phones first.")
+            return
+        self._chrome_btn.config(state="disabled", text="Setting up Chrome...")
+        self._chrome_lbl.config(text="", fg=T2)
+        def go():
+            for p in phones:
+                try:
+                    setup_chrome(p["serial"])
+                    self._log_write(f"  ✅ {p['name']}: Chrome ready\n")
+                except Exception as e:
+                    self._log_write(f"  ⚠ {p['name']}: {e}\n")
+            self._chrome_btn.config(state="normal", text="🔧  Setup Chrome on All Phones")
+            self._log_write("Chrome setup done on all phones.\n")
+        threading.Thread(target=go, daemon=True).start()
+
+    def _test_url(self):
+        phones = state.get("phones", [])
+        if not phones:
+            messagebox.showwarning("No phones", "Boot phones first.")
+            return
+        url = self._test_url_var.get().strip() or "https://google.com"
+        self._log_write(f"Opening {url} on {phones[0]['name']}...\n")
+        threading.Thread(
+            target=lambda: chrome_open_url(phones[0]["serial"], url),
+            daemon=True
+        ).start()
+
 
     def _stop_server(self):
         self._stop_groups()

@@ -377,7 +377,7 @@ textarea{resize:vertical;min-height:72px;line-height:1.5}
     </div>
     <div>
       <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--y);margin-bottom:5px">RAM Warning</div>
-      <p style="font-size:.75rem;color:var(--t1);line-height:1.6">Each LDPlayer phone uses about 1.5 GB of RAM. The green bar at the top shows how much of your computer's memory is in use. If it turns yellow or red, close some phones from the main Dashboard before running tests — otherwise your computer will slow to a crawl.</p>
+      <p style="font-size:.75rem;color:var(--t1);line-height:1.6">Each AVD emulator uses about 1.5 GB of RAM. The green bar at the top shows how much of your computer's memory is in use. If it turns yellow or red, close some phones from the main Dashboard before running tests — otherwise your computer will slow to a crawl.</p>
     </div>
   </div>
 </div>
@@ -630,7 +630,6 @@ function toast(msg, type = '') {
 
 // ── Test Loop ──────────────────────────────────────────────────────────
 let loopRunning = false;
-let loopTimers  = [];
 
 async function startLoop() {
   const url        = document.getElementById('loop-url').value.trim();

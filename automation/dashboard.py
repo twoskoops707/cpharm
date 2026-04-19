@@ -621,7 +621,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                     text = step.get("text", "").replace(" ", "%s").replace("'", "")
                     _adb(serial, "shell", "input", "text", text)
                 elif t == "rotate_identity":
-                    idx = list(all_phones.keys()).index(serial) if serial in all_phones else 0
+                    idx = _serial_to_phone_idx(serial)
                     tor_manager.rotate_identity_adb(serial, idx)
                 time.sleep(0.3)
 

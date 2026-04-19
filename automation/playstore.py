@@ -1,8 +1,7 @@
 """
-Play Store Tester — ADB-based organic Play Store activity per phone.
+Play Store Tester - ADB-based organic Play Store activity per phone.
 All functions use device serials (consistent with dashboard.py / teach.py).
 """
-
 import subprocess
 import time
 import threading
@@ -24,6 +23,7 @@ def _screen_size(serial: str) -> tuple[int, int]:
     """Return (width, height) of the device screen."""
     raw = _adb(serial, "shell", "wm", "size")
     for part in (raw or "").split():
+        part = part.replace("X", "x")
         if "x" in part and part.replace("x", "").isdigit():
             try:
                 w, h = part.split("x")
@@ -71,32 +71,47 @@ def _wake(serial: str):
 
 
 def open_store_page_serial(serial: str, package: str) -> bool:
-    """Open the Play Store listing for a specific package."""
+    """Open the Play Store listing for a specific package.
+    
+    Tries market:// first (faster, deeper link). Falls back to https:// 
+    for devices without Play Store (e.g. some emulators, F-Droid devices).
+    """
     _wake(serial)
-    _intent(serial, f"market://details?id={package}")
+    result = _intent(serial, f"market://details?id={package}")
     time.sleep(2)
+    # If market:// fails (no Play Store), fall back to browser URL
+    if "Error" in result or not result:
+        _intent(serial, f"https://play.google.com/store/apps/details?id={package}")
+        time.sleep(2)
     return True
 
 
 def search_store(serial: str, query: str) -> bool:
     """Open Play Store search results for a query string."""
     _wake(serial)
-    _intent(serial, f"market://search?q={query.replace(' ', '+')}")
+    safe_q = query.replace(" ", "+")
+    result = _intent(serial, f"market://search?q={safe_q}")
     time.sleep(2)
+    if "Error" in result or not result:
+        _intent(serial, f"https://play.google.com/store/search?q={safe_q}&c=apps")
+        time.sleep(2)
     return True
 
 
 def install_from_store(serial: str, package: str, on_log: Callable | None = None) -> bool:
-    """
-    Open the Play Store page and tap Install.
-    Coordinates are scaled dynamically from 1280×720 baseline.
+    """Open the Play Store listing and tap Install.
+    
+    Coordinates are scaled dynamically from 1280x720 baseline.
     Install button is top-right of the app page in Play Store.
     """
     if on_log:
         on_log(f"{serial}: opening Play Store for {package}")
     _wake(serial)
-    _intent(serial, f"market://details?id={package}")
+    result = _intent(serial, f"market://details?id={package}")
     time.sleep(3)
+    if "Error" in result or not result:
+        _intent(serial, f"https://play.google.com/store/apps/details?id={package}")
+        time.sleep(3)
 
     ix, iy = _scale(serial, 1100, 200)
     _tap(serial, ix, iy)
@@ -129,18 +144,15 @@ def leave_review(
     review_text: str,
     on_log: Callable | None = None,
 ) -> bool:
-    """
-    Navigate to app's Play Store page, tap review section,
+    """Navigate to app's Play Store page, tap review section,
     select star rating, type the review, and submit.
-    Coordinates scale dynamically from 1280×720 baseline.
+    Coordinates scale dynamically from 1280x720 baseline.
     """
     if on_log:
         on_log(f"{serial}: opening review page for {package}")
     _wake(serial)
-
     _intent(serial, f"market://details?id={package}")
     time.sleep(3)
-
     for _ in range(3):
         x1, y1 = _scale(serial, 640, 500)
         x2, y2 = _scale(serial, 640, 200)
@@ -168,7 +180,7 @@ def leave_review(
     time.sleep(1)
 
     if on_log:
-        on_log(f"{serial}: review submitted ({stars}★)")
+        on_log(f"{serial}: review submitted ({stars} star)")
     return True
 
 
@@ -184,7 +196,7 @@ def run_full_sequence(
 ):
     """
     Run the full Play Store sequence on each phone, staggered by delay_secs.
-    Sequence per phone: search → open page → install → launch → review.
+    Sequence per phone: search -> open page -> install -> launch -> review.
     phones: list of dicts with at least {"serial": str, "name": str, "running": bool}
     """
     def run():
@@ -209,11 +221,9 @@ def run_full_sequence(
                     leave_review(serial, package, stars, review_text, on_log=on_log)
             except Exception as e:
                 if on_log:
-                    on_log(f"{name}: error — {e}")
-
+                    on_log(f"{name}: error - {e}")
         if on_complete:
             on_complete()
-
     t = threading.Thread(target=run, daemon=True)
     t.start()
     return t

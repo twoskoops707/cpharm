@@ -197,10 +197,66 @@ def list_avds():
 
 
 def _machine_arch():
+    """
+    Return the Android ABI for the HOST machine.
+    On Windows ARM64, Python is often an x64 build so platform.machine()
+    reports 'AMD64' — we check the WOW64 env var to get the real CPU arch.
+    """
+    if IS_WIN:
+        # PROCESSOR_ARCHITEW6432 is set by Windows when a non-native process runs
+        wow = os.environ.get("PROCESSOR_ARCHITEW6432", "").upper()
+        native = os.environ.get("PROCESSOR_ARCHITECTURE", "").upper()
+        arch_str = wow or native
+        if "ARM" in arch_str:
+            return "arm64-v8a"
     m = platform.machine().lower()
     if "arm" in m or "aarch" in m:
         return "arm64-v8a"
     return "x86_64"
+
+
+def _run_sdkmanager(args, sdk, log_fn=None, timeout=900):
+    """
+    Run sdkmanager, piping 'y' answers so license prompts never block.
+    Streams output line-by-line to log_fn if provided.
+    Returns (success, full_output).
+    """
+    sdkmgr = sdk_tool("sdkmanager")
+    cmd = [sdkmgr] + args + [f"--sdk_root={sdk}"]
+    if log_fn:
+        log_fn(f"  $ {' '.join(cmd)}\n")
+    flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            creationflags=flags,
+        )
+        # Feed unlimited 'y' responses so license prompts never block
+        try:
+            proc.stdin.write("y\n" * 50)
+            proc.stdin.close()
+        except Exception:
+            pass
+
+        lines = []
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line and log_fn:
+                log_fn("    " + line + "\n")
+            lines.append(line)
+
+        proc.wait(timeout=timeout)
+        full = "\n".join(lines)
+        return proc.returncode == 0, full
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        return False, "sdkmanager timed out after timeout seconds"
+    except Exception as e:
+        return False, str(e)
 
 
 def create_avd(name, log_fn=None):
@@ -208,46 +264,63 @@ def create_avd(name, log_fn=None):
     if not sdk:
         return False, "Android SDK not found"
 
-    sdkmgr = sdk_tool("sdkmanager")
     avdmgr = sdk_tool("avdmanager")
     arch   = _machine_arch()
     image  = f"system-images;android-34;google_apis;{arch}"
 
     if log_fn:
-        log_fn(f"  Installing Android 14 image ({arch}) — first time takes a while…\n")
+        log_fn(f"  Host architecture: {arch}\n")
+        log_fn(f"  System image: {image}\n")
+        log_fn(f"  SDK root: {sdk}\n\n")
 
-    ok, out = run_cmd(
-        [sdkmgr, "--install", image, "--sdk_root", sdk],
-        timeout=900
-    )
-    if log_fn and out:
-        tail = out[-400:] if len(out) > 400 else out
-        log_fn(tail + "\n")
-    if not ok:
-        return False, f"sdkmanager failed: {out[-200:]}"
-
+    # ── accept all licenses first ─────────────────────────────────────────────
     if log_fn:
-        log_fn(f"  Creating AVD: {name}…\n")
+        log_fn("  Accepting SDK licenses…\n")
+    _run_sdkmanager(["--licenses"], sdk, log_fn=None, timeout=60)
 
-    proc = subprocess.Popen(
+    # ── install system image ──────────────────────────────────────────────────
+    if log_fn:
+        log_fn(f"  Installing Android 14 image — this downloads ~1 GB, please wait…\n")
+    ok, out = _run_sdkmanager(["--install", image], sdk, log_fn=log_fn, timeout=1200)
+
+    if not ok:
+        # Check if image actually landed despite non-zero exit (sdkmanager quirk)
+        img_path = Path(sdk) / "system-images" / "android-34" / "google_apis" / arch
+        if img_path.exists():
+            if log_fn:
+                log_fn("  Image present on disk — continuing despite sdkmanager exit code.\n")
+        else:
+            return False, f"sdkmanager failed. Last output:\n{out[-400:]}"
+
+    # ── create the AVD ────────────────────────────────────────────────────────
+    if log_fn:
+        log_fn(f"\n  Creating AVD: {name}…\n")
+
+    flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
+    proc  = subprocess.Popen(
         [avdmgr, "create", "avd", "-n", name,
          "-k", image, "-d", "pixel_6", "--force"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        creationflags=flags,
     )
     try:
-        stdout, stderr = proc.communicate(input="no\n", timeout=90)
+        stdout, stderr = proc.communicate(input="no\n", timeout=120)
     except subprocess.TimeoutExpired:
         proc.kill()
         return False, "avdmanager timed out"
+
+    combined = (stdout + stderr).strip()
+    if log_fn and combined:
+        log_fn(combined + "\n")
 
     if proc.returncode == 0:
         if log_fn:
             log_fn(f"  ✅  {name} created.\n")
         return True, ""
-    return False, stderr.strip()
+    return False, combined or "avdmanager returned non-zero exit code"
 
 
 def start_emulator(avd_name, port):

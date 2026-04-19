@@ -673,7 +673,34 @@ def create_avd(name, log_fn=None):
 
     # ── install system image ──────────────────────────────────────────────────
     img_path = Path(sdk) / "system-images" / "android-34" / "google_apis" / arch
-    if img_path.exists() and (img_path / "package.xml").exists():
+    img_ready = (img_path / "system.img").exists()
+    if img_ready:
+        # Ensure package.xml is in localPackage format — Google's zip ships a
+        # remotePackage XML that avdmanager cannot use; re-write it if needed.
+        pkg_xml = img_path / "package.xml"
+        try:
+            if not pkg_xml.exists() or "<localPackage" not in pkg_xml.read_text(encoding="utf-8", errors="ignore"):
+                TARGET_PATH = f"system-images;android-34;google_apis;{arch}"
+                _write_local_package_xml(
+                    pkg_xml,
+                    path_id=TARGET_PATH,
+                    major=14, minor=0, micro=0,
+                    display="Google APIs ARM 64 v8a System Image",
+                    license_ref="android-sdk-license",
+                    ns_type="ns4:sysImgDetailsType",
+                    extra_ns='xmlns:ns4="http://schemas.android.com/sdk/android/repo/sys-img2/03"',
+                    extra_details=(
+                        f"<ns4:api-level>34</ns4:api-level>"
+                        f"<ns4:tag><ns4:id>google_apis</ns4:id>"
+                        f"<ns4:display>Google APIs</ns4:display></ns4:tag>"
+                        f"<ns4:abi>{arch}</ns4:abi>"
+                    ),
+                )
+                if log_fn:
+                    log_fn("  Rewrote package.xml to localPackage format.\n")
+        except Exception as e:
+            if log_fn:
+                log_fn(f"  ⚠  Could not rewrite package.xml: {e}\n")
         if log_fn:
             log_fn(f"  System image already installed at {img_path} — skipping download.\n")
     else:
@@ -682,7 +709,7 @@ def create_avd(name, log_fn=None):
         ok, out = _run_sdkmanager([image], sdk, log_fn=log_fn, timeout=1200)
 
         if not ok:
-            if img_path.exists():
+            if (img_path / "system.img").exists():
                 if log_fn:
                     log_fn("  Image present on disk — continuing despite sdkmanager exit code.\n")
             else:
@@ -726,20 +753,30 @@ def create_avd(name, log_fn=None):
         log_fn(f"  Available device IDs (first 5): {all_ids[:5]}\n")
         log_fn(f"  Will try: {device_profiles}\n")
 
+    if not Path(avdmgr).exists():
+        return False, (
+            f"avdmanager not found at: {avdmgr}\n"
+            "Go back to Step 2 (Android SDK) and reinstall the SDK."
+        )
+
     last_err = ""
     for device in device_profiles:
         if log_fn:
             log_fn(f"  Trying device profile: {device}\n")
-        proc = subprocess.Popen(
-            [avdmgr, "create", "avd", "-n", name,
-             "-k", image, "-d", device, "--force"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=_sdk_env(),
-            creationflags=flags,
-        )
+        try:
+            proc = subprocess.Popen(
+                [avdmgr, "create", "avd", "-n", name,
+                 "-k", image, "-d", device, "--force"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=_sdk_env(),
+                creationflags=flags,
+            )
+        except OSError as e:
+            return False, f"Failed to launch avdmanager: {e}"
+
         try:
             stdout, stderr = proc.communicate(input="no\n", timeout=120)
         except subprocess.TimeoutExpired:
@@ -762,19 +799,15 @@ def create_avd(name, log_fn=None):
 
 
 def _whpx_available() -> bool:
-    """Check if Windows Hypervisor Platform is enabled (required for ARM64 emulation)."""
+    """
+    Check if Windows Hypervisor Platform is enabled.
+    Uses DLL presence — no admin rights needed.
+    Get-WindowsOptionalFeature requires elevation and would always fail for normal users.
+    """
     if not IS_WIN:
         return False
-    try:
-        r = subprocess.run(
-            ["powershell", "-Command",
-             "(Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform).State"],
-            capture_output=True, text=True, timeout=10,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        return "Enabled" in r.stdout
-    except Exception:
-        return False
+    dll = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WinHvPlatform.dll"
+    return dll.exists()
 
 
 def start_emulator(avd_name, port):
@@ -793,8 +826,12 @@ def start_emulator(avd_name, port):
     else:
         accel = ["-accel", "auto"]
 
-    log_dir = Path(os.environ.get("TEMP", "C:\\Temp"))
-    log_file = open(log_dir / f"cpharm_emu_{avd_name}.log", "w")
+    try:
+        log_dir = Path(os.environ.get("TEMP", r"C:\Temp"))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = open(log_dir / f"cpharm_emu_{avd_name}.log", "w")
+    except Exception:
+        log_file = subprocess.DEVNULL
 
     proc = subprocess.Popen(
         [emu, "-avd", avd_name, "-port", str(port)]
@@ -806,7 +843,8 @@ def start_emulator(avd_name, port):
         env=env,
         creationflags=flags,
     )
-    proc._log_file = log_file
+    if log_file is not subprocess.DEVNULL:
+        proc._log_file = log_file
     return proc
 
 
@@ -2107,7 +2145,10 @@ class PhoneFarmPage(PageBase):
                 self._progress_lbl.config(
                     text=f"Creating {i}/{n}: {name}…", fg=YELLOW)
                 self._log_write(f"══ Phone {i} of {n}: {name} ══\n")
-                ok, err = create_avd(name, log_fn=self._log_write)
+                try:
+                    ok, err = create_avd(name, log_fn=self._log_write)
+                except Exception as exc:
+                    ok, err = False, str(exc)
                 if ok:
                     created.append(name)
                 else:

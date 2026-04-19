@@ -199,31 +199,48 @@ def list_avds():
 def _find_java_home() -> str:
     """
     Find an installed JDK/JRE directory on Windows and return its root path.
-    Checks JAVA_HOME env var first, then searches common install locations.
+    Checks JAVA_HOME, then Android Studio's bundled JBR, then common install locations.
     """
+    import glob
+
+    # 1. Respect existing JAVA_HOME if valid
     existing = os.environ.get("JAVA_HOME", "")
     if existing and Path(existing, "bin", "java.exe").exists():
         return existing
 
+    # 2. Android Studio bundles a JetBrains Runtime (jbr/) — check there first
+    #    because users who "can't install Android Studio" may still have it partially.
+    jbr_candidates = [
+        os.path.join(os.environ.get("PROGRAMFILES",  r"C:\Program Files"),
+                     "Android", "Android Studio", "jbr"),
+        os.path.join(os.environ.get("LOCALAPPDATA",  ""),
+                     "Programs", "Android Studio", "jbr"),
+        os.path.join(os.environ.get("PROGRAMFILES",  r"C:\Program Files"),
+                     "Android Studio", "jbr"),
+        r"C:\Program Files\Android\Android Studio\jbr",
+        r"C:\Android\android-studio\jbr",
+    ]
+    for jbr in jbr_candidates:
+        if jbr and Path(jbr, "bin", "java.exe").exists():
+            return jbr
+
+    # 3. Standard JDK/JRE install locations
     search_roots = [
-        os.environ.get("PROGRAMFILES", r"C:\Program Files"),
+        os.environ.get("PROGRAMFILES",      r"C:\Program Files"),
         os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
-        os.environ.get("LOCALAPPDATA", ""),
-        r"C:\Program Files",
+        os.environ.get("LOCALAPPDATA",      ""),
         r"C:\Program Files\Microsoft",
         r"C:\Program Files\Eclipse Adoptium",
         r"C:\Program Files\Java",
         r"C:\Program Files\OpenJDK",
     ]
-    import glob
     for root in search_roots:
         if not root:
             continue
-        # Search one level deep for java.exe
-        for java_exe in glob.glob(os.path.join(root, "**", "bin", "java.exe"),
-                                  recursive=True):
-            jdk_bin = Path(java_exe).parent
-            return str(jdk_bin.parent)
+        for java_exe in glob.glob(
+            os.path.join(root, "**", "bin", "java.exe"), recursive=True
+        ):
+            return str(Path(java_exe).parent.parent)
     return ""
 
 
@@ -259,14 +276,33 @@ def _machine_arch():
     return "x86_64"
 
 
+def _canonical_sdkmanager(sdk: str) -> str:
+    """
+    Always return the cmdline-tools/latest/bin/sdkmanager path.
+    The legacy tools/bin/sdkmanager only understands XML v3 and will fail
+    against Google's current v4 repository — never use it.
+    """
+    base = Path(sdk)
+    ext  = ".bat" if IS_WIN else ""
+    primary = base / "cmdline-tools" / "latest" / "bin" / f"sdkmanager{ext}"
+    if primary.exists():
+        return str(primary)
+    # Fallback: any cmdline-tools version (but never tools/bin)
+    for p in (base / "cmdline-tools").glob(f"*/bin/sdkmanager{ext}"):
+        if p.exists():
+            return str(p)
+    return str(primary)   # return expected path even if missing (will error clearly)
+
+
 def _run_sdkmanager(args, sdk, log_fn=None, timeout=900):
     """
     Run sdkmanager, piping 'y' answers so license prompts never block.
     Streams output line-by-line to log_fn if provided.
+    Always uses cmdline-tools/latest (XML v4) — never the legacy tools/bin version.
     Injects JAVA_HOME + PATH so sdkmanager finds Java even if PATH not updated yet.
     Returns (success, full_output).
     """
-    sdkmgr = sdk_tool("sdkmanager")
+    sdkmgr = _canonical_sdkmanager(sdk)
     cmd = [sdkmgr] + args + [f"--sdk_root={sdk}"]
     env = _sdk_env()
     if log_fn:
@@ -312,16 +348,21 @@ def create_avd(name, log_fn=None):
     if not sdk:
         return False, "Android SDK not found"
 
-    avdmgr = sdk_tool("avdmanager")
+    # avdmanager lives beside sdkmanager in cmdline-tools/latest/bin/
+    sdkmgr_path = _canonical_sdkmanager(sdk)
+    ext    = ".bat" if IS_WIN else ""
+    avdmgr = str(Path(sdkmgr_path).parent / f"avdmanager{ext}")
     arch   = _machine_arch()
     image  = f"system-images;android-34;google_apis;{arch}"
 
     java_home = _find_java_home()
     if log_fn:
-        log_fn(f"  Host architecture: {arch}\n")
-        log_fn(f"  System image: {image}\n")
-        log_fn(f"  SDK root: {sdk}\n")
-        log_fn(f"  Java home: {java_home or '❌ NOT FOUND — install Java first'}\n\n")
+        log_fn(f"  Host architecture : {arch}\n")
+        log_fn(f"  System image      : {image}\n")
+        log_fn(f"  SDK root          : {sdk}\n")
+        log_fn(f"  sdkmanager        : {_canonical_sdkmanager(sdk)}\n")
+        log_fn(f"  avdmanager        : {avdmgr}\n")
+        log_fn(f"  Java home         : {java_home or '❌ NOT FOUND'}\n\n")
 
     if not java_home:
         return False, (

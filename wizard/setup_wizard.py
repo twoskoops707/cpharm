@@ -412,7 +412,7 @@ def _direct_download_platform_tools(sdk_path, log_fn=None):
             display="Android SDK Platform-Tools",
             license_ref="android-sdk-license",
             ns_type="ns3:genericDetailsType",
-            extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+            extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
         )
         if log_fn:
             log_fn("  platform-tools installed ✅\n")
@@ -499,7 +499,7 @@ def _direct_download_emulator(sdk_path, log_fn=None):
             display="Android Emulator",
             license_ref="android-sdk-license",
             ns_type="ns3:genericDetailsType",
-            extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+            extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
         )
         _write_sdk_licenses(sdk_path)
         if log_fn:
@@ -671,7 +671,7 @@ def _ensure_emulator_meta(sdk, log_fn=None):
                 display="Android Emulator",
                 license_ref="android-sdk-license",
                 ns_type="ns3:genericDetailsType",
-                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
             )
             _write_local_package_xml(
                 meta_dest / "package.xml",
@@ -680,7 +680,7 @@ def _ensure_emulator_meta(sdk, log_fn=None):
                 display="Android Emulator Device Metadata",
                 license_ref="android-sdk-license",
                 ns_type="ns3:genericDetailsType",
-                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
             )
             if log_fn:
                 log_fn("  Copied device definitions from Android Studio ✅\n")
@@ -1799,12 +1799,12 @@ class AndroidStudioPage(PageBase):
             self._do_install()
         except Exception as exc:
             self._log(f"\n❌  Unexpected error: {exc}")
-            self._set_status("❌", "Something went wrong — see log below.", color=RED)
+            self._set_status("Something went wrong — see log below.", color=RED)
         finally:
             self._working = False
             if not self._ready:
                 self._install_btn.config(state="normal",
-                                         text="⬇   Try Again")
+                                         text="Try Again")
 
     def _do_install(self):
         sdk_path = Path(SDK_DEFAULT_PATH)
@@ -1839,7 +1839,7 @@ class AndroidStudioPage(PageBase):
             self._set_progress(0, "")
             self.after(0, self._show_java_button)
             self._working = False
-            self._install_btn.config(state="normal", text="⬇   Try Again  (after installing Java)")
+            self._install_btn.config(state="normal", text="Try Again  (after installing Java)")
             return
         self._log("Java found ✅")
 
@@ -1918,7 +1918,7 @@ class AndroidStudioPage(PageBase):
             display="Android SDK Command-line Tools (latest)",
             license_ref="android-sdk-license",
             ns_type="ns3:genericDetailsType",
-            extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+            extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
         )
         self._log("Extraction done ✅")
         self._set_progress(62, "Extracted.")
@@ -1982,7 +1982,7 @@ class AndroidStudioPage(PageBase):
         if not Path(sdk_tool("emulator")).exists():
             self._log("\n⚠  sdkmanager couldn't install emulator — Java network blocked by firewall.")
             self._log("   Switching to direct Python download (bypasses Java network stack)…\n")
-            self._set_status("⬇", "Downloading emulator directly…",
+            self._set_status("Downloading emulator directly…",
                              detail="Java is blocked by firewall — using Python downloader instead.",
                              color=YELLOW)
             self._set_progress(70, "Direct downloading emulator…")
@@ -1996,7 +1996,7 @@ class AndroidStudioPage(PageBase):
                 self._log("    Your network is blocking dl.google.com entirely.")
                 self._set_status("❌", "Network blocked — see options below", color=RED)
                 self._set_progress(0, "")
-                self._install_btn.config(state="normal", text="⬇   Try Again")
+                self._install_btn.config(state="normal", text="Try Again")
                 self.after(0, self._show_firewall_btn)
                 return
 
@@ -2085,7 +2085,7 @@ class AndroidStudioPage(PageBase):
                 display="Android Emulator",
                 license_ref="android-sdk-license",
                 ns_type="ns3:genericDetailsType",
-                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
             )
             _write_local_package_xml(
                 meta_dir / "package.xml",
@@ -2094,7 +2094,7 @@ class AndroidStudioPage(PageBase):
                 display="Android Emulator Device Metadata",
                 license_ref="android-sdk-license",
                 ns_type="ns3:genericDetailsType",
-                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
             )
             if log_fn:
                 log_fn("  Emulator device catalog installed ✅\n")
@@ -2203,16 +2203,20 @@ class AndroidStudioPage(PageBase):
         )
         self._install_btn.config(
             state="normal",
-            text=f"⬇   Install Missing Tools ({', '.join(missing)})",
+            text=f"Install Missing Tools ({', '.join(missing)})",
             bg=YELLOW,
         )
         self._ready = False
         return False
 
     def can_advance(self):
-        if not self._ready:
+        if not state.get("avds"):
+            existing = [a for a in list_avds() if a.startswith("CPharm_Phone_")]
+            if existing:
+                state["avds"] = existing
+                return True
             messagebox.showinfo(
-                "SDK not ready yet",
+                "Phones not created yet",
                 "Click the green 'Install Android SDK' button and wait for it to finish.\n\n"
                 "The wizard will download and set everything up automatically."
             )

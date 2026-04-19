@@ -493,7 +493,7 @@ def _direct_download_emulator(sdk_path, log_fn=None):
         # Write the correct localPackage package.xml so sdkmanager sees emulator
         # as installed and doesn't block system image install with a dependency error.
         _write_local_package_xml(
-            Path(sdk_path) / "emulator" / "package.xml",
+            emu_dest / "package.xml",
             path_id="emulator",
             major=36, minor=6, micro=4,
             display="Android Emulator",
@@ -736,6 +736,17 @@ def _ensure_emulator_meta(sdk, log_fn=None):
                 studio_emulator / "meta" / "device-catalog.xml",
                 meta_dest / "device-catalog.xml",
             )
+            # Also register the emulator as an installed package (path_id="emulator").
+            # avdmanager checks for this before listing device profiles.
+            _write_local_package_xml(
+                emu_dir / "package.xml",
+                path_id="emulator",
+                major=36, minor=6, micro=4,
+                display="Android Emulator",
+                license_ref="android-sdk-license",
+                ns_type="ns3:genericDetailsType",
+                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+            )
             _write_local_package_xml(
                 meta_dest / "package.xml",
                 path_id="emulator;meta",
@@ -745,7 +756,6 @@ def _ensure_emulator_meta(sdk, log_fn=None):
                 ns_type="ns3:genericDetailsType",
                 extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
             )
-            _write_sdk_licenses(sdk)
             if log_fn:
                 log_fn("  Copied device definitions from Android Studio ✅\n")
             installed = True
@@ -2140,11 +2150,22 @@ class AndroidStudioPage(PageBase):
                         zf.extract(member, emu_dir)
             tmp.unlink(missing_ok=True)
 
+            # Also register the emulator as an installed package (path_id="emulator").
+            # avdmanager checks for this before listing device profiles.
+            _write_local_package_xml(
+                emu_dir / "package.xml",
+                path_id="emulator",
+                major=36, minor=6, micro=4,
+                display="Android Emulator",
+                license_ref="android-sdk-license",
+                ns_type="ns3:genericDetailsType",
+                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',
+            )
             _write_local_package_xml(
                 meta_dir / "package.xml",
                 path_id="emulator;meta",
                 major=36, minor=6, micro=4,
-                display="Android Emulator Metadata",
+                display="Android Emulator Device Metadata",
                 license_ref="android-sdk-license",
                 ns_type="ns3:genericDetailsType",
                 extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/02"',

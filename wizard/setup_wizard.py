@@ -263,16 +263,43 @@ def _sdk_env() -> dict:
 def _machine_arch():
     """
     Return the Android ABI for the HOST machine.
-    On Windows ARM64, Python is often an x64 build so platform.machine()
-    reports 'AMD64' — we check the WOW64 env var to get the real CPU arch.
+    On Windows ARM64, Python x64 reports AMD64 via env vars and platform.machine().
+    Read the registry system-level PROCESSOR_ARCHITECTURE as ground truth.
     """
     if IS_WIN:
-        # PROCESSOR_ARCHITEW6432 is set by Windows when a non-native process runs
-        wow = os.environ.get("PROCESSOR_ARCHITEW6432", "").upper()
-        native = os.environ.get("PROCESSOR_ARCHITECTURE", "").upper()
-        arch_str = wow or native
-        if "ARM" in arch_str:
+        # 1. Process-level env vars (x64 Python on ARM64 sets ARCHITEW6432=ARM64)
+        wow    = os.environ.get("PROCESSOR_ARCHITEW6432", "").upper()
+        native = os.environ.get("PROCESSOR_ARCHITECTURE",  "").upper()
+        if "ARM" in (wow + native):
             return "arm64-v8a"
+
+        # 2. System-level registry key — always reflects real CPU regardless of emulation
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+            )
+            val, _ = winreg.QueryValueEx(key, "PROCESSOR_ARCHITECTURE")
+            winreg.CloseKey(key)
+            if "ARM" in str(val).upper():
+                return "arm64-v8a"
+        except Exception:
+            pass
+
+        # 3. PowerShell OSArchitecture as last resort
+        try:
+            r = subprocess.run(
+                ["powershell", "-Command",
+                 "[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture"],
+                capture_output=True, text=True, timeout=6,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            if "ARM" in r.stdout.upper():
+                return "arm64-v8a"
+        except Exception:
+            pass
+
     m = platform.machine().lower()
     if "arm" in m or "aarch" in m:
         return "arm64-v8a"

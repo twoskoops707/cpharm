@@ -1238,6 +1238,11 @@ class AndroidStudioPage(PageBase):
         if existing:
             state["sdk_path"] = existing
             self._log(f"SDK already found at:  {existing}")
+            # Make sure emulator is actually present — if not, install it
+            if not Path(sdk_tool("emulator")).exists():
+                self._log("Emulator missing — installing it now…")
+                self._install_missing_tools(existing)
+                return
             self._finish_ok(existing)
             return
 
@@ -1320,41 +1325,49 @@ class AndroidStudioPage(PageBase):
         self._set_progress(62, "Extracted.")
 
         # ── step 5: run sdkmanager to install platform-tools + emulator ───────
-        self._set_status("⚙", "Installing platform-tools and emulator…",
-                         detail="This downloads ~200 MB. Please wait — do not close the window.",
+        state["sdk_path"] = str(sdk_path)
+        self._install_missing_tools(str(sdk_path))
+
+    def _install_missing_tools(self, sdk):
+        """
+        Install platform-tools and emulator via sdkmanager.
+        Uses _run_sdkmanager so Java env is injected and licenses are auto-accepted.
+        """
+        missing = []
+        if not Path(sdk_tool("emulator")).exists():
+            missing.append("emulator")
+        if not Path(sdk_tool("avdmanager")).exists():
+            missing.append("cmdline-tools;latest")
+        missing.append("platform-tools")   # always refresh
+
+        self._set_status("⚙", "Installing Android tools…",
+                         detail="Downloads ~200 MB. Please wait — do not close the window.",
                          color=YELLOW)
         self._set_progress(65, "Running sdkmanager…")
-        self._log("Installing platform-tools and emulator via sdkmanager…")
+        self._log(f"Installing: {', '.join(missing)}")
+        self._log(f"JAVA_HOME will be: {_find_java_home() or '(searching…)'}")
 
-        sdkmgr = str(latest_dir / "bin" / ("sdkmanager.bat" if IS_WIN else "sdkmanager"))
-        ok, out = run_cmd(
-            [sdkmgr,
-             f"--sdk_root={sdk_path}",
-             "--install",
-             "platform-tools",
-             "emulator"],
+        ok, out = _run_sdkmanager(
+            ["--install"] + missing,
+            sdk,
+            log_fn=self._log,
             timeout=600,
         )
 
-        tail = out[-600:] if len(out) > 600 else out
-        if tail:
-            self._log(tail)
-
-        if not ok:
-            self._log("sdkmanager reported an error — checking if tools are present anyway…")
-
         self._set_progress(92, "Verifying…")
-        state["sdk_path"] = str(sdk_path)
 
         if not Path(sdk_tool("emulator")).exists():
-            self._log("❌  Emulator not found after install. See log above.")
-            self._set_status("❌", "Install failed — see log above.", color=RED)
+            self._log("\n❌  Emulator still not found after install.")
+            self._log("    Check that JAVA_HOME was found above.")
+            self._log("    If Java shows as '(not found)', go back to Step 1 and re-run Install Everything.")
+            self._set_status("❌", "Emulator install failed — see log", color=RED)
             self._set_progress(0, "")
+            self._install_btn.config(state="normal", text="⬇   Try Again")
             return
 
-        self._log("emulator   ✅")
+        self._log("emulator        ✅")
         self._log("platform-tools  ✅")
-        self._finish_ok(str(sdk_path))
+        self._finish_ok(sdk)
 
     def _finish_ok(self, sdk_path):
         self._set_status("✅", "Android SDK is ready!",
@@ -1425,9 +1438,17 @@ class AndroidStudioPage(PageBase):
         if not has_emu: missing.append("emulator")
         if not has_avd: missing.append("avdmanager")
         if not has_sdk: missing.append("sdkmanager")
-        self._set_status("⚙", f"SDK found but incomplete — missing: {', '.join(missing)}",
-                         detail="Click the green button to finish the install.",
-                         color=YELLOW)
+        self._set_status(
+            "⚙",
+            f"SDK found but missing: {', '.join(missing)}",
+            detail="Click the button below to install the missing pieces.",
+            color=YELLOW,
+        )
+        self._install_btn.config(
+            state="normal",
+            text=f"⬇   Install Missing Tools ({', '.join(missing)})",
+            bg=YELLOW,
+        )
         self._ready = False
         return False
 

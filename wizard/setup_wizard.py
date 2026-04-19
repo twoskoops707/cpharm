@@ -339,7 +339,7 @@ def _run_sdkmanager(args, sdk, log_fn=None, timeout=900):
         return proc.returncode == 0, full
     except subprocess.TimeoutExpired:
         proc.kill()
-        return False, "sdkmanager timed out after timeout seconds"
+        return False, f"sdkmanager timed out after {timeout} seconds"
     except Exception as e:
         return False, str(e)
 
@@ -380,7 +380,7 @@ def create_avd(name, log_fn=None):
     # ── install system image ──────────────────────────────────────────────────
     if log_fn:
         log_fn(f"  Installing Android 14 image — this downloads ~1 GB, please wait…\n")
-    ok, out = _run_sdkmanager(["--install", image], sdk, log_fn=log_fn, timeout=1200)
+    ok, out = _run_sdkmanager([image], sdk, log_fn=log_fn, timeout=1200)
 
     if not ok:
         # Check if image actually landed despite non-zero exit (sdkmanager quirk)
@@ -621,11 +621,33 @@ class WelcomePage(PageBase):
                       "The wizard sets everything up automatically — just click Next on each screen.",
                  font=("Segoe UI", 12), bg=BG, fg=T2, justify="center").pack(pady=(0, 16))
 
-        # Architecture diagram
+        # Architecture diagram — canvas only; static content is packed below, NOT inside the callback
         c = tk.Canvas(self, bg=BG2, height=140,
                       highlightthickness=1, highlightbackground=BORDER)
         c.pack(fill="x", padx=16, pady=(0, 14))
         c.bind("<Configure>", lambda e: self._draw_diagram(c))
+
+        # Static "What you get:" section — built once here, never inside _draw_diagram
+        tk.Label(self, text="What you get:",
+                 font=("Segoe UI", 10, "bold"), bg=BG, fg=YELLOW,
+                 anchor="w").pack(fill="x", padx=4)
+        f = tk.Frame(self, bg=BG2, padx=16, pady=12)
+        f.pack(fill="x", pady=(4, 0))
+        items = [
+            ("🤖", "Multiple isolated Android phones — each its own world"),
+            ("🌐", "Each phone browses, taps, scrolls, installs apps via ADB"),
+            ("🔄", "New Android ID + different IP (Tor) on every session"),
+            ("📱", "Google Play closed testing — phones act like real registered devices"),
+            ("⚡", "Parallel groups — 5 phones test your app while 5 browse your site"),
+            ("🎯", "Works on Snapdragon ARM — uses Windows Hypervisor, no Intel needed"),
+        ]
+        for icon, text in items:
+            row = tk.Frame(f, bg=BG2)
+            row.pack(fill="x", pady=2)
+            tk.Label(row, text=icon, font=("Segoe UI", 12), bg=BG2,
+                     width=3).pack(side="left")
+            tk.Label(row, text=text, font=FB, bg=BG2, fg=T1,
+                     anchor="w").pack(side="left")
 
     def _draw_diagram(self, c):
         c.delete("all")
@@ -659,27 +681,6 @@ class WelcomePage(PageBase):
         c.create_text(w // 2, 125,
                       text="All on your Snapdragon Windows laptop  —  no extra hardware",
                       fill=T2, font=("Segoe UI", 9))
-
-        tk.Label(self, text="What you get:",
-                 font=("Segoe UI", 10, "bold"), bg=BG, fg=YELLOW,
-                 anchor="w").pack(fill="x", padx=4)
-        f = tk.Frame(self, bg=BG2, padx=16, pady=12)
-        f.pack(fill="x", pady=(4, 0))
-        items = [
-            ("🤖", "Multiple isolated Android phones — each its own world"),
-            ("🌐", "Each phone browses, taps, scrolls, installs apps via ADB"),
-            ("🔄", "New Android ID + different IP (Tor) on every session"),
-            ("📱", "Google Play closed testing — phones act like real registered devices"),
-            ("⚡", "Parallel groups — 5 phones test your app while 5 browse your site"),
-            ("🎯", "Works on Snapdragon ARM — uses Windows Hypervisor, no Intel needed"),
-        ]
-        for icon, text in items:
-            row = tk.Frame(f, bg=BG2)
-            row.pack(fill="x", pady=2)
-            tk.Label(row, text=icon, font=("Segoe UI", 12), bg=BG2,
-                     width=3).pack(side="left")
-            tk.Label(row, text=text, font=FB, bg=BG2, fg=T1,
-                     anchor="w").pack(side="left")
 
 
 # ─── page 2: prerequisites auto-install ──────────────────────────────────────
@@ -993,6 +994,8 @@ class PrerequisitesPage(PageBase):
             for member in tf.getmembers():
                 if member.name.startswith("tor/"):
                     member.name = member.name[len("tor/"):]
+                    if not member.name:
+                        continue
                     tf.extract(member, tor_dir)
         tmp.unlink(missing_ok=True)
 
@@ -1377,15 +1380,33 @@ class AndroidStudioPage(PageBase):
         self._set_progress(60, "Accepting licenses…")
         self._log(f"JAVA_HOME: {_find_java_home() or '(not found — Java required)'}")
 
-        # Accept all pending SDK licenses first — required before any --install on fresh SDK
+        # Accept all pending SDK licenses first — required before any install on fresh SDK
         self._log("Accepting SDK licenses…")
         _run_sdkmanager(["--licenses"], sdk, log_fn=self._log, timeout=60)
+
+        # Check what packages sdkmanager can actually see — if emulator doesn't show
+        # here it means the remote repo fetch is failing (network/proxy/TLS issue).
+        self._set_progress(63, "Checking available packages…")
+        self._log("Checking available packages (fetching remote catalog)…")
+        _, list_out = _run_sdkmanager(["--list", "--channel=0"], sdk, log_fn=None, timeout=90)
+        if list_out:
+            emulator_lines = [l for l in list_out.splitlines() if "emulator" in l.lower()]
+            if emulator_lines:
+                self._log(f"  emulator found in catalog: {emulator_lines[0].strip()}")
+            else:
+                self._log("  ⚠  'emulator' not found in catalog — remote repo may be unreachable.")
+                self._log("     Trying install anyway…")
+        else:
+            self._log("  ⚠  sdkmanager --list returned no output — network may be blocked.")
 
         self._set_progress(65, "Running sdkmanager…")
         self._log(f"Installing: {', '.join(missing)}")
 
+        # Use positional package args — NOT --install flag.
+        # The --install flag in newer cmdline-tools skips the remote catalog fetch
+        # and only searches locally, causing "Failed to find package emulator".
         ok, out = _run_sdkmanager(
-            ["--install"] + missing,
+            ["--channel=0"] + missing,
             sdk,
             log_fn=self._log,
             timeout=600,
@@ -1396,8 +1417,9 @@ class AndroidStudioPage(PageBase):
         if not Path(sdk_tool("emulator")).exists():
             self._log("\n❌  Emulator still not found after install.")
             self._log("    Check that JAVA_HOME was found above.")
-            self._log("    If Java shows as '(not found)', go back to Step 1 and re-run Install Everything.")
-            self._log("\n    Listing available packages to diagnose…")
+            self._log("    If the catalog check above showed '⚠ remote repo may be unreachable',")
+            self._log("    the issue is network/firewall — try disabling antivirus temporarily.")
+            self._log("\n    Available packages (first 40 lines):")
             _, pkg_out = _run_sdkmanager(["--list"], sdk, log_fn=None, timeout=60)
             if pkg_out:
                 for line in pkg_out.splitlines()[:40]:
@@ -1793,8 +1815,17 @@ class BootPage(PageBase):
             self._overall_lbl.config(
                 text=f"✅  {len(running)} phone(s) already running!",
                 fg=GREEN)
+            avds = state.get("avds", [])
             for d in running:
-                row_lbl = self._status_rows.get(d["name"])
+                # Status rows are keyed by AVD name, not ADB device model name.
+                # Derive AVD index from the emulator serial (emulator-5554 → idx 0, etc.)
+                try:
+                    port = int(d["serial"].split("-")[1])
+                    idx  = (port - 5554) // 2
+                    avd_name = avds[idx] if idx < len(avds) else None
+                except (IndexError, ValueError):
+                    avd_name = None
+                row_lbl = self._status_rows.get(avd_name) if avd_name else None
                 if row_lbl:
                     row_lbl.config(text="✅  Running", fg=GREEN)
 

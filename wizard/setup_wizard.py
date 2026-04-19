@@ -411,7 +411,7 @@ def _direct_download_platform_tools(sdk_path, log_fn=None):
             major=35, minor=0, micro=2,
             display="Android SDK Platform-Tools",
             license_ref="android-sdk-license",
-            ns_type="ns3:genericDetailsType",
+            ns_type="ns5:genericDetailsType",
             extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
         )
         if log_fn:
@@ -492,15 +492,7 @@ def _direct_download_emulator(sdk_path, log_fn=None):
         # sdkmanager reads localPackage format when scanning installed packages.
         # Write the correct localPackage package.xml so sdkmanager sees emulator
         # as installed and doesn't block system image install with a dependency error.
-        _write_local_package_xml(
-            emu_dest / "package.xml",
-            path_id="emulator",
-            major=36, minor=6, micro=4,
-            display="Android Emulator",
-            license_ref="android-sdk-license",
-            ns_type="ns3:genericDetailsType",
-            extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
-        )
+        _write_emulator_package_xml(emu_dest)
         _write_sdk_licenses(sdk_path)
         if log_fn:
             log_fn("  emulator installed ✅\n")
@@ -664,22 +656,14 @@ def _ensure_emulator_meta(sdk, log_fn=None):
             )
             # Also register the emulator as an installed package (path_id="emulator").
             # avdmanager checks for this before listing device profiles.
-            _write_local_package_xml(
-                emu_dir / "package.xml",
-                path_id="emulator",
-                major=36, minor=6, micro=4,
-                display="Android Emulator",
-                license_ref="android-sdk-license",
-                ns_type="ns3:genericDetailsType",
-                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
-            )
+            _write_emulator_package_xml(emu_dir)
             _write_local_package_xml(
                 meta_dest / "package.xml",
                 path_id="emulator;meta",
                 major=36, minor=6, micro=4,
                 display="Android Emulator Device Metadata",
                 license_ref="android-sdk-license",
-                ns_type="ns3:genericDetailsType",
+                ns_type="ns5:genericDetailsType",
                 extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
             )
             if log_fn:
@@ -1917,7 +1901,7 @@ class AndroidStudioPage(PageBase):
             major=16, minor=0, micro=0,
             display="Android SDK Command-line Tools (latest)",
             license_ref="android-sdk-license",
-            ns_type="ns3:genericDetailsType",
+            ns_type="ns5:genericDetailsType",
             extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
         )
         self._log("Extraction done ✅")
@@ -2078,22 +2062,14 @@ class AndroidStudioPage(PageBase):
 
             # Also register the emulator as an installed package (path_id="emulator").
             # avdmanager checks for this before listing device profiles.
-            _write_local_package_xml(
-                emu_dir / "package.xml",
-                path_id="emulator",
-                major=36, minor=6, micro=4,
-                display="Android Emulator",
-                license_ref="android-sdk-license",
-                ns_type="ns3:genericDetailsType",
-                extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
-            )
+            _write_emulator_package_xml(emu_dir)
             _write_local_package_xml(
                 meta_dir / "package.xml",
                 path_id="emulator;meta",
                 major=36, minor=6, micro=4,
                 display="Android Emulator Device Metadata",
                 license_ref="android-sdk-license",
-                ns_type="ns3:genericDetailsType",
+                ns_type="ns5:genericDetailsType",
                 extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
             )
             if log_fn:
@@ -2170,11 +2146,6 @@ class AndroidStudioPage(PageBase):
         manual = self._path_var.get().strip()
         if manual and Path(manual, "platform-tools").exists():
             state["sdk_path"] = manual
-        sdk = find_sdk()
-        if sdk:
-            state["sdk_path"] = sdk
-            self._path_var.set(sdk)
-
         sdk = state.get("sdk_path", "")
         if not sdk:
             self._set_status("⬇", "Android SDK not installed yet.",
@@ -2182,7 +2153,6 @@ class AndroidStudioPage(PageBase):
                              color=T2)
             self._ready = False
             return False
-
         has_emu = Path(sdk_tool("emulator")).exists()
         has_avd = Path(sdk_tool("avdmanager")).exists()
         has_sdk = Path(sdk_tool("sdkmanager")).exists()

@@ -193,10 +193,18 @@ def sdk_tool(name):
 
 
 def list_avds():
-    ok, out = run_cmd([sdk_tool("avdmanager"), "list", "avd", "-c"])
-    if not ok:
+    avdmgr = sdk_tool("avdmanager")
+    flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
+    try:
+        r = subprocess.run(
+            [avdmgr, "list", "avd", "-c"],
+            capture_output=True, text=True, timeout=30,
+            env=_sdk_env(), creationflags=flags,
+        )
+        return [ln.strip() for ln in r.stdout.splitlines()
+                if ln.strip() and not ln.startswith("Error")]
+    except Exception:
         return []
-    return [ln.strip() for ln in out.splitlines() if ln.strip() and not ln.startswith("Error")]
 
 
 def _find_java_home() -> str:
@@ -249,7 +257,8 @@ def _find_java_home() -> str:
 
 def _sdk_env() -> dict:
     """
-    Return a copy of os.environ with JAVA_HOME and PATH set so sdkmanager can find Java.
+    Return a copy of os.environ with JAVA_HOME, ANDROID_SDK_ROOT, and PATH set
+    so sdkmanager and avdmanager can find both Java and the SDK root.
     """
     env = os.environ.copy()
     java_home = _find_java_home()
@@ -257,6 +266,10 @@ def _sdk_env() -> dict:
         env["JAVA_HOME"] = java_home
         java_bin = str(Path(java_home) / "bin")
         env["PATH"] = java_bin + os.pathsep + env.get("PATH", "")
+    sdk = state.get("sdk_path") or find_sdk()
+    if sdk:
+        env["ANDROID_SDK_ROOT"] = sdk
+        env["ANDROID_HOME"]     = sdk
     return env
 
 
@@ -582,9 +595,10 @@ def _direct_download_system_image(arch, sdk_path, log_fn=None):
             ns_type="ns4:sysImgDetailsType",
             extra_ns='xmlns:ns4="http://schemas.android.com/sdk/android/repo/sys-img2/03"',
             extra_details=(
-                f"<api-level>34</api-level>"
-                f"<tag><id>google_apis</id><display>Google APIs</display></tag>"
-                f"<abi>{arch}</abi>"
+                f"<ns4:api-level>34</ns4:api-level>"
+                f"<ns4:tag><ns4:id>google_apis</ns4:id>"
+                f"<ns4:display>Google APIs</ns4:display></ns4:tag>"
+                f"<ns4:abi>{arch}</ns4:abi>"
             ),
         )
         if log_fn:
@@ -747,31 +761,57 @@ def create_avd(name, log_fn=None):
     return False, last_err or "avdmanager failed with all device profiles"
 
 
+def _whpx_available() -> bool:
+    """Check if Windows Hypervisor Platform is enabled (required for ARM64 emulation)."""
+    if not IS_WIN:
+        return False
+    try:
+        r = subprocess.run(
+            ["powershell", "-Command",
+             "(Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform).State"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        return "Enabled" in r.stdout
+    except Exception:
+        return False
+
+
 def start_emulator(avd_name, port):
     emu   = sdk_tool("emulator")
     flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
+    env   = _sdk_env()
 
-    # -accel whpx   — Windows Hypervisor Platform (required on ARM64; HAXM doesn't exist)
-    # -gpu swiftshader_indirect — software renderer; prevents GPU crash on ARM without Vulkan
-    # -no-snapshot-save         — don't save state on shutdown (faster)
-    # -no-boot-anim             — skip boot animation (boots faster)
+    # -accel whpx   — Windows Hypervisor Platform (ARM64 Snapdragon; HAXM is Intel-only)
+    # -gpu swiftshader_indirect — software renderer; prevents GPU crash without Vulkan
+    # -no-snapshot-save         — don't save state on shutdown (faster, cleaner)
+    # -no-boot-anim             — skip boot animation (faster boot)
     # -no-audio                 — prevent audio device errors on ARM
-    # -wipe-data                — start with clean userdata every run
-    accel = ["-accel", "whpx"] if IS_WIN else ["-accel", "auto"]
-    proc  = subprocess.Popen(
+    # -wipe-data                — start with clean userdata (fresh identity each run)
+    if IS_WIN:
+        accel = ["-accel", "whpx"] if _whpx_available() else ["-accel", "auto"]
+    else:
+        accel = ["-accel", "auto"]
+
+    log_dir = Path(os.environ.get("TEMP", "C:\\Temp"))
+    log_file = open(log_dir / f"cpharm_emu_{avd_name}.log", "w")
+
+    proc = subprocess.Popen(
         [emu, "-avd", avd_name, "-port", str(port)]
         + accel
         + ["-gpu", "swiftshader_indirect",
            "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=log_file,
+        env=env,
         creationflags=flags,
     )
+    proc._log_file = log_file
     return proc
 
 
-def wait_for_boot(serial, timeout=240):
-    adb("wait-for-device", serial=serial, timeout=30)
+def wait_for_boot(serial, timeout=300):
+    adb("wait-for-device", serial=serial, timeout=timeout)
     deadline = time.time() + timeout
     while time.time() < deadline:
         out = adb("shell", "getprop", "sys.boot_completed", serial=serial)
@@ -1185,17 +1225,10 @@ class PrerequisitesPage(PageBase):
     # ── checks ────────────────────────────────────────────────────────────────
 
     def _check_java(self) -> bool:
-        ok, _ = run_cmd(["java", "-version"])
-        if ok:
+        if bool(_find_java_home()):
             return True
-        for pattern in [
-            os.path.join(os.environ.get("PROGRAMFILES", ""), "**", "java.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "**", "java.exe"),
-        ]:
-            import glob
-            if glob.glob(pattern, recursive=True):
-                return True
-        return False
+        ok, _ = run_cmd(["java", "-version"])
+        return ok
 
     def _check_python(self) -> bool:
         return bool(_find_python())
@@ -2316,10 +2349,9 @@ class BootPage(PageBase):
                 self._log_write(f"  Waiting for {avd} to finish booting…\n")
                 ok = wait_for_boot(serial)
                 if not ok:
-                    # First timeout: give it one more round before giving up
-                    self._log_write(f"  ⚠  {avd} slow to boot — waiting extra 2 min…\n")
+                    self._log_write(f"  ⚠  {avd} slow to boot — waiting extra 3 min…\n")
                     self._status_rows[avd].config(text="⏳  Retrying…", fg=YELLOW)
-                    ok = wait_for_boot(serial, timeout=120)
+                    ok = wait_for_boot(serial, timeout=180)
                 if ok:
                     new_id = rotate_android_id(serial)
                     phones.append({"serial": serial, "name": avd})
@@ -2327,9 +2359,12 @@ class BootPage(PageBase):
                     self._log_write(f"  ✅  {avd} ready! Android ID: {new_id[:8]}…\n")
                 else:
                     self._status_rows[avd].config(text="❌  Timed out", fg=RED)
+                    log_path = Path(os.environ.get("TEMP", "C:\\Temp")) / f"cpharm_emu_{avd}.log"
                     self._log_write(
-                        f"  ❌  {avd} didn't boot. It may be running but slow.\n"
-                        f"      Check the emulator window, then click 'Start All Phones' again.\n"
+                        f"  ❌  {avd} didn't boot in time.\n"
+                        f"      Emulator log: {log_path}\n"
+                        f"      If log says 'WHPX not available', enable it:\n"
+                        f"      Settings → Turn Windows features on → Windows Hypervisor Platform ✓\n"
                     )
 
             state["phones"] = phones
@@ -2345,8 +2380,13 @@ class BootPage(PageBase):
 
     def _stop_all(self):
         for proc in state.get("_emu_procs", []):
-            try: proc.terminate()
-            except Exception: pass
+            try:
+                proc.terminate()
+                lf = getattr(proc, "_log_file", None)
+                if lf:
+                    lf.close()
+            except Exception:
+                pass
         state["_emu_procs"] = []
         state["phones"]     = []
         for lbl in self._status_rows.values():

@@ -1,6 +1,6 @@
 """
-CPharm v2 Dashboard — ADB-native backend, works with any Android device.
-No LDPlayer required. BlueStacks, Genymotion, MEmu, NOX, real phones — all work.
+CPharm Dashboard — ADB-native backend.
+Works with any Android device: AVD emulators, BlueStacks, Genymotion, MEmu, NOX, real phones.
 """
 
 import asyncio
@@ -24,7 +24,7 @@ from websockets.server import serve
 import tor_manager
 import teach as teach_mod
 import playstore as ps_mod
-from config import LDPLAYER, PORT, WS_PORT, APK_DIR, EMULATOR_PORTS
+from config import PORT, WS_PORT, APK_DIR, EMULATOR_PORTS
 
 logging.basicConfig(level=logging.INFO, format="  %(message)s")
 log = logging.getLogger("cpharm")
@@ -52,8 +52,6 @@ SCRIPT_DIR     = Path(__file__).parent
 HTML_FILE      = SCRIPT_DIR / "dashboard.html"
 PLAYSTORE_FILE = SCRIPT_DIR / "playstore.html"
 
-_ld_available = Path(LDPLAYER).exists()
-
 
 # ── ADB helpers ───────────────────────────────────────────────────────────────
 
@@ -67,16 +65,6 @@ def _adb(serial: str, *args, timeout: int = 15) -> str:
         log.warning("adb error [%s]: %s", serial, e)
         return ""
 
-
-def _ld(*args) -> str:
-    from pathlib import Path as _P
-    if not _P(LDPLAYER).exists():
-        return ""
-    try:
-        r = subprocess.run([LDPLAYER, *args], capture_output=True, text=True, timeout=30)
-        return r.stdout.strip()
-    except Exception:
-        return ""
 
 
 def _adb_global(*args, timeout: int = 10) -> str:
@@ -586,51 +574,6 @@ async def handle_post(path: str, body: bytes) -> bytes:
         await broadcast({"type": "log", "msg": "Tor turned off — phones using normal connection"})
         return json_ok({"ok": True})
 
-    # ── LDPlayer controls (optional — only works if LDPlayer is installed) ──
-    if path == "/api/ldplayer/available":
-        from pathlib import Path as _P
-        ok = _P(LDPLAYER).exists()
-        return json_ok({"available": ok, "path": LDPLAYER if ok else ""})
-
-    if path == "/api/ldplayer/list":
-        raw = _ld("list2")
-        vms = []
-        for line in raw.splitlines():
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) >= 2 and parts[0].isdigit():
-                vms.append({"index": int(parts[0]), "name": parts[1]})
-        return json_ok({"vms": vms})
-
-    if path == "/api/ldplayer/start":
-        idx = int(data.get("index", 0))
-        _ld("launch", "--index", str(idx))
-        await broadcast({"type": "log", "msg": f"LDPlayer: starting VM {idx}"})
-        return json_ok({"ok": True})
-
-    if path == "/api/ldplayer/stop":
-        idx = int(data.get("index", 0))
-        _ld("quit", "--index", str(idx))
-        await broadcast({"type": "log", "msg": f"LDPlayer: stopped VM {idx}"})
-        return json_ok({"ok": True})
-
-    if path == "/api/ldplayer/clone":
-        src_idx  = int(data.get("from_index", 0))
-        count    = min(int(data.get("count", 1)), 20)
-        loop     = asyncio.get_event_loop()
-
-        def do_clone():
-            for i in range(count):
-                _ld("copy", "--index", str(src_idx + i + 1), "--from", str(src_idx))
-                asyncio.run_coroutine_threadsafe(
-                    broadcast({"type": "log",
-                               "msg": f"LDPlayer: cloned VM {src_idx} → VM {src_idx + i + 1}"}),
-                    loop)
-            asyncio.run_coroutine_threadsafe(
-                broadcast({"type": "log", "msg": f"LDPlayer: {count} clone(s) ready"}), loop)
-
-        threading.Thread(target=do_clone, daemon=True).start()
-        return json_ok({"ok": True})
-
     # ── Groups: run different sequences on different phone sets in parallel ──
     if path == "/api/groups/run":
         raw_groups = data.get("groups")
@@ -919,10 +862,6 @@ async def main():
     print(f"  ║                                          ║")
     print(f"  ║   Press Ctrl+C to stop                   ║")
     print(f"  ╚══════════════════════════════════════════╝\n")
-
-    if not _ld_available:
-        print("  (LDPlayer not found — using ADB-only mode)")
-        print("  Connect BlueStacks, a real phone, or any emulator and it will appear.\n")
 
     async with http_server, ws_server:
         await asyncio.gather(

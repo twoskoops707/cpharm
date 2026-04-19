@@ -679,7 +679,35 @@ def create_avd(name, log_fn=None):
         log_fn(f"\n  Creating AVD: {name}…\n")
 
     flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
-    device_profiles = ["pixel_6", "pixel_5", "pixel", "Nexus 6"]
+
+    # Discover device IDs that are actually present in this SDK installation.
+    # Never guess IDs — avdmanager -d is case-sensitive and varies between SDK versions.
+    try:
+        r = subprocess.run(
+            [avdmgr, "list", "device", "-c"],
+            capture_output=True, text=True, timeout=30,
+            env=_sdk_env(), creationflags=flags,
+        )
+        all_ids = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+    except Exception:
+        all_ids = []
+
+    # Preferred device IDs in priority order — use the first one that exists in this SDK.
+    preferred = ["pixel_6", "pixel_5", "pixel_4", "pixel_3", "pixel_2",
+                 "pixel_xl", "pixel", "nexus_6p", "nexus_6", "nexus_5"]
+    device_profiles = [d for d in preferred if d in all_ids]
+
+    # If none of our preferred IDs exist, fall back to the first available device
+    if not device_profiles and all_ids:
+        device_profiles = [all_ids[0]]
+
+    if not device_profiles:
+        device_profiles = ["pixel_6"]   # last resort — avdmanager will give a clear error
+
+    if log_fn:
+        log_fn(f"  Available device IDs (first 5): {all_ids[:5]}\n")
+        log_fn(f"  Will try: {device_profiles}\n")
+
     last_err = ""
     for device in device_profiles:
         if log_fn:
@@ -718,9 +746,19 @@ def create_avd(name, log_fn=None):
 def start_emulator(avd_name, port):
     emu   = sdk_tool("emulator")
     flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
+
+    # -accel whpx   — Windows Hypervisor Platform (required on ARM64; HAXM doesn't exist)
+    # -gpu swiftshader_indirect — software renderer; prevents GPU crash on ARM without Vulkan
+    # -no-snapshot-save         — don't save state on shutdown (faster)
+    # -no-boot-anim             — skip boot animation (boots faster)
+    # -no-audio                 — prevent audio device errors on ARM
+    # -wipe-data                — start with clean userdata every run
+    accel = ["-accel", "whpx"] if IS_WIN else ["-accel", "auto"]
     proc  = subprocess.Popen(
-        [emu, "-avd", avd_name, "-port", str(port),
-         "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"],
+        [emu, "-avd", avd_name, "-port", str(port)]
+        + accel
+        + ["-gpu", "swiftshader_indirect",
+           "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=flags,

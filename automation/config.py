@@ -6,12 +6,9 @@ APK_DIR = Path(__file__).parent.parent / "apks"
 REC_DIR = Path(__file__).parent / "recordings"
 TOR_DIR = Path(__file__).parent / "tor"
 
-# LDPlayer path — optional, only used for clone/start/stop if installed
-LDPLAYER = r"C:\LDPlayer\LDPlayer9\ldconsole.exe"
-
-# ADB ports to auto-connect on startup (covers most popular emulators)
+# ADB ports to auto-connect on startup (covers common emulators)
 EMULATOR_PORTS = [
-    ("127.0.0.1", 5555),   # BlueStacks 5, Genymotion, LDPlayer ADB
+    ("127.0.0.1", 5555),   # BlueStacks 5, Genymotion, AVD default
     ("127.0.0.1", 5565),   # BlueStacks instance 2
     ("127.0.0.1", 5575),   # BlueStacks instance 3
     ("127.0.0.1", 5585),   # BlueStacks instance 4

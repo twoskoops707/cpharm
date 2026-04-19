@@ -1,7 +1,7 @@
 """
 Tor Manager — one Tor circuit per phone.
-Each phone gets its own SOCKS5 port so websites see a different country per phone.
-Also sets a unique MAC address and IMEI on each phone via LDPlayer.
+Each phone gets its own SOCKS5 port so websites see a different IP per phone.
+Works with any ADB-connected device (real phone, AVD, BlueStacks, etc.).
 """
 
 import os
@@ -11,7 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from config import LDPLAYER, TOR_DIR
+from config import TOR_DIR
 
 BASE_PORT = 9050
 _tor_procs: dict[int, subprocess.Popen] = {}
@@ -38,14 +38,6 @@ def _random_imei() -> str:
     return "".join(map(str, digits)) + str(check)
 
 
-def _ld(*args) -> str:
-    try:
-        r = subprocess.run([LDPLAYER, *args], capture_output=True, text=True, timeout=20)
-        return r.stdout.strip()
-    except Exception as e:
-        return f"ERROR: {e}"
-
-
 def _tor_browser_running() -> bool:
     """Check if Tor Browser's Tor is already running on 9150."""
     import socket
@@ -59,10 +51,9 @@ def _tor_browser_running() -> bool:
 def start_tor_for_phone(phone_idx: int) -> int:
     """Start a Tor process for this phone. Returns the SOCKS5 port.
 
-    If Tor Browser is already running (port 9150), reuse it — no setup needed.
+    If Tor Browser is already running (port 9150), reuse it.
     Otherwise start a standalone Tor process per phone.
     """
-    # Reuse Tor Browser if it's already running — simplest setup path
     if _tor_browser_running():
         return 9150
 
@@ -95,22 +86,6 @@ def start_tor_for_phone(phone_idx: int) -> int:
     return socks_port
 
 
-def apply_identity(phone_idx: int) -> dict:
-    """Spoof MAC and IMEI on the phone via LDPlayer, return identity info."""
-    mac  = _random_mac()
-    imei = _random_imei()
-    _ld("modify", "--index", str(phone_idx), "--imei", imei, "--mac", mac)
-    return {"mac": mac, "imei": imei, "socks_port": BASE_PORT + phone_idx}
-
-
-def apply_proxy(phone_idx: int):
-    """Tell LDPlayer to route this phone through its Tor SOCKS5 port."""
-    port = BASE_PORT + phone_idx
-    _ld("modify", "--index", str(phone_idx),
-        "--proxy-host", "127.0.0.1",
-        "--proxy-port", str(port))
-
-
 def _send_tor_newnym(ctrl_port: int) -> bool:
     """Send NEWNYM signal to Tor control port to get a fresh circuit."""
     import socket
@@ -127,9 +102,9 @@ def _send_tor_newnym(ctrl_port: int) -> bool:
 
 def apply_identity_adb(serial: str, phone_idx: int) -> dict:
     """
-    Route this phone's traffic through its Tor SOCKS5 port.
-    Uses Android global proxy setting (HTTP/HTTPS traffic only).
-    For full SOCKS5 routing, the app must support proxies or use ProxyDroid (rooted).
+    Route this phone's traffic through its Tor SOCKS5 port via Android global proxy.
+    Note: Android global proxy only covers HTTP/HTTPS traffic.
+    Full SOCKS5 routing requires the app to support proxies natively.
     """
     port = BASE_PORT + phone_idx
     try:
@@ -145,10 +120,9 @@ def apply_identity_adb(serial: str, phone_idx: int) -> dict:
 
 def rotate_identity_adb(serial: str, phone_idx: int) -> dict:
     """
-    Rotate this phone's identity after a session ends:
+    Rotate this phone's identity:
     1. Request a new Tor circuit (new exit IP).
     2. Clear and re-apply the proxy so Android picks up the new circuit.
-    Returns info about the new identity.
     """
     ctrl_port = BASE_PORT + 1000 + phone_idx
     rotated   = _send_tor_newnym(ctrl_port)
@@ -156,20 +130,6 @@ def rotate_identity_adb(serial: str, phone_idx: int) -> dict:
     result = apply_identity_adb(serial, phone_idx)
     result["circuit_rotated"] = rotated
     return result
-
-
-def rotate_identity_ldplayer(phone_idx: int) -> dict:
-    """
-    Rotate LDPlayer phone identity: new MAC, IMEI, and Tor circuit.
-    """
-    ctrl_port = BASE_PORT + 1000 + phone_idx
-    _send_tor_newnym(ctrl_port)
-    time.sleep(1)
-    mac  = _random_mac()
-    imei = _random_imei()
-    _ld("modify", "--index", str(phone_idx), "--imei", imei, "--mac", mac)
-    apply_proxy(phone_idx)
-    return {"mac": mac, "imei": imei, "socks_port": BASE_PORT + phone_idx, "circuit_rotated": True}
 
 
 def wait_for_tor(phone_idx: int, timeout: int = 30) -> bool:

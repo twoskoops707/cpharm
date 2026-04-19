@@ -37,12 +37,15 @@ REPO_URL            = "https://github.com/twoskoops707/cpharm.git"
 DASHBOARD_PORT      = 8080
 IS_WIN              = platform.system() == "Windows"
 
-CMDLINE_TOOLS_URL   = "https://dl.google.com/android/repository/commandlinetools-win-14742923_latest.zip"
-SDK_DEFAULT_PATH    = os.path.join(os.environ.get("LOCALAPPDATA", "C:\\"), "Android", "Sdk")
-JAVA_DOWNLOAD_URL   = "https://aka.ms/download-jdk/microsoft-jdk-21-windows-aarch64.msi"
+CMDLINE_TOOLS_URL        = "https://dl.google.com/android/repository/commandlinetools-win-14742923_latest.zip"
+CMDLINE_TOOLS_URL_ALT    = "https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip"
+SDK_DEFAULT_PATH         = os.path.join(os.environ.get("LOCALAPPDATA", "C:\\"), "Android", "Sdk")
+JAVA_DOWNLOAD_URL        = "https://aka.ms/download-jdk/microsoft-jdk-21-windows-aarch64.msi"
+JAVA_DOWNLOAD_URL_X64    = "https://aka.ms/download-jdk/microsoft-jdk-21-windows-x64.msi"
 
 # ── prerequisite download URLs ────────────────────────────────────────────────
 PYTHON_URL        = "https://www.python.org/ftp/python/3.13.0/python-3.13.0-arm64.exe"
+PYTHON_URL_X64    = "https://www.python.org/ftp/python/3.13.0/python-3.13.0-amd64.exe"
 TOR_FALLBACK_URL  = "https://dist.torproject.org/torbrowser/14.0.9/tor-expert-bundle-windows-x86_64-14.0.9.tar.gz"
 CPHARM_ZIP_URL    = "https://github.com/twoskoops707/cpharm/archive/refs/heads/master.zip"
 CPHARM_DEFAULT    = os.path.join(os.path.expanduser("~"), "CPharm")
@@ -439,7 +442,7 @@ def _direct_download_emulator(sdk_path, log_fn=None):
         # as installed and doesn't block system image install with a dependency error.
         _write_local_package_xml(
             Path(sdk_path) / "emulator" / "package.xml",
-            path="emulator",
+            path_id="emulator",
             major=36, minor=6, micro=4,
             display="Android Emulator",
             license_ref="android-sdk-preview-license",
@@ -649,31 +652,40 @@ def create_avd(name, log_fn=None):
         log_fn(f"\n  Creating AVD: {name}…\n")
 
     flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
-    proc  = subprocess.Popen(
-        [avdmgr, "create", "avd", "-n", name,
-         "-k", image, "-d", "pixel_6", "--force"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=_sdk_env(),
-        creationflags=flags,
-    )
-    try:
-        stdout, stderr = proc.communicate(input="no\n", timeout=120)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        return False, "avdmanager timed out"
-
-    combined = (stdout + stderr).strip()
-    if log_fn and combined:
-        log_fn(combined + "\n")
-
-    if proc.returncode == 0:
+    device_profiles = ["pixel_6", "pixel_5", "pixel", "Nexus 6"]
+    last_err = ""
+    for device in device_profiles:
         if log_fn:
-            log_fn(f"  ✅  {name} created.\n")
-        return True, ""
-    return False, combined or "avdmanager returned non-zero exit code"
+            log_fn(f"  Trying device profile: {device}\n")
+        proc = subprocess.Popen(
+            [avdmgr, "create", "avd", "-n", name,
+             "-k", image, "-d", device, "--force"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=_sdk_env(),
+            creationflags=flags,
+        )
+        try:
+            stdout, stderr = proc.communicate(input="no\n", timeout=120)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            return False, "avdmanager timed out"
+
+        combined = (stdout + stderr).strip()
+        if log_fn and combined:
+            log_fn(combined + "\n")
+
+        if proc.returncode == 0:
+            if log_fn:
+                log_fn(f"  ✅  {name} created (device: {device}).\n")
+            return True, ""
+        last_err = combined
+        if log_fn:
+            log_fn(f"  Device profile '{device}' failed — trying next…\n")
+
+    return False, last_err or "avdmanager failed with all device profiles"
 
 
 def start_emulator(avd_name, port):
@@ -681,7 +693,7 @@ def start_emulator(avd_name, port):
     flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
     proc  = subprocess.Popen(
         [emu, "-avd", avd_name, "-port", str(port),
-         "-no-snapshot-save", "-no-boot-anim", "-wipe-data"],
+         "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=flags,
@@ -1077,7 +1089,7 @@ class PrerequisitesPage(PageBase):
 
     def _log(self, text):
         self._log_box.config(state="normal")
-        self._log_box.insert("end", text + "\n")
+        self._log_box.insert("end", text if text.endswith("\n") else text + "\n")
         self._log_box.see("end")
         self._log_box.config(state="disabled")
 
@@ -1171,61 +1183,85 @@ class PrerequisitesPage(PageBase):
     # ── installers ────────────────────────────────────────────────────────────
 
     def _install_java(self):
-        self._set_row("java", "⬇  Downloading…", ACCENT)
-        self._log("Downloading Java JDK 21 (ARM64)…")
-        tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / "microsoft-jdk-21-arm64.msi"
-        self._download(JAVA_DOWNLOAD_URL, tmp, "Java JDK", 2, 18)
-        self._set_row("java", "⚙  Installing…", YELLOW)
-        self._log("Installing Java (silent, no restart)…")
-        ok, out = run_cmd(
-            ["msiexec", "/i", str(tmp), "/quiet", "/norestart"],
-            timeout=300,
-        )
-        tmp.unlink(missing_ok=True)
-        if ok or self._check_java():
-            self._set_row("java", "✅  Done", GREEN)
-            self._log("Java installed ✅")
-        else:
-            self._set_row("java", "❌  Failed", RED)
-            self._log(f"Java install failed: {out[-200:]}")
+        for label, url, fname in [
+            ("ARM64", JAVA_DOWNLOAD_URL,     "microsoft-jdk-21-arm64.msi"),
+            ("x64",   JAVA_DOWNLOAD_URL_X64, "microsoft-jdk-21-x64.msi"),
+        ]:
+            self._set_row("java", f"⬇  Downloading ({label})…", ACCENT)
+            self._log(f"Downloading Java JDK 21 ({label})…")
+            tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / fname
+            try:
+                self._download(url, tmp, f"Java JDK ({label})", 2, 18)
+            except Exception as e:
+                self._log(f"  Download failed ({label}): {e}")
+                tmp.unlink(missing_ok=True)
+                continue
+            self._set_row("java", "⚙  Installing…", YELLOW)
+            self._log(f"Installing Java {label} (silent, no restart)…")
+            ok, out = run_cmd(
+                ["msiexec", "/i", str(tmp), "/quiet", "/norestart"],
+                timeout=300,
+            )
+            tmp.unlink(missing_ok=True)
+            if ok or self._check_java():
+                self._set_row("java", "✅  Done", GREEN)
+                self._log(f"Java installed ✅  ({label})")
+                return
+            self._log(f"  Install failed ({label}): {out[-200:]}")
+        self._set_row("java", "❌  Failed", RED)
+        self._log("Java install failed on both ARM64 and x64 installers.")
+        self._log(f"Manual download:  {JAVA_DOWNLOAD_URL}")
+        self.after(0, self._show_java_button)
 
     def _install_python(self):
-        self._set_row("python", "⬇  Downloading…", ACCENT)
-        self._log("Downloading Python 3.13 (ARM64)…")
-        tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / "python-3.13-arm64.exe"
-        self._download(PYTHON_URL, tmp, "Python", 20, 36)
-        self._set_row("python", "⚙  Installing…", YELLOW)
-        self._log("Installing Python (no admin needed, adds to PATH)…")
-        ok, out = run_cmd(
-            [str(tmp), "/quiet",
-             "InstallAllUsers=0", "PrependPath=1", "Include_launcher=0"],
-            timeout=300,
-        )
-        tmp.unlink(missing_ok=True)
-        if ok or self._check_python():
-            state["python_cmd"] = _find_python() or "python"
-            self._set_row("python", "✅  Done", GREEN)
-            self._log(f"Python installed ✅  ({state['python_cmd']})")
-        else:
-            self._set_row("python", "❌  Failed", RED)
-            self._log(f"Python install failed: {out[-200:]}")
+        for label, url, fname in [
+            ("ARM64", PYTHON_URL,     "python-3.13-arm64.exe"),
+            ("x64",   PYTHON_URL_X64, "python-3.13-x64.exe"),
+        ]:
+            self._set_row("python", f"⬇  Downloading ({label})…", ACCENT)
+            self._log(f"Downloading Python 3.13 ({label})…")
+            tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / fname
+            try:
+                self._download(url, tmp, f"Python ({label})", 20, 36)
+            except Exception as e:
+                self._log(f"  Download failed ({label}): {e}")
+                tmp.unlink(missing_ok=True)
+                continue
+            self._set_row("python", "⚙  Installing…", YELLOW)
+            self._log(f"Installing Python {label}…")
+            ok, out = run_cmd(
+                [str(tmp), "/quiet",
+                 "InstallAllUsers=0", "PrependPath=1", "Include_launcher=0"],
+                timeout=300,
+            )
+            tmp.unlink(missing_ok=True)
+            if ok or self._check_python():
+                state["python_cmd"] = _find_python() or "python"
+                self._set_row("python", "✅  Done", GREEN)
+                self._log(f"Python installed ✅  ({state['python_cmd']})")
+                return
+            self._log(f"  Install failed ({label}): {out[-200:]}")
+        self._set_row("python", "❌  Failed", RED)
+        self._log("Python install failed on both ARM64 and x64 installers.")
 
     def _install_packages(self):
         py = _find_python() or "python"
         state["python_cmd"] = py
         self._set_row("packages", "⚙  Installing…", YELLOW)
         self._set_progress(55, "Installing Python packages…")
-        self._log("Running: pip install websockets psutil…")
-        ok, out = run_cmd(
-            [py, "-m", "pip", "install", "--upgrade", "websockets", "psutil"],
-            timeout=120,
-        )
-        if ok or self._check_packages():
-            self._set_row("packages", "✅  Done", GREEN)
-            self._log("Packages installed ✅")
-        else:
-            self._set_row("packages", "❌  Failed", RED)
-            self._log(f"pip failed: {out[-300:]}")
+        for extra, label in [([], "global"), (["--user"], "--user fallback")]:
+            self._log(f"Running: pip install websockets psutil {' '.join(extra)}…")
+            ok, out = run_cmd(
+                [py, "-m", "pip", "install", "--upgrade"] + extra + ["websockets", "psutil"],
+                timeout=120,
+            )
+            if ok or self._check_packages():
+                self._set_row("packages", "✅  Done", GREEN)
+                self._log(f"Packages installed ✅  ({label})")
+                return
+            self._log(f"  pip {label} failed: {out[-200:]}")
+        self._set_row("packages", "❌  Failed", RED)
+        self._log("pip failed both globally and with --user.\nTry running: pip install websockets psutil  in a terminal.")
 
     def _install_tor(self):
         install_dir = Path(state.get("cpharm_dir", "") or self._install_dir.get())
@@ -1269,31 +1305,53 @@ class PrerequisitesPage(PageBase):
         self._set_row("cpharm", "⬇  Downloading…", ACCENT)
         self._log("Downloading CPharm files from GitHub…")
         tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / "cpharm.zip"
-        self._download(CPHARM_ZIP_URL, tmp, "CPharm", 76, 88)
+        zip_ok = True
+        try:
+            self._download(CPHARM_ZIP_URL, tmp, "CPharm", 76, 88)
+        except Exception as e:
+            self._log(f"  ZIP download failed: {e}")
+            zip_ok = False
 
-        self._set_row("cpharm", "📦  Extracting…", YELLOW)
-        self._log(f"Extracting to {install_dir}…")
-        extract_tmp = install_dir.parent / "_cpharm_extract"
-        if extract_tmp.exists():
-            shutil.rmtree(extract_tmp)
-        with zipfile.ZipFile(tmp, "r") as zf:
-            zf.extractall(extract_tmp)
-        tmp.unlink(missing_ok=True)
-
-        inner = next(extract_tmp.iterdir(), None)
-        if inner and inner.is_dir():
-            if install_dir.exists():
-                shutil.rmtree(install_dir)
-            shutil.move(str(inner), str(install_dir))
-        shutil.rmtree(extract_tmp, ignore_errors=True)
+        if zip_ok:
+            self._set_row("cpharm", "📦  Extracting…", YELLOW)
+            self._log(f"Extracting to {install_dir}…")
+            extract_tmp = install_dir.parent / "_cpharm_extract"
+            if extract_tmp.exists():
+                shutil.rmtree(extract_tmp)
+            try:
+                with zipfile.ZipFile(tmp, "r") as zf:
+                    zf.extractall(extract_tmp)
+                tmp.unlink(missing_ok=True)
+                inner = next(extract_tmp.iterdir(), None)
+                if inner and inner.is_dir():
+                    if install_dir.exists():
+                        shutil.rmtree(install_dir)
+                    shutil.move(str(inner), str(install_dir))
+                shutil.rmtree(extract_tmp, ignore_errors=True)
+            except Exception as e:
+                self._log(f"  Extraction failed: {e}")
+                zip_ok = False
 
         if (install_dir / "automation" / "dashboard.py").exists():
             state["cpharm_dir"] = str(install_dir)
             self._set_row("cpharm", "✅  Done", GREEN)
             self._log(f"CPharm installed at {install_dir} ✅")
+            return
+
+        self._log("  ZIP method failed — trying git clone fallback…")
+        self._set_row("cpharm", "⬇  git clone…", YELLOW)
+        ok, out = run_cmd(
+            ["git", "clone", REPO_URL, str(install_dir)],
+            timeout=120,
+        )
+        if ok or (install_dir / "automation" / "dashboard.py").exists():
+            state["cpharm_dir"] = str(install_dir)
+            self._set_row("cpharm", "✅  Done", GREEN)
+            self._log(f"CPharm installed via git clone ✅")
         else:
             self._set_row("cpharm", "❌  Failed", RED)
-            self._log("CPharm files not found after extraction.")
+            self._log("Both ZIP download and git clone failed.")
+            self._log(f"Manual: git clone {REPO_URL} \"{install_dir}\"")
 
     # ── main install flow ─────────────────────────────────────────────────────
 
@@ -1477,7 +1535,7 @@ class AndroidStudioPage(PageBase):
 
     def _log(self, text):
         self._log_box.config(state="normal")
-        self._log_box.insert("end", text + "\n")
+        self._log_box.insert("end", text if text.endswith("\n") else text + "\n")
         self._log_box.see("end")
         self._log_box.config(state="disabled")
 
@@ -1568,7 +1626,6 @@ class AndroidStudioPage(PageBase):
             self._set_status("⬇", "Downloading Android SDK tools…",
                              detail="~130 MB — this takes a minute on slow connections.",
                              color=ACCENT)
-            self._log(f"Downloading from:\n  {CMDLINE_TOOLS_URL}")
 
             def _progress_hook(block_num, block_size, total_size):
                 if total_size > 0:
@@ -1577,10 +1634,19 @@ class AndroidStudioPage(PageBase):
                     mb_total = total_size / 1_048_576
                     self._set_progress(pct, f"Downloading…  {mb_done:.0f} / {mb_total:.0f} MB")
 
-            try:
-                urllib.request.urlretrieve(CMDLINE_TOOLS_URL, zip_path, _progress_hook)
-            except Exception as e:
-                self._log(f"Download failed: {e}")
+            downloaded = False
+            for try_url in [CMDLINE_TOOLS_URL, CMDLINE_TOOLS_URL_ALT]:
+                self._log(f"Downloading from:\n  {try_url}")
+                try:
+                    urllib.request.urlretrieve(try_url, zip_path, _progress_hook)
+                    downloaded = True
+                    break
+                except Exception as e:
+                    self._log(f"  Failed ({try_url}): {e}")
+                    zip_path.unlink(missing_ok=True)
+
+            if not downloaded:
+                self._log("Both cmdline-tools URLs failed.")
                 self._set_status("❌", "Download failed — check internet connection.", color=RED)
                 self._set_progress(0, "")
                 return
@@ -2166,6 +2232,11 @@ class BootPage(PageBase):
                 self._status_rows[avd].config(text="⏳  Booting…", fg=YELLOW)
                 self._log_write(f"  Waiting for {avd} to finish booting…\n")
                 ok = wait_for_boot(serial)
+                if not ok:
+                    # First timeout: give it one more round before giving up
+                    self._log_write(f"  ⚠  {avd} slow to boot — waiting extra 2 min…\n")
+                    self._status_rows[avd].config(text="⏳  Retrying…", fg=YELLOW)
+                    ok = wait_for_boot(serial, timeout=120)
                 if ok:
                     new_id = rotate_android_id(serial)
                     phones.append({"serial": serial, "name": avd})
@@ -2173,7 +2244,10 @@ class BootPage(PageBase):
                     self._log_write(f"  ✅  {avd} ready! Android ID: {new_id[:8]}…\n")
                 else:
                     self._status_rows[avd].config(text="❌  Timed out", fg=RED)
-                    self._log_write(f"  ❌  {avd} didn't boot in time.\n")
+                    self._log_write(
+                        f"  ❌  {avd} didn't boot. It may be running but slow.\n"
+                        f"      Check the emulator window, then click 'Start All Phones' again.\n"
+                    )
 
             state["phones"] = phones
             n = len(phones)

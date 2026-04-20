@@ -8,17 +8,14 @@ import base64
 import json
 import logging
 import mimetypes
-import os
 import re
 import socket
 import subprocess
-import sys
 import time
 import threading
 import urllib.parse
 from pathlib import Path
 
-import websockets
 from websockets.server import serve
 
 import tor_manager
@@ -140,7 +137,7 @@ def _get_installed_app(serial: str) -> dict:
     result = {"package": "", "version": ""}
     try:
         raw  = _adb(serial, "shell", "pm", "list", "packages", "-3")
-        pkgs = [l.strip().replace("package:", "") for l in raw.splitlines() if l.strip()]
+        pkgs = [line.strip().replace("package:", "") for line in raw.splitlines() if line.strip()]
         if pkgs:
             pkg     = pkgs[0]
             ver_raw = _adb(serial, "shell", "dumpsys", "package", pkg)
@@ -182,6 +179,15 @@ def get_local_ip() -> str:
     except Exception:
         return "unknown"
 
+
+
+
+def _phone_idx_from_serial(serial: str) -> int:
+    """Derive phone index from AVD serial (emulator-5554 -> 0, etc.)."""
+    try:
+        return (int(serial.split("-")[1]) - 5554) // 2
+    except (IndexError, ValueError):
+        return 0
 
 def _get_resources() -> dict:
     try:
@@ -621,7 +627,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                     text = step.get("text", "").replace(" ", "%s").replace("'", "")
                     _adb(serial, "shell", "input", "text", text)
                 elif t == "rotate_identity":
-                    idx = _serial_to_phone_idx(serial)
+                    idx = _phone_idx_from_serial(serial)
                     tor_manager.rotate_identity_adb(serial, idx)
                 time.sleep(0.3)
 
@@ -854,13 +860,13 @@ async def main():
     http_server = await asyncio.start_server(handle_http, "0.0.0.0", PORT)
     ws_server   = await serve(ws_handler, "0.0.0.0", WS_PORT)
 
-    print(f"\n  ╔══════════════════════════════════════════╗")
-    print(f"  ║   CPharm  •  ready                       ║")
-    print(f"  ║                                          ║")
-    print(f"  ║   On this PC:  http://localhost:{PORT}    ║")
-    print(f"  ║   On phone:    http://{ip}:{PORT}   ║")
-    print(f"  ║                                          ║")
-    print(f"  ║   Press Ctrl+C to stop                   ║")
+    print("\n  ╔══════════════════════════════════════════╗")
+    print("  ║   CPharm  •  ready                       ║")
+    print("  ║                                          ║")
+    print("  ║   On this PC:  http://localhost:{PORT}    ║")
+    print("  ║   On phone:    http://{ip}:{PORT}   ║")
+    print("  ║                                          ║")
+    print("  ║   Press Ctrl+C to stop                   ║")
     print(f"  ╚══════════════════════════════════════════╝\n")
 
     async with http_server, ws_server:

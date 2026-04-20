@@ -28,13 +28,6 @@ def _adb(serial: str, *args) -> str:
         return ""
 
 
-def _serial_to_phone_idx(serial: str) -> int:
-    """Derive phone index from AVD serial (emulator-5554 -> 0, etc.)."""
-    try:
-        return (int(serial.split("-")[1]) - 5554) // 2
-    except (IndexError, ValueError):
-        return 0
-
 
 def start_recording(serial: str) -> str:
     global _recording_active, _recording_thread, _current_file

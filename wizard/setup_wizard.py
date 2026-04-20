@@ -889,7 +889,8 @@ def start_emulator(avd_name, port):
     # -no-boot-anim             — skip boot animation (faster boot)
     # -no-audio                 — prevent audio device errors on ARM
     # -wipe-data                — start with clean userdata (fresh identity each run)
-    accel = ["-accel", "auto"]
+    accel_args = ["-accel", "auto", "-gpu", "swiftshader_indirect",
+                  "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"]
 
     try:
         log_dir = Path(os.environ.get("TEMP", r"C:\Temp"))
@@ -898,15 +899,20 @@ def start_emulator(avd_name, port):
     except Exception:
         log_file = subprocess.DEVNULL
 
+    # On Windows, emulator may be a .bat wrapper (emulator.bat/emulator.cmd).
+    # Popen with a list on Windows does NOT automatically run .bat files —
+    # we must use shell=True so cmd.exe handles them. Build the full command
+    # as a single string so shell=True works correctly.
+    argv = [emu, "-avd", avd_name, "-port", str(port)] + accel_args
+    cmd_str = subprocess.list2cmdline(argv)
+
     proc = subprocess.Popen(
-        [emu, "-avd", avd_name, "-port", str(port)]
-        + accel
-        + ["-gpu", "swiftshader_indirect",
-           "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"],
+        cmd_str,
         stdout=log_file,
         stderr=log_file,
         env=env,
         creationflags=flags,
+        shell=True,
     )
     if log_file is not subprocess.DEVNULL:
         proc._log_file = log_file
@@ -2415,7 +2421,6 @@ class BootPage(PageBase):
         tk.Button(test_row, text="▶ Open",
                   font=("Segoe UI", 10, "bold"),
                   bg=ACCENT, fg=BG, relief="flat", cursor="hand2",
-                  padx=10, pady=5,
                   command=self._test_url).pack(side="left")
 
         # Summary
@@ -2510,12 +2515,11 @@ class BootPage(PageBase):
         self._overall_lbl.pack(fill="x", pady=(0, 4))
         tk.Button(misc, text="Open Dashboard in Browser",
                   font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
-                  padx=10, pady=5,
                   command=lambda: webbrowser.open(
                       f"http://localhost:{DASHBOARD_PORT}")).pack(side="left", padx=(0, 8))
         tk.Button(misc, text="💾 Save Config",
                   font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
-                  padx=10, pady=5, command=self._save).pack(side="left")
+                  command=self._save).pack(side="left")
 
     def on_enter(self):
         self._rebuild_grid()
@@ -2726,6 +2730,7 @@ class BootPage(PageBase):
             self._chrome_btn.config(state="normal", text="🔧  Setup Chrome on All Phones")
             self._log_write("Chrome setup done on all phones.\n")
         threading.Thread(target=go, daemon=True).start()
+
 
     def _test_url(self):
         phones = state.get("phones", [])
@@ -3020,7 +3025,7 @@ class GroupsPage(PageBase):
 
         tk.Button(step_row, text="✏  Edit Sequence", font=FS,
                   bg=ACCENT, fg=BG, relief="flat", cursor="hand2",
-                  padx=10, pady=4, command=edit).pack(side="left")
+                  command=edit).pack(side="left")
 
         tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=(0, 8))
 
@@ -3383,12 +3388,11 @@ class LaunchPage(PageBase):
         self._overall_lbl.pack(fill="x", pady=(0, 4))
         tk.Button(misc, text="Open Dashboard in Browser",
                   font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
-                  padx=10, pady=5,
                   command=lambda: webbrowser.open(
                       f"http://localhost:{DASHBOARD_PORT}")).pack(side="left", padx=(0, 8))
         tk.Button(misc, text="💾 Save Config",
                   font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
-                  padx=10, pady=5, command=self._save).pack(side="left")
+                  command=self._save).pack(side="left")
 
     def on_enter(self):
         self._refresh_summary()

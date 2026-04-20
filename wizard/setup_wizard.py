@@ -2500,6 +2500,14 @@ class BootPage(PageBase):
 
         misc = tk.Frame(self, bg=BG)
         misc.pack(fill="x", pady=6)
+        # Status frame and phone list — referenced by on_enter / _boot_all / _stop_all
+        self._status_frame = tk.Frame(self, bg=BG)
+        self._status_frame.pack(fill="both", expand=True, pady=4)
+        self._status_rows = {}
+        self._phones = []          # currently booted phone serials
+        self._emu_procs = []       # emulator subprocess handles
+        self._overall_lbl = tk.Label(self, text="", font=FS, bg=BG, fg=T2)
+        self._overall_lbl.pack(fill="x", pady=(0, 4))
         tk.Button(misc, text="Open Dashboard in Browser",
                   font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
                   padx=10, pady=5,
@@ -2666,8 +2674,9 @@ class BootPage(PageBase):
                         self._overall_lbl.config(text=f"❌ {a} failed", fg=RED)
                     ))
 
-            state["phones"] = phones
-            n = len(phones)
+            state["phones"] = [{"serial": serial, "name": avd} for avd, serial in zip(avds, serials)]
+            state["_emu_procs"] = [p for _, _, _, p in procs]
+            n = len(state["phones"])
             self._after(0, lambda: (
                 self._boot_btn.config(state="normal"),
                 self._stop_btn.config(
@@ -2685,6 +2694,8 @@ class BootPage(PageBase):
         for proc in state.get("_emu_procs", []):
             try:
                 proc.terminate()
+            except Exception:
+                pass
                 lf = getattr(proc, "_log_file", None)
                 if lf and lf is not None:
                     lf.close()
@@ -3361,6 +3372,14 @@ class LaunchPage(PageBase):
 
         misc = tk.Frame(self, bg=BG)
         misc.pack(fill="x", pady=6)
+        # Status frame and phone list — referenced by on_enter / _boot_all / _stop_all
+        self._status_frame = tk.Frame(self, bg=BG)
+        self._status_frame.pack(fill="both", expand=True, pady=4)
+        self._status_rows = {}
+        self._phones = []          # currently booted phone serials
+        self._emu_procs = []       # emulator subprocess handles
+        self._overall_lbl = tk.Label(self, text="", font=FS, bg=BG, fg=T2)
+        self._overall_lbl.pack(fill="x", pady=(0, 4))
         tk.Button(misc, text="Open Dashboard in Browser",
                   font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
                   padx=10, pady=5,

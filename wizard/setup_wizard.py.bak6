@@ -1414,16 +1414,16 @@ class PrerequisitesPage(PageBase):
             ("x64",   JAVA_DOWNLOAD_URL_X64, "microsoft-jdk-21-x64.msi"),
         ]:
             self._set_row("java", f"⬇  Downloading ({label})…", ACCENT)
-            self._log_write(f"Downloading Java JDK 21 ({label})…")
+            self._log(f"Downloading Java JDK 21 ({label})…")
             tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / fname
             try:
                 self._download(url, tmp, f"Java JDK ({label})", 2, 18)
             except Exception as e:
-                self._log_write(f"  Download failed ({label}): {e}")
+                self._log(f"  Download failed ({label}): {e}")
                 tmp.unlink(missing_ok=True)
                 continue
             self._set_row("java", "⚙  Installing…", YELLOW)
-            self._log_write(f"Installing Java {label} (silent, no restart)…")
+            self._log(f"Installing Java {label} (silent, no restart)…")
             ok, out = run_cmd(
                 ["msiexec", "/i", str(tmp), "/quiet", "/norestart"],
                 timeout=300,
@@ -1431,11 +1431,11 @@ class PrerequisitesPage(PageBase):
             tmp.unlink(missing_ok=True)
             if ok or self._check_java():
                 self._set_row("java", "✅  Done", GREEN)
-                self._log_write(f"Java installed ✅  ({label})")
+                self._log(f"Java installed ✅  ({label})")
                 return
-            self._log_write(f"  Install failed ({label}): {out[-200:]}")
+            self._log(f"  Install failed ({label}): {out[-200:]}")
         self._set_row("java", "❌  Failed", RED)
-        self._log_write("Java install failed on both ARM64 and x64 installers.")
+        self._log("Java install failed on both ARM64 and x64 installers.")
         self._show_java_manual_btn()
 
     def _install_python(self):
@@ -1444,16 +1444,16 @@ class PrerequisitesPage(PageBase):
             ("x64",   PYTHON_URL_X64, "python-3.13-x64.exe"),
         ]:
             self._set_row("python", f"⬇  Downloading ({label})…", ACCENT)
-            self._log_write(f"Downloading Python 3.13 ({label})…")
+            self._log(f"Downloading Python 3.13 ({label})…")
             tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / fname
             try:
                 self._download(url, tmp, f"Python ({label})", 20, 36)
             except Exception as e:
-                self._log_write(f"  Download failed ({label}): {e}")
+                self._log(f"  Download failed ({label}): {e}")
                 tmp.unlink(missing_ok=True)
                 continue
             self._set_row("python", "⚙  Installing…", YELLOW)
-            self._log_write(f"Installing Python {label}…")
+            self._log(f"Installing Python {label}…")
             ok, out = run_cmd(
                 [str(tmp), "/quiet",
                  "InstallAllUsers=0", "PrependPath=1", "Include_launcher=0"],
@@ -1463,11 +1463,11 @@ class PrerequisitesPage(PageBase):
             if ok or self._check_python():
                 state["python_cmd"] = _find_python() or "python"
                 self._set_row("python", "✅  Done", GREEN)
-                self._log_write(f"Python installed ✅  ({state['python_cmd']})")
+                self._log(f"Python installed ✅  ({state['python_cmd']})")
                 return
-            self._log_write(f"  Install failed ({label}): {out[-200:]}")
+            self._log(f"  Install failed ({label}): {out[-200:]}")
         self._set_row("python", "❌  Failed", RED)
-        self._log_write("Python install failed on both ARM64 and x64 installers.")
+        self._log("Python install failed on both ARM64 and x64 installers.")
 
     def _install_packages(self):
         py = _find_python() or "python"
@@ -1475,18 +1475,18 @@ class PrerequisitesPage(PageBase):
         self._set_row("packages", "⚙  Installing…", YELLOW)
         self._set_progress(55, "Installing Python packages…")
         for extra, label in [([], "global"), (["--user"], "--user fallback")]:
-            self._log_write(f"Running: pip install websockets psutil {' '.join(extra)}…")
+            self._log(f"Running: pip install websockets psutil {' '.join(extra)}…")
             ok, out = run_cmd(
                 [py, "-m", "pip", "install", "--upgrade"] + extra + ["websockets", "psutil"],
                 timeout=120,
             )
             if ok or self._check_packages():
                 self._set_row("packages", "✅  Done", GREEN)
-                self._log_write(f"Packages installed ✅  ({label})")
+                self._log(f"Packages installed ✅  ({label})")
                 return
-            self._log_write(f"  pip {label} failed: {out[-200:]}")
+            self._log(f"  pip {label} failed: {out[-200:]}")
         self._set_row("packages", "❌  Failed", RED)
-        self._log_write("pip failed both globally and with --user.\nTry running: pip install websockets psutil  in a terminal.")
+        self._log("pip failed both globally and with --user.\nTry running: pip install websockets psutil  in a terminal.")
 
     def _install_tor(self):
         install_dir = Path(state.get("cpharm_dir", "") or self._install_dir.get())
@@ -1494,16 +1494,16 @@ class PrerequisitesPage(PageBase):
         tor_dir.mkdir(parents=True, exist_ok=True)
 
         self._set_row("tor", "⬇  Finding latest…", ACCENT)
-        self._log_write("Looking up latest Tor version…")
+        self._log("Looking up latest Tor version…")
         tor_url = _fetch_latest_tor_url()
-        self._log_write(f"Downloading: {tor_url}")
+        self._log(f"Downloading: {tor_url}")
         self._set_row("tor", "⬇  Downloading…", ACCENT)
 
         tmp = tor_dir / "_tor_bundle.tar.gz"
         self._download(tor_url, tmp, "Tor", 58, 72)
 
         self._set_row("tor", "📦  Extracting…", YELLOW)
-        self._log_write("Extracting Tor…")
+        self._log("Extracting Tor…")
         with tarfile.open(tmp, "r:gz") as tf:
             for member in tf.getmembers():
                 if member.name.startswith("tor/"):
@@ -1515,31 +1515,31 @@ class PrerequisitesPage(PageBase):
 
         if (tor_dir / "tor.exe").exists():
             self._set_row("tor", "✅  Done", GREEN)
-            self._log_write("Tor installed ✅")
+            self._log("Tor installed ✅")
         else:
             self._set_row("tor", "⚠  Skipped", T3)
-            self._log_write("Tor not found after extract — IP rotation will use system Tor if available.")
+            self._log("Tor not found after extract — IP rotation will use system Tor if available.")
 
     def _install_cpharm(self):
         install_dir = Path(self._install_dir.get())
         if self._check_cpharm():
             self._set_row("cpharm", "✅  Already here", GREEN)
-            self._log_write(f"CPharm files already present at {state.get('cpharm_dir', install_dir)}")
+            self._log(f"CPharm files already present at {state.get('cpharm_dir', install_dir)}")
             return
 
         self._set_row("cpharm", "⬇  Downloading…", ACCENT)
-        self._log_write("Downloading CPharm files from GitHub…")
+        self._log("Downloading CPharm files from GitHub…")
         tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / "cpharm.zip"
         zip_ok = True
         try:
             self._download(CPHARM_ZIP_URL, tmp, "CPharm", 76, 88)
         except Exception as e:
-            self._log_write(f"  ZIP download failed: {e}")
+            self._log(f"  ZIP download failed: {e}")
             zip_ok = False
 
         if zip_ok:
             self._set_row("cpharm", "📦  Extracting…", YELLOW)
-            self._log_write(f"Extracting to {install_dir}…")
+            self._log(f"Extracting to {install_dir}…")
             extract_tmp = install_dir.parent / "_cpharm_extract"
             if extract_tmp.exists():
                 shutil.rmtree(extract_tmp)
@@ -1554,15 +1554,15 @@ class PrerequisitesPage(PageBase):
                     shutil.move(str(inner), str(install_dir))
                 shutil.rmtree(extract_tmp, ignore_errors=True)
             except Exception as e:
-                self._log_write(f"  Extraction failed: {e}")
+                self._log(f"  Extraction failed: {e}")
                 zip_ok = False
 
         if (install_dir / "automation" / "dashboard.py").exists():
             state["cpharm_dir"] = str(install_dir)
             self._set_row("cpharm", "✅  Done", GREEN)
-            self._log_write(f"CPharm installed at {install_dir} ✅")
+            self._log(f"CPharm installed at {install_dir} ✅")
         else:
-            self._log_write("  ZIP method failed — trying git clone fallback…")
+            self._log("  ZIP method failed — trying git clone fallback…")
             self._set_row("cpharm", "⬇  git clone…", YELLOW)
             ok, out = run_cmd(
                 ["git", "clone", REPO_URL, str(install_dir)],
@@ -1571,11 +1571,11 @@ class PrerequisitesPage(PageBase):
             if ok or (install_dir / "automation" / "dashboard.py").exists():
                 state["cpharm_dir"] = str(install_dir)
                 self._set_row("cpharm", "✅  Done", GREEN)
-                self._log_write(f"CPharm installed via git clone ✅")
+                self._log(f"CPharm installed via git clone ✅")
             else:
                 self._set_row("cpharm", "❌  Failed", RED)
-                self._log_write("Both ZIP download and git clone failed.")
-                self._log_write(f"Manual: git clone {REPO_URL} \"{install_dir}\"")
+                self._log("Both ZIP download and git clone failed.")
+                self._log(f"Manual: git clone {REPO_URL} \"{install_dir}\"")
 
     # ── main install flow ─────────────────────────────────────────────────────
 
@@ -1625,7 +1625,7 @@ class PrerequisitesPage(PageBase):
                 self._set_row("cpharm", "✅  Already here", GREEN)
 
             self._set_progress(100, "Done!")
-            self._log_write("\n✅  All done. Click Next → to continue.")
+            self._log("\n✅  All done. Click Next → to continue.")
             self._ready = True
             self._install_btn.config(
                 state="normal",
@@ -1633,7 +1633,7 @@ class PrerequisitesPage(PageBase):
                 bg=GREEN,
             )
         except Exception as exc:
-            self._log_write(f"\n❌  Error: {exc}")
+            self._log(f"\n❌  Error: {exc}")
             self._install_btn.config(state="normal", text="⬇   Try Again")
         finally:
             self._working = False
@@ -1789,7 +1789,7 @@ class AndroidStudioPage(PageBase):
         try:
             self._do_install()
         except Exception as exc:
-            self._log_write(f"\n❌  Unexpected error: {exc}")
+            self._log(f"\n❌  Unexpected error: {exc}")
             self._set_status("Something went wrong — see log below.", color=RED)
         finally:
             self._working = False
@@ -1806,10 +1806,10 @@ class AndroidStudioPage(PageBase):
         existing = find_sdk()
         if existing:
             state["sdk_path"] = existing
-            self._log_write(f"SDK already found at:  {existing}")
+            self._log(f"SDK already found at:  {existing}")
             # Make sure emulator is actually present — if not, install it
             if not Path(sdk_tool("emulator")).exists():
-                self._log_write("Emulator missing — installing it now…")
+                self._log("Emulator missing — installing it now…")
                 self._install_missing_tools(existing)
                 return
             self._finish_ok(existing)
@@ -1819,8 +1819,8 @@ class AndroidStudioPage(PageBase):
         self._set_status("☕", "Checking for Java…", color=T2)
         self._set_progress(8, "Checking Java…")
         if not self._has_java():
-            self._log_write("Java not found. The SDK tools need Java to run.")
-            self._log_write(f"Download Java here:  {JAVA_DOWNLOAD_URL}")
+            self._log("Java not found. The SDK tools need Java to run.")
+            self._log(f"Download Java here:  {JAVA_DOWNLOAD_URL}")
             self._set_status(
                 "☕",
                 "Java is required — please install it first.",
@@ -1832,19 +1832,19 @@ class AndroidStudioPage(PageBase):
             self._working = False
             self._install_btn.config(state="normal", text="Try Again  (after installing Java)")
             return
-        self._log_write("Java found ✅")
+        self._log("Java found ✅")
 
         # ── step 2: create SDK folder ─────────────────────────────────────────
         self._set_status("📁", "Creating SDK folder…", color=T2)
         self._set_progress(12, "Creating folders…")
         tools_dir = sdk_path / "cmdline-tools"
         tools_dir.mkdir(parents=True, exist_ok=True)
-        self._log_write(f"SDK folder:  {sdk_path}")
+        self._log(f"SDK folder:  {sdk_path}")
 
         # ── step 3: download cmdline-tools zip ────────────────────────────────
         zip_path = sdk_path / "cmdline-tools" / "cmdline-tools.zip"
         if zip_path.exists():
-            self._log_write("Zip already downloaded — skipping download.")
+            self._log("Zip already downloaded — skipping download.")
             self._set_progress(50, "Already downloaded.")
         else:
             self._set_status("⬇", "Downloading Android SDK tools…",
@@ -1860,27 +1860,27 @@ class AndroidStudioPage(PageBase):
 
             downloaded = False
             for try_url in [CMDLINE_TOOLS_URL, CMDLINE_TOOLS_URL_ALT]:
-                self._log_write(f"Downloading from:\n  {try_url}")
+                self._log(f"Downloading from:\n  {try_url}")
                 try:
                     urllib.request.urlretrieve(try_url, zip_path, _progress_hook)
                     downloaded = True
                     break
                 except Exception as e:
-                    self._log_write(f"  Failed ({try_url}): {e}")
+                    self._log(f"  Failed ({try_url}): {e}")
                     zip_path.unlink(missing_ok=True)
 
             if not downloaded:
-                self._log_write("Both cmdline-tools URLs failed.")
+                self._log("Both cmdline-tools URLs failed.")
                 self._set_status("❌", "Download failed — check internet connection.", color=RED)
                 self._set_progress(0, "")
                 return
 
-            self._log_write("Download complete ✅")
+            self._log("Download complete ✅")
 
         # ── step 4: extract zip ───────────────────────────────────────────────
         self._set_status("📦", "Extracting files…", color=T2)
         self._set_progress(55, "Extracting…")
-        self._log_write("Extracting zip…")
+        self._log("Extracting zip…")
 
         extract_tmp = tools_dir / "_extract_tmp"
         if extract_tmp.exists():
@@ -1911,7 +1911,7 @@ class AndroidStudioPage(PageBase):
             ns_type="ns5:genericDetailsType",
             extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
         )
-        self._log_write("Extraction done ✅")
+        self._log("Extraction done ✅")
         self._set_progress(62, "Extracted.")
 
         # ── step 5: run sdkmanager to install platform-tools + emulator ───────
@@ -1940,18 +1940,18 @@ class AndroidStudioPage(PageBase):
                          detail="Downloads ~200 MB. Please wait — do not close the window.",
                          color=YELLOW)
         self._set_progress(60, "Accepting licenses…")
-        self._log_write(f"JAVA_HOME: {_find_java_home() or '(not found — Java required)'}")
+        self._log(f"JAVA_HOME: {_find_java_home() or '(not found — Java required)'}")
 
         # Accept all pending SDK licenses first — required before any install on fresh SDK
-        self._log_write("Accepting SDK licenses…")
+        self._log("Accepting SDK licenses…")
         _run_sdkmanager(["--licenses"], sdk, log_fn=self._log, timeout=60)
 
         # Check what packages sdkmanager can actually see — if emulator doesn't show
         # here it means the remote repo fetch is failing (network/proxy/TLS issue).
         self._set_progress(63, "Checking available packages…")
-        self._log_write("Checking available packages (fetching remote catalog)…")
+        self._log("Checking available packages (fetching remote catalog)…")
         self._set_progress(65, "Running sdkmanager…")
-        self._log_write(f"Installing: {', '.join(missing)}")
+        self._log(f"Installing: {', '.join(missing)}")
         ok, out = _run_sdkmanager(
             ["--channel=0"] + missing,
             sdk,
@@ -1962,8 +1962,8 @@ class AndroidStudioPage(PageBase):
         self._set_progress(92, "Verifying…")
 
         if not Path(sdk_tool("emulator")).exists():
-            self._log_write("\n⚠  sdkmanager couldn't install emulator — Java network blocked by firewall.")
-            self._log_write("   Switching to direct Python download (bypasses Java network stack)…\n")
+            self._log("\n⚠  sdkmanager couldn't install emulator — Java network blocked by firewall.")
+            self._log("   Switching to direct Python download (bypasses Java network stack)…\n")
             self._set_status("Downloading emulator directly…",
                              detail="Java is blocked by firewall — using Python downloader instead.",
                              color=YELLOW)
@@ -1974,8 +1974,8 @@ class AndroidStudioPage(PageBase):
             self._set_progress(92, "Verifying…")
 
             if not Path(sdk_tool("emulator")).exists():
-                self._log_write("\n❌  Both sdkmanager and direct download failed.")
-                self._log_write("    Your network is blocking dl.google.com entirely.")
+                self._log("\n❌  Both sdkmanager and direct download failed.")
+                self._log("    Your network is blocking dl.google.com entirely.")
                 self._set_status("❌", "Network blocked — see options below", color=RED)
                 self._set_progress(0, "")
                 self._install_btn.config(state="normal", text="Try Again")
@@ -1984,8 +1984,8 @@ class AndroidStudioPage(PageBase):
 
             _install_emulator_device_catalog(sdk, log_fn=self._log)
 
-        self._log_write("emulator        ✅")
-        self._log_write("platform-tools  ✅")
+        self._log("emulator        ✅")
+        self._log("platform-tools  ✅")
         self._finish_ok(sdk)
 
 
@@ -2082,7 +2082,7 @@ class AndroidStudioPage(PageBase):
                          detail=f"SDK installed at:  {sdk_path}",
                          color=GREEN)
         self._set_progress(100, "Done!")
-        self._log_write(f"\n✅  All good. Click Next → to continue.")
+        self._log(f"\n✅  All good. Click Next → to continue.")
         self._ready = True
         self._install_btn.config(
             state="normal",
@@ -2107,12 +2107,12 @@ class AndroidStudioPage(PageBase):
     def _do_firewall(self):
         ok = _add_firewall_exception_for_java()
         if ok:
-            self._log_write("\nFirewall rule submitted — approve the UAC prompt that appeared.")
-            self._log_write("Then click Try Again.\n")
+            self._log("\nFirewall rule submitted — approve the UAC prompt that appeared.")
+            self._log("Then click Try Again.\n")
         else:
-            self._log_write("\n❌  Could not launch PowerShell — add the rule manually:\n")
-            self._log_write('   Windows Security → Firewall → Advanced → Outbound Rules')
-            self._log_write('   → New Rule → Program → browse to java.exe → Allow\n')
+            self._log("\n❌  Could not launch PowerShell — add the rule manually:\n")
+            self._log('   Windows Security → Firewall → Advanced → Outbound Rules')
+            self._log('   → New Rule → Program → browse to java.exe → Allow\n')
 
     def _show_java_button(self):
         if hasattr(self, "_java_btn"):
@@ -2940,7 +2940,7 @@ class PlayStorePage(PageBase):
                 self._sched_lbl.config(
                     text=f"Hitting {len(serials)} phones {hits}×/day randomly",
                     fg=GREEN)
-                self._log_write("Scheduler started.\n")
+                self._log("Scheduler started.\n")
             else:
                 self._sched_lbl.config(text="Failed: " + str(result), fg=RED)
         except Exception as e:
@@ -3548,7 +3548,7 @@ class LaunchPage(PageBase):
                 cwd=str(dashboard.parent),
                 creationflags=flags,
             )
-            self._log_write("Server starting…")
+            self._log("Server starting…")
             self._btn_srv_start.config(state="disabled")
             self._btn_srv_stop.config(state="normal")
             self._srv_lbl.config(text="⏳ Starting…", fg=YELLOW)
@@ -3558,7 +3558,7 @@ class LaunchPage(PageBase):
                 if self._server_proc.poll() is None:
                     self._srv_lbl.config(text="✅ Server running", fg=GREEN)
                     self._btn_run.config(state="normal")
-                    self._log_write("Server is up! Click Run All Groups to start.")
+                    self._log("Server is up! Click Run All Groups to start.")
                 else:
                     self._srv_lbl.config(text="❌ Crashed — check terminal", fg=RED)
                     self._btn_srv_start.config(state="normal")
@@ -3577,7 +3577,7 @@ class LaunchPage(PageBase):
         self._btn_srv_start.config(state="normal")
         self._btn_srv_stop.config(state="disabled")
         self._btn_run.config(state="disabled")
-        self._log_write("Server stopped.")
+        self._log("Server stopped.")
 
     def _api(self, path, body):
         import urllib.request
@@ -3593,19 +3593,19 @@ class LaunchPage(PageBase):
             return {"error": str(e)}
 
     def _run_groups(self):
-        self._log_write("Starting all groups…")
+        self._log("Starting all groups…")
         self._btn_run.config(state="disabled")
         self._btn_stop_grp.config(state="normal")
 
         def go():
             result = self._api("/api/groups/run", {"groups": state["groups"]})
             if "error" in result:
-                self._log_write(f"❌  {result['error']}")
+                self._log(f"❌  {result['error']}")
                 self._btn_run.config(state="normal")
                 self._btn_stop_grp.config(state="disabled")
             else:
                 n = result.get("groups", len(state["groups"]))
-                self._log_write(f"✅  {n} group(s) running in parallel!")
+                self._log(f"✅  {n} group(s) running in parallel!")
                 self._run_lbl.config(text=f"{n} running", fg=GREEN)
 
         threading.Thread(target=go, daemon=True).start()
@@ -3613,7 +3613,7 @@ class LaunchPage(PageBase):
     def _stop_groups(self):
         def go():
             self._api("/api/groups/stop", {})
-            self._log_write("All groups stopped.")
+            self._log("All groups stopped.")
             self._run_lbl.config(text="", fg=T2)
             self._btn_run.config(state="normal")
             self._btn_stop_grp.config(state="disabled")

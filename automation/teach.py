@@ -1,3 +1,4 @@
+import random
 """
 Teach Mode - record taps on the first phone, replay on all others staggered.
 Uses ADB device serials - works with any connected Android device.
@@ -118,7 +119,8 @@ def replay_all(
     def run():
         for i, phone in enumerate(phones):
             if i > 0:
-                time.sleep(delay_secs)
+                actual = max(0.1, delay_secs + random.uniform(-delay_secs * 0.3, delay_secs * 0.3))
+                time.sleep(actual)
             replay_on_phone(phone["serial"], recording_path)
         if on_complete:
             on_complete()

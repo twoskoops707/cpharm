@@ -25,6 +25,8 @@ import urllib.request
 import webbrowser
 import zipfile
 from pathlib import Path
+import json
+import datetime as dt
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -1049,6 +1051,149 @@ def execute_steps(steps, serial):
             rotate_android_id(serial)
             _try_newnym(serial)
         time.sleep(0.4)
+
+
+
+class SaveLoadDialog(tk.Toplevel):
+    """Save sequence steps to JSON / Load from JSON in automation/recordings/"""
+    def __init__(self, parent, steps_list, editor=None):
+        super().__init__(parent)
+        self.steps_list = steps_list
+        self.editor = editor
+        self.title("Save / Load Sequence")
+        self.config(bg=BG)
+        self.geometry("500x420")
+        self.grab_set()
+        self.transient(parent)
+        self._build()
+
+    def _build(self):
+        hdr = tk.Frame(self, bg=BG2, padx=20, pady=14)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="Save or Load a Sequence",
+                 font=("Segoe UI", 14, "bold"), bg=BG2, fg=T1).pack(anchor="w")
+        tk.Label(hdr,
+                 text="Sequences saved to automation/recordings/ — double-click to load.",
+                 font=FS, bg=BG2, fg=T2, wraplength=440).pack(anchor="w", pady=(2, 0))
+
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=16, pady=12)
+
+        save_tab = tk.Frame(nb, bg=BG2)
+        nb.add(save_tab, text="  Save  ")
+        self._build_save(save_tab)
+
+        load_tab = tk.Frame(nb, bg=BG2)
+        nb.add(load_tab, text="  Load  ")
+        self._build_load(load_tab)
+
+        tk.Button(self, text="Close",
+                 font=FS, bg=BG3, fg=T2, relief="flat",
+                 cursor="hand2", command=self.destroy,
+                 padx=16, pady=8).pack(pady=(0, 10))
+
+    def _build_save(self, parent):
+        tk.Label(parent, text="Sequence name:",
+                 font=FB, bg=BG2, fg=T2, anchor="w").pack(
+                     fill="x", padx=16, pady=(14, 4))
+        self._name_var = tk.StringVar(value="my_sequence")
+        tk.Entry(parent, textvariable=self._name_var, font=FM,
+                 bg=BG3, fg=T1, insertbackground=T1, relief="flat").pack(
+                     fill="x", padx=16, pady=(0, 10))
+        self._save_status = tk.Label(parent, text="", font=FS,
+                                   bg=BG2, fg=T2, anchor="w")
+        self._save_status.pack(fill="x", padx=16)
+        tk.Button(parent, text="Save Sequence",
+                 font=("Segoe UI", 11, "bold"), bg=GREEN, fg=BG,
+                 relief="flat", cursor="hand2",
+                 command=self._do_save, padx=16, pady=8).pack(pady=8)
+
+    def _do_save(self):
+        name = self._name_var.get().strip() or "sequence"
+        safe = re.sub(r"[^a-z0-9 _-]", "", name)[:60].strip().replace(" ", "_")
+        if not safe:
+            self._save_status.config(text="Enter a valid name.", fg=YELLOW)
+            return
+        ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        fname = f"sequence_{safe}_{ts}.json"
+        rec = pathlib.Path(__file__).parent.parent / "automation" / "recordings"
+        rec.mkdir(parents=True, exist_ok=True)
+        path = rec / fname
+        data = {"name": name, "steps": list(self.steps_list),
+                 "saved_at": dt.datetime.now().isoformat()}
+        try:
+            path.write_text(json.dumps(data, indent=2))
+            self._save_status.config(
+                text=f"Saved: {fname} ({len(self.steps_list)} steps", fg=GREEN)
+        except Exception as e:
+            self._save_status.config(text=str(e), fg=RED)
+
+    def _build_load(self, parent):
+        tk.Label(parent, text="Saved sequences (newest first):",
+                 font=FB, bg=BG2, fg=T2, anchor="w").pack(
+                     fill="x", padx=16, pady=(14, 4))
+        self._lb = tk.Listbox(parent, font=FM, bg=BG3, fg=T1,
+                             selectbackground=ACCENT, relief="flat",
+                             height=10, activestyle="none")
+        scroll = tk.Scrollbar(parent, orient="vertical", command=self._lb.yview)
+        self._lb.configure(yscrollcommand=scroll.set)
+        list_fr = tk.Frame(parent, bg=BG2)
+        list_fr.pack(fill="both", expand=True, padx=16, pady=6)
+        self._lb.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        self._lb.bind("<Double-Button-1>", lambda _: self._do_load())
+        self._status = tk.Label(parent, text="", font=FS, bg=BG2, fg=T2, anchor="w")
+        self._status.pack(fill="x", padx=16)
+        row = tk.Frame(parent, bg=BG2)
+        row.pack(fill="x", padx=16, pady=(0, 12))
+        tk.Button(row, text="Refresh",
+                  font=FS, bg=BG3, fg=T1, relief="flat",
+                  cursor="hand2",
+                  command=self._fill_list, padx=10, pady=4).pack(side="left")
+        tk.Button(row, text="Load Selected",
+                 font=("Segoe UI", 11, "bold"), bg=ACCENT, fg=BG,
+                 relief="flat", cursor="hand2",
+                 command=self._do_load, padx=14, pady=6).pack(side="right")
+        self._fill_list()
+
+    def _fill_list(self):
+        rec = pathlib.Path(__file__).parent.parent / "automation" / "recordings"
+        files = sorted(rec.glob("sequence_*.json"),
+                        key=lambda p: p.stat().st_mtime, reverse=True)
+        self._lb.delete(0, "end")
+        if not files:
+            self._lb.insert("end", "  (no saved sequences yet)")
+            return
+        for f in files[:50]:
+            try:
+                data = json.loads(f.read_text())
+                lbl = f"[{data.get('name','?')}] {len(data.get('steps',[])} steps  ({f.stem[-12:]})"
+            except Exception:
+                lbl = f.name
+            self._lb.insert("end", "  " + lbl)
+
+    def _do_load(self):
+        sel = self._lb.curselection()
+        if not sel:
+            self._status.config(text="Select a sequence first.", fg=YELLOW)
+            return
+        rec = pathlib.Path(__file__).parent.parent / "automation" / "recordings"
+        files = sorted(rec.glob("sequence_*.json"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+        path = files[sel[0]]
+        try:
+            data = json.loads(path.read_text())
+            steps = data.get("steps", [])
+            self.steps_list.clear()
+            self.steps_list.extend(steps)
+            if self.editor and hasattr(self.editor, "_refresh"):
+                self.editor._refresh()
+            self._status.config(
+                text=f"Loaded {len(steps)} steps from '{data.get('name','?')}'", fg=GREEN)
+        except Exception as e:
+            self._status.config(text=str(e), fg=RED)
+
+
 
 
 # ─── base page ────────────────────────────────────────────────────────────────

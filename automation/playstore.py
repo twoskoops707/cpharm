@@ -1,3 +1,4 @@
+import random
 """
 Play Store Tester - ADB-based organic Play Store activity per phone.
 All functions use device serials (consistent with dashboard.py / teach.py).
@@ -205,7 +206,8 @@ def run_full_sequence(
             serial = phone["serial"]
             name = phone.get("name", serial)
             if i > 0 and delay_secs > 0:
-                time.sleep(delay_secs)
+                actual = max(0.1, delay_secs + random.uniform(-delay_secs * 0.3, delay_secs * 0.3))
+                time.sleep(actual)
             try:
                 if search_query:
                     if on_log:

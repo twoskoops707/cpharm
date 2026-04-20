@@ -307,7 +307,7 @@ async def handle_http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
 
         if method == "GET":
             if path.startswith("/api/scheduler"):
-                response = await handle_scheduler(path, body_start)
+                response = await handle_scheduler(path, body_bytes)
             else:
                 response = await handle_get(path)
         elif method == "POST":

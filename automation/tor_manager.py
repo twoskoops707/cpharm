@@ -72,7 +72,7 @@ def start_tor_for_phone(phone_idx: int) -> int:
     cfg.write(f"SocksPort {socks_port}\n")
     cfg.write(f"ControlPort {ctrl_port}\n")
     cfg.write(f"DataDirectory {data_dir}\n")
-    cfg.write("ExitNodes {us},{gb},{de},{fr},{jp},{au},{ca},{nl},{se},{br}\n")
+    cfg.write("ExitNodes {us}\n")
     cfg.write("StrictNodes 0\n")
     cfg.close()
 

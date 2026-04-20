@@ -2511,8 +2511,6 @@ class BootPage(PageBase):
         self._status_rows = {}
         self._phones = []          # currently booted phone serials
         self._emu_procs = []       # emulator subprocess handles
-        self._overall_lbl = tk.Label(self, text="", font=FS, bg=BG, fg=T2)
-        self._overall_lbl.pack(fill="x", pady=(0, 4))
         tk.Button(misc, text="Open Dashboard in Browser",
                   font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
                   command=lambda: webbrowser.open(
@@ -2602,7 +2600,7 @@ class BootPage(PageBase):
                 cwd=str(dashboard.parent),
                 creationflags=flags,
             )
-            self._log("Server starting…")
+            self._log_write("Server starting…\n")
             self._btn_srv_start.config(state="disabled")
             self._btn_srv_stop.config(state="normal")
             self._srv_lbl.config(text="⏳ Starting…", fg=YELLOW)
@@ -2612,7 +2610,7 @@ class BootPage(PageBase):
                 if self._server_proc.poll() is None:
                     self._srv_lbl.config(text="✅ Server running", fg=GREEN)
                     self._btn_run.config(state="normal")
-                    self._log("Server is up! Click Run All Groups to start.")
+                    self._log_write("Server is up! Click Run All Groups to start.\n")
                 else:
                     self._srv_lbl.config(text="❌ Crashed — check terminal", fg=RED)
                     self._btn_srv_start.config(state="normal")
@@ -2636,7 +2634,7 @@ class BootPage(PageBase):
             for i, avd in enumerate(avds):
                 port = 5554 + i * 2
                 serial = f"emulator-{port}"
-                self._after(0, lambda a=avd: (
+                self.after(0, lambda a=avd: (
                     self._overall_lbl.config(text=f"Launching {a}...", fg=YELLOW)
                 ))
                 try:
@@ -2650,7 +2648,7 @@ class BootPage(PageBase):
             phones = []
 
             for avd, serial, _ in procs:
-                self._after(0, lambda a=avd: (
+                self.after(0, lambda a=avd: (
                     self._overall_lbl.config(text=f"Booting {a}...", fg=YELLOW)
                 ))
                 self._log_write(f"  Waiting for {avd} to boot (can take 2-5 min)...\n")
@@ -2667,21 +2665,21 @@ class BootPage(PageBase):
                         pass
                     self._log_write(
                         f"  ✅ {avd} ready! Android ID: {new_id[:8]}...\n")
-                    self._after(0, lambda a=avd: (
+                    self.after(0, lambda a=avd: (
                         self._overall_lbl.config(text=f"✅ {a} running", fg=GREEN)
                     ))
                 else:
                     self._log_write(
                         f"  ❌ {avd} timed out. Enable Windows Hypervisor Platform:\n"
                         f"     Settings → Turn Windows features on/off → Windows Hypervisor Platform ✅\n")
-                    self._after(0, lambda a=avd: (
+                    self.after(0, lambda a=avd: (
                         self._overall_lbl.config(text=f"❌ {a} failed", fg=RED)
                     ))
 
             state["phones"] = phones
             state["_emu_procs"] = [p for _, _, p in procs]
             n = len(state["phones"])
-            self._after(0, lambda: (
+            self.after(0, lambda: (
                 self._boot_btn.config(state="normal"),
                 self._stop_btn.config(
                     state="disabled" if not phones else "normal"),
@@ -2754,7 +2752,7 @@ class BootPage(PageBase):
         self._btn_srv_start.config(state="normal")
         self._btn_srv_stop.config(state="disabled")
         self._btn_run.config(state="disabled")
-        self._log("Server stopped.")
+        self._log_write("Server stopped.\n")
 
     def _api(self, path, body):
         import urllib.request
@@ -2770,19 +2768,19 @@ class BootPage(PageBase):
             return {"error": str(e)}
 
     def _run_groups(self):
-        self._log("Starting all groups…")
+        self._log_write("Starting all groups…\n")
         self._btn_run.config(state="disabled")
         self._btn_stop_grp.config(state="normal")
 
         def go():
             result = self._api("/api/groups/run", {"groups": state["groups"]})
             if "error" in result:
-                self._log(f"❌  {result['error']}")
+                self._log_write(f"❌  {result['error']}\n")
                 self._btn_run.config(state="normal")
                 self._btn_stop_grp.config(state="disabled")
             else:
                 n = result.get("groups", len(state["groups"]))
-                self._log(f"✅  {n} group(s) running in parallel!")
+                self._log_write(f"✅  {n} group(s) running in parallel!\n")
                 self._run_lbl.config(text=f"{n} running", fg=GREEN)
 
         threading.Thread(target=go, daemon=True).start()
@@ -2790,7 +2788,7 @@ class BootPage(PageBase):
     def _stop_groups(self):
         def go():
             self._api("/api/groups/stop", {})
-            self._log("All groups stopped.")
+            self._log_write("All groups stopped.\n")
             self._run_lbl.config(text="", fg=T2)
             self._btn_run.config(state="normal")
             self._btn_stop_grp.config(state="disabled")

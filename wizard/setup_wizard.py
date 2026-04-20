@@ -3236,6 +3236,42 @@ class SequenceEditorWindow(tk.Toplevel):
         steps  = list(self.group["steps"])
         threading.Thread(
             target=lambda: execute_steps(steps, serial), daemon=True).start()
+    def _save_sequence(self):
+        from tkinter import filedialog as fd, messagebox as mb
+        fn = fd.asksaveasfilename(
+            title="Save sequence", defaultextension=".json",
+            filetypes=[("JSON files", "*.json")],
+            initialfile="sequence_{}.json".format(self.group["name"].replace(" ", "_")),
+        )
+        if not fn: return
+        try:
+            import json
+            data = {"name": self.group["name"], "steps": self.group["steps"]}
+            Path(fn).write_text(json.dumps(data, indent=2))
+            self.group["_last_save"] = fn
+            self._log("Saved -> " + fn)
+        except Exception as e:
+            mb.showerror("Save failed", str(e))
+
+    def _load_sequence(self):
+        from tkinter import filedialog as fd, messagebox as mb
+        fn = fd.askopenfilename(
+            title="Load sequence",
+            filetypes=[("JSON files", "*.json")],
+        )
+        if not fn: return
+        try:
+            import json
+            data = json.loads(Path(fn).read_text())
+            steps = data.get("steps", [])
+            self.group["steps"][:] = steps
+            self._lb.delete("0", "end")
+            for s in steps:
+                self._lb.insert("end", describe_step(s))
+            self._log("Loaded {} steps from {}".format(len(steps), fn))
+        except Exception as e:
+            mb.showerror("Load failed", str(e))
+
 
 
 # ─── add step dialog ──────────────────────────────────────────────────────────

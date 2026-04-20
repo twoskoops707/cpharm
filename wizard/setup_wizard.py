@@ -2674,8 +2674,8 @@ class BootPage(PageBase):
                         self._overall_lbl.config(text=f"❌ {a} failed", fg=RED)
                     ))
 
-            state["phones"] = [{"serial": serial, "name": avd} for avd, serial in zip(avds, serials)]
-            state["_emu_procs"] = [p for _, _, _, p in procs]
+            state["phones"] = phones
+            state["_emu_procs"] = [p for _, _, p in procs]
             n = len(state["phones"])
             self._after(0, lambda: (
                 self._boot_btn.config(state="normal"),
@@ -2696,8 +2696,9 @@ class BootPage(PageBase):
                 proc.terminate()
             except Exception:
                 pass
+            try:
                 lf = getattr(proc, "_log_file", None)
-                if lf and lf is not None:
+                if lf:
                     lf.close()
             except Exception:
                 pass

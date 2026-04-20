@@ -5,10 +5,12 @@ import asyncio, datetime, json, logging, random, sys, threading, time as _time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import dashboard
+import tor_manager
 
 log = logging.getLogger("scheduler")
 PHONE_SCHED = {}   # serial → {"hits": N, "times": [epoch], "idx": N}
 RUNNING = {}        # serial → bool
+_main_loop = None   # event loop captured from async context
 
 def _name(serial):
     try:
@@ -46,18 +48,13 @@ def _run_steps(serial, steps):
             dashboard._adb(serial, "shell", "am", "force-stop",
                 step.get("package", "com.android.chrome"))
         elif t == "rotate_identity":
-            dashboard.rotate_android_id(serial)
+            idx = dashboard._phone_idx_from_serial(serial)
+            tor_manager.rotate_identity_adb(serial, idx)
         _time.sleep(random.uniform(0.35, 0.55))
 
-def _broadcast(msg):
-    try:
-        loop = asyncio.get_event_loop()
-        asyncio.get_coroutine(True)(dashboard.broadcast(msg))
-    except Exception:
-        pass
-
-async def _async_broadcast(msg):
-    await dashboard.broadcast(msg)
+def _broadcast_from_thread(msg):
+    if _main_loop is not None:
+        asyncio.run_coroutine_threadsafe(dashboard.broadcast(msg), _main_loop)
 
 def _sched_loop(serial, steps, hits_per_day):
     log.info("[scheduler] %s started (%s hits/day)", _name(serial), hits_per_day)
@@ -71,13 +68,12 @@ def _sched_loop(serial, steps, hits_per_day):
             times = _gen_today(hits_per_day)
             PHONE_SCHED[serial] = {"hits": hits_per_day, "times": times, "idx": 0}
             log.info("[scheduler] %s new day schedule: %s hits", _name(serial), len(times))
-            asyncio.ensure_future(_async_broadcast({
+            _broadcast_from_thread({
                 "type": "scheduler_update", "serial": serial,
-                "hits_per_day": hits_per_day, "times": times}))
+                "hits_per_day": hits_per_day, "times": times})
             continue
         if idx >= len(times):
-            asyncio.ensure_future(_async_broadcast({
-                "type": "scheduler_done_today", "serial": serial}))
+            _broadcast_from_thread({"type": "scheduler_done_today", "serial": serial})
             _time.sleep(random.uniform(60, 300))
             continue
         wait = times[idx] - now
@@ -85,9 +81,9 @@ def _sched_loop(serial, steps, hits_per_day):
             _time.sleep(min(wait, 30))
             continue
         log.info("[scheduler] %s firing [%s/%s]", _name(serial), idx + 1, len(times))
-        asyncio.ensure_future(_async_broadcast({
+        _broadcast_from_thread({
             "type": "scheduler_tick", "serial": serial,
-            "count": idx + 1, "total": len(times)}))
+            "count": idx + 1, "total": len(times)})
         _run_steps(serial, steps)
         PHONE_SCHED[serial]["idx"] = idx + 1
         _time.sleep(1)
@@ -95,6 +91,9 @@ def _sched_loop(serial, steps, hits_per_day):
     RUNNING.pop(serial, None)
 
 async def handle_scheduler(path, body_bytes, method="POST"):
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
+
     data = {}
     if body_bytes and method != "GET":
         try:

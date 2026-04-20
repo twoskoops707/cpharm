@@ -40,13 +40,6 @@ _QUICK_ACTIONS = {
     "clear_recents":("shell", "input", "keyevent", "187"),
 }
 
-def _serial_to_phone_idx(serial: str) -> int:
-    try:
-        return (int(serial.split("-")[1]) - 5554) // 2
-    except (IndexError, ValueError):
-        return 0
-
-
 _ws_clients: set = set()
 _teach_state    = {"state": "idle", "file": None}
 _running_groups: dict[str, bool] = {}
@@ -448,7 +441,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
         serial = data.get("serial", "").strip()
         if not serial:
             return json_err("no serial")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         threading.Thread(target=lambda: _stop_device(serial), daemon=True).start()
         await asyncio.sleep(1)
         await push_phones()
@@ -457,7 +450,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
     # ── Stop all running devices ──
     if path == "/api/stop_all":
         phones = [p for p in list_phones() if p["running"]]
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         def stop_all():
             for p in phones:
                 _stop_device(p["serial"])
@@ -481,7 +474,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
         if not url.startswith(("http://", "https://")):
             return json_err("URL must start with http:// or https://")
         phones = [p for p in list_phones() if p["running"]]
-        loop   = asyncio.get_event_loop()
+        loop   = asyncio.get_running_loop()
 
         def _rotate_after(p: dict, idx: int, delay: int):
             time.sleep(delay)
@@ -541,7 +534,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
         phones = [p for p in list_phones() if p["running"] and p["serial"] != source_serial]
         _teach_state["state"] = "playing"
         await broadcast({"type": "teach_status", **_teach_state})
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def on_done():
             _teach_state["state"] = "idle"
@@ -554,7 +547,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
     # ── Tor / identity ──
     if path == "/api/proxy/setup":
         phones = [p for p in list_phones() if p["running"]]
-        loop   = asyncio.get_event_loop()
+        loop   = asyncio.get_running_loop()
 
         def setup():
             for i, p in enumerate(phones):
@@ -572,7 +565,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
 
     if path == "/api/proxy/rotate":
         phones = [p for p in list_phones() if p["running"]]
-        loop   = asyncio.get_event_loop()
+        loop   = asyncio.get_running_loop()
 
         def rotate_all():
             for i, p in enumerate(phones):
@@ -603,7 +596,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
             return json_err("no groups provided and no saved groups_config.json found")
 
         all_phones = {p["serial"]: p for p in list_phones() if p["running"]}
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         _running_groups.clear()
 
         def _run_steps_adb(steps: list, serial: str, group_name: str):
@@ -717,7 +710,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
             return json_err("invalid package name")
         phones  = list_phones()
         targets = [p for p in phones if p["running"] and (target == "all" or p["serial"] == target)]
-        loop    = asyncio.get_event_loop()
+        loop    = asyncio.get_running_loop()
 
         def do_launch():
             for i, p in enumerate(targets):
@@ -739,7 +732,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
         safe   = text.replace(" ", "%s").replace("'", "").replace('"', "")
         phones  = list_phones()
         targets = [p for p in phones if p["running"] and (target == "all" or p["serial"] == target)]
-        loop    = asyncio.get_event_loop()
+        loop    = asyncio.get_running_loop()
 
         def do_type():
             for p in targets:
@@ -774,7 +767,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
             return json_err("unknown action")
         phones  = list_phones()
         targets = [p for p in phones if p["running"] and (target == "all" or p["serial"] == target)]
-        loop    = asyncio.get_event_loop()
+        loop    = asyncio.get_running_loop()
 
         def do_action():
             cmd = _QUICK_ACTIONS.get(action)
@@ -803,7 +796,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
         if package and not re.match(r'^[a-zA-Z][a-zA-Z0-9_.]*$', package):
             return json_err("invalid package name")
         phones = list_phones()
-        loop   = asyncio.get_event_loop()
+        loop   = asyncio.get_running_loop()
 
         def on_log(msg):
             asyncio.run_coroutine_threadsafe(broadcast({"type": "log", "msg": msg}), loop)
@@ -821,7 +814,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
         if not package or not re.match(r'^[a-zA-Z][a-zA-Z0-9_.]*$', package):
             return json_err("invalid package name")
         phones = [p for p in list_phones() if p["running"]]
-        loop   = asyncio.get_event_loop()
+        loop   = asyncio.get_running_loop()
 
         def _open():
             for p in phones:
@@ -840,7 +833,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
 
 async def handle_scheduler(path, body_bytes):
     from scheduler import handle_scheduler as _hs
-    return _hs(path, body_bytes)
+    return await _hs(path, body_bytes)
 
 async def ws_handler(websocket):
     _ws_clients.add(websocket)
@@ -879,8 +872,8 @@ async def main():
     print("\n  ╔══════════════════════════════════════════╗")
     print("  ║   CPharm  •  ready                       ║")
     print("  ║                                          ║")
-    print("  ║   On this PC:  http://localhost:{PORT}    ║")
-    print("  ║   On phone:    http://{ip}:{PORT}   ║")
+    print(f"  ║   On this PC:  http://localhost:{PORT}    ║")
+    print(f"  ║   On phone:    http://{ip}:{PORT}   ║")
     print("  ║                                          ║")
     print("  ║   Press Ctrl+C to stop                   ║")
     print(f"  ╚══════════════════════════════════════════╝\n")

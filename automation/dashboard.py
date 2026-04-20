@@ -40,6 +40,13 @@ _QUICK_ACTIONS = {
     "clear_recents":("shell", "input", "keyevent", "187"),
 }
 
+def _serial_to_phone_idx(serial: str) -> int:
+    try:
+        return (int(serial.split("-")[1]) - 5554) // 2
+    except (IndexError, ValueError):
+        return 0
+
+
 _ws_clients: set = set()
 _teach_state    = {"state": "idle", "file": None}
 _running_groups: dict[str, bool] = {}

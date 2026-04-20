@@ -44,6 +44,8 @@ SDK_DEFAULT_PATH         = os.path.join(os.environ.get("LOCALAPPDATA", "C:\\"), 
 JAVA_DOWNLOAD_URL        = "https://aka.ms/download-jdk/microsoft-jdk-21-windows-aarch64.msi"
 JAVA_DOWNLOAD_URL_X64    = "https://aka.ms/download-jdk/microsoft-jdk-21-windows-x64.msi"
 TOR_FALLBACK_URL  = "https://dist.torproject.org/torbrowser/14.0.9/tor-expert-bundle-windows-x86_64-14.0.9.tar.gz"
+PYTHON_URL        = "https://www.python.org/ftp/python/3.13.0/python-3.13.0-arm64.exe"
+PYTHON_URL_X64    = "https://www.python.org/ftp/python/3.13.0/python-3.13.0-amd64.exe"
 CPHARM_ZIP_URL    = "https://github.com/twoskoops707/cpharm/archive/refs/heads/master.zip"
 CPHARM_DEFAULT    = os.path.join(os.path.expanduser("~"), "CPharm")
 
@@ -528,6 +530,8 @@ def _write_local_package_xml(path: Path, *, path_id, major, minor, micro,
         f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
         f'<ns2:repository\n'
         f'    {all_ns}>\n'
+        f'  <license id="{license_ref}" type="text">Android Software Development Kit License Agreement\n'
+        f'</license>\n'
         f'  <localPackage path="{path_id}" obsolete="false">\n'
         f'    <type-details xsi:type="{ns_type}">{extra_details}</type-details>\n'
         f'    <revision>\n'
@@ -557,6 +561,8 @@ def _write_emulator_package_xml(emu_dir: Path):
         'xmlns:ns5="http://schemas.android.com/repository/android/generic/01" '
         'xmlns:ns6="http://schemas.android.com/repository/android/repository2/01" '
         'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+        '<license id="android-sdk-license" type="text">Android Software Development Kit License Agreement\n'
+        '</license>'
         '<localPackage path="emulator" obsolete="false">'
         '<type-details xsi:type="ns5:genericDetailsType"/>'
         '<revision><major>36</major><minor>6</minor><micro>4</micro></revision>'
@@ -596,6 +602,133 @@ def _write_sdk_licenses(sdk: str):
     }
     for name, content in licenses.items():
         (lic_dir / name).write_text(content, encoding="utf-8")
+
+
+def _direct_download_system_image(arch: str, sdk_path: str, log_fn=None) -> bool:
+    """
+    Download the Android 34 google_apis system image directly via Python urllib,
+    bypassing Java/sdkmanager.  Parses Google's repository XML to find the URL.
+    """
+    import xml.etree.ElementTree as ET
+    REPO_XML = "https://dl.google.com/android/repository/sys-img/google_apis/sys-img2-3.xml"
+    BASE_URL = "https://dl.google.com/android/repository/sys-img/google_apis/"
+
+    if log_fn:
+        log_fn("  Fetching system image catalog…\n")
+    try:
+        with urllib.request.urlopen(REPO_XML, timeout=30) as r:
+            xml_data = r.read().decode("utf-8")
+    except Exception as e:
+        if log_fn:
+            log_fn(f"  ❌  Cannot reach system image catalog: {e}\n")
+        return False
+
+    image_url = None
+    try:
+        root = ET.fromstring(xml_data)
+        for pkg in root.iter():
+            tag = pkg.tag.split("}")[-1] if "}" in pkg.tag else pkg.tag
+            if tag not in ("remotePackage", "package"):
+                continue
+            path_attr = pkg.get("path", "")
+            if "android-34" not in path_attr or "google_apis" not in path_attr:
+                continue
+            if arch not in path_attr:
+                continue
+            for child in pkg.iter():
+                ctag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                if ctag == "url":
+                    val = (child.text or "").strip()
+                    if val.endswith(".zip"):
+                        image_url = BASE_URL + val
+                        break
+            if image_url:
+                break
+    except ET.ParseError:
+        pass
+
+    if not image_url:
+        if log_fn:
+            log_fn("  ❌  Could not locate system image URL in repository XML.\n")
+        return False
+
+    if log_fn:
+        log_fn(f"  Downloading system image (~1 GB): {image_url}\n")
+
+    dest = Path(sdk_path)
+    tmp  = dest / "_sysimg_tmp.zip"
+    img_dir = dest / "system-images" / "android-34" / "google_apis" / arch
+    try:
+        urllib.request.urlretrieve(image_url, tmp)
+        img_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(tmp, "r") as zf:
+            for member in zf.namelist():
+                parts = Path(member).parts
+                if len(parts) > 1:
+                    out_path = img_dir / Path(*parts[1:])
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    if not member.endswith("/"):
+                        out_path.write_bytes(zf.read(member))
+                elif parts:
+                    out_path = img_dir / parts[0]
+                    if not member.endswith("/"):
+                        out_path.write_bytes(zf.read(member))
+        tmp.unlink(missing_ok=True)
+        TARGET_PATH = f"system-images;android-34;google_apis;{arch}"
+        _write_local_package_xml(
+            img_dir / "package.xml",
+            path_id=TARGET_PATH,
+            major=14, minor=0, micro=0,
+            display="Google APIs ARM 64 v8a System Image",
+            license_ref="android-sdk-arm-dbt-license",
+            ns_type="ns4:sysImgDetailsType",
+            extra_ns='xmlns:ns4="http://schemas.android.com/sdk/android/repo/sys-img2/01"',
+            extra_details=(
+                f"<ns4:api-level>34</ns4:api-level>"
+                f"<ns4:tag><ns4:id>google_apis</ns4:id>"
+                f"<ns4:display>Google APIs</ns4:display></ns4:tag>"
+                f"<ns4:vendor><ns4:id>google</ns4:id>"
+                f"<ns4:display>Google Inc.</ns4:display></ns4:vendor>"
+                f"<ns4:abi>{arch}</ns4:abi>"
+            ),
+        )
+        if log_fn:
+            log_fn("  System image installed ✅\n")
+        return True
+    except Exception as e:
+        if log_fn:
+            log_fn(f"  ❌  Direct system image download failed: {e}\n")
+        tmp.unlink(missing_ok=True)
+        return False
+
+
+def _add_firewall_exception_for_java() -> bool:
+    """
+    Add a Windows Firewall outbound allow rule for java.exe via PowerShell.
+    Requires elevation (UAC prompt will appear).
+    Returns True if the PowerShell command was launched successfully.
+    """
+    java_home = _find_java_home()
+    if java_home:
+        java_exe = str(Path(java_home) / "bin" / "java.exe")
+    else:
+        java_exe = "java.exe"
+
+    ps_cmd = (
+        f"New-NetFirewallRule -DisplayName 'CPharm Java' "
+        f"-Direction Outbound -Action Allow "
+        f"-Program '{java_exe}' -Enabled True"
+    )
+    try:
+        subprocess.Popen(
+            ["powershell", "-Command",
+             f"Start-Process powershell -Verb RunAs -ArgumentList "
+             f"'-NoProfile -Command {ps_cmd}'"],
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        return True
+    except Exception:
+        return False
 
 
 def _ensure_emulator_meta(sdk, log_fn=None):
@@ -1927,7 +2060,7 @@ class AndroidStudioPage(PageBase):
         # missing device-catalog.xml (avdmanager needs it to list device profiles).
         # Install it now so avdmanager can enumerate hardware profiles for AVD creation.
         if Path(sdk_tool("emulator")).exists():
-            _install_emulator_device_catalog(sdk, log_fn=self._log)
+            self._install_emulator_device_catalog(sdk, log_fn=self._log)
 
         missing = []
         if not Path(sdk_tool("emulator")).exists():
@@ -1962,9 +2095,9 @@ class AndroidStudioPage(PageBase):
         self._set_progress(92, "Verifying…")
 
         if not Path(sdk_tool("emulator")).exists():
-            self._log_write("\n⚠  sdkmanager couldn't install emulator — Java network blocked by firewall.")
-            self._log_write("   Switching to direct Python download (bypasses Java network stack)…\n")
-            self._set_status("Downloading emulator directly…",
+            self._log("\n⚠  sdkmanager couldn't install emulator — Java network blocked by firewall.")
+            self._log("   Switching to direct Python download (bypasses Java network stack)…\n")
+            self._set_status("⬇", "Downloading emulator directly…",
                              detail="Java is blocked by firewall — using Python downloader instead.",
                              color=YELLOW)
             self._set_progress(70, "Direct downloading emulator…")
@@ -1982,7 +2115,7 @@ class AndroidStudioPage(PageBase):
                 self.after(0, self._show_firewall_btn)
                 return
 
-            _install_emulator_device_catalog(sdk, log_fn=self._log)
+            self._install_emulator_device_catalog(sdk, log_fn=self._log)
 
         self._log_write("emulator        ✅")
         self._log_write("platform-tools  ✅")
@@ -2640,14 +2773,19 @@ class BootPage(PageBase):
 
             def check():
                 time.sleep(3)
-                if self._server_proc.poll() is None:
-                    self._srv_lbl.config(text="✅ Server running", fg=GREEN)
-                    self._btn_run.config(state="normal")
-                    self._log_write("Server is up! Click Run All Groups to start.\n")
+                proc = self._server_proc
+                if proc and proc.poll() is None:
+                    self.after(0, lambda: (
+                        self._srv_lbl.config(text="✅ Server running", fg=GREEN),
+                        self._btn_run.config(state="normal"),
+                        self._log_write("Server is up! Click Run All Groups to start.\n"),
+                    ))
                 else:
-                    self._srv_lbl.config(text="❌ Crashed — check terminal", fg=RED)
-                    self._btn_srv_start.config(state="normal")
-                    self._btn_srv_stop.config(state="disabled")
+                    self.after(0, lambda: (
+                        self._srv_lbl.config(text="❌ Crashed — check terminal", fg=RED),
+                        self._btn_srv_start.config(state="normal"),
+                        self._btn_srv_stop.config(state="disabled"),
+                    ))
 
             threading.Thread(target=check, daemon=True).start()
         except Exception as e:
@@ -3591,14 +3729,19 @@ class LaunchPage(PageBase):
 
             def check():
                 time.sleep(3)
-                if self._server_proc.poll() is None:
-                    self._srv_lbl.config(text="✅ Server running", fg=GREEN)
-                    self._btn_run.config(state="normal")
-                    self._log_write("Server is up! Click Run All Groups to start.")
+                proc = self._server_proc
+                if proc and proc.poll() is None:
+                    self.after(0, lambda: (
+                        self._srv_lbl.config(text="✅ Server running", fg=GREEN),
+                        self._btn_run.config(state="normal"),
+                        self._log("Server is up! Click Run All Groups to start."),
+                    ))
                 else:
-                    self._srv_lbl.config(text="❌ Crashed — check terminal", fg=RED)
-                    self._btn_srv_start.config(state="normal")
-                    self._btn_srv_stop.config(state="disabled")
+                    self.after(0, lambda: (
+                        self._srv_lbl.config(text="❌ Crashed — check terminal", fg=RED),
+                        self._btn_srv_start.config(state="normal"),
+                        self._btn_srv_stop.config(state="disabled"),
+                    ))
 
             threading.Thread(target=check, daemon=True).start()
         except Exception as e:
@@ -3765,6 +3908,8 @@ class CPharmWizard(tk.Tk):
             if self._current < len(self._pages) - 1:
                 self._current += 1
                 self._show(self._current)
+            else:
+                self.destroy()
 
     def _back(self):
         if self._current > 0:

@@ -3,6 +3,7 @@ CPharm Dashboard — ADB-native backend.
 Works with any Android device: AVD emulators, BlueStacks, Genymotion, MEmu, NOX, real phones.
 """
 
+import datetime
 import asyncio
 import base64
 import json
@@ -12,6 +13,7 @@ import re
 import socket
 import subprocess
 import time
+import random
 import threading
 import urllib.parse
 from pathlib import Path
@@ -304,7 +306,10 @@ async def handle_http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
             remaining  -= len(chunk)
 
         if method == "GET":
-            response = await handle_get(path)
+            if path.startswith("/api/scheduler"):
+                response = await handle_scheduler(path, body_start)
+            else:
+                response = await handle_get(path)
         elif method == "POST":
             response = await handle_post(path, body_bytes)
         elif method == "OPTIONS":
@@ -825,6 +830,10 @@ async def handle_post(path: str, body: bytes) -> bytes:
 
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────
+
+async def handle_scheduler(path, body_bytes):
+    from scheduler import handle_scheduler as _hs
+    return _hs(path, body_bytes)
 
 async def ws_handler(websocket):
     _ws_clients.add(websocket)

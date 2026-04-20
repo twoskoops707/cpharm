@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import random
 import threading
 import time
 import urllib.request
@@ -2462,7 +2463,39 @@ class BootPage(PageBase):
                                   font=FS, bg=BG3, fg=T2)
         self._srv_lbl.pack(side="left", padx=10)
 
-        # Groups
+    
+        # Schedule
+        sched = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        sched.pack(fill="x", pady=(0, 8))
+        tk.Label(sched, text="C — Daily Schedule",
+                 font=("Segoe UI", 11, "bold"), bg=BG3,
+                 fg=PURPLE, anchor="w").pack(fill="x")
+        tk.Label(sched,
+                 text="Automate hits spread randomly across 24 hours per phone.",
+                 font=FS, bg=BG3, fg=T2, anchor="w", wraplength=640).pack(
+                     fill="x", pady=(2, 8))
+
+        sched_row = tk.Frame(sched, bg=BG3)
+        sched_row.pack(fill="x")
+        tk.Label(sched_row, text="Hits/day:", font=FS, bg=BG3, fg=T2).pack(side="left")
+        self._sched_hits_var = tk.IntVar(value=720)
+        tk.Entry(sched_row, textvariable=self._sched_hits_var, font=FM,
+                 bg=BG2, fg=T1, insertbackground=T1, relief="flat",
+                 width=8).pack(side="left", padx=6)
+        tk.Label(sched_row, text="per phone", font=FS, bg=BG3, fg=T2).pack(side="left")
+        self._sched_btn = tk.Button(sched_row,
+                                   text="▶ Start Schedule",
+                                   font=("Segoe UI", 10, "bold"),
+                                   bg=PURPLE, fg=BG, relief="flat",
+                                   cursor="hand2", padx=12, pady=6,
+                                   command=self._start_schedule)
+        self._sched_btn.pack(side="left", padx=(8, 0))
+        self._sched_lbl = tk.Label(sched_row, text="", font=FS, bg=BG3, fg=T2)
+        self._sched_lbl.pack(side="left", padx=8)
+
+
+
+    # Groups
         grp = tk.Frame(self, bg=BG3, padx=14, pady=12)
         grp.pack(fill="x", pady=(0, 8))
         tk.Label(grp, text="B — Run Groups",
@@ -2880,6 +2913,40 @@ class PlayStorePage(PageBase):
 
 
 # ─── page 6: groups & sequences ───────────────────────────────────────────────
+
+
+    def _start_schedule(self):
+        """Start the daily schedule on all booted phones."""
+        hits = self._sched_hits_var.get()
+        phones = state.get("phones", [])
+        if not phones:
+            messagebox.showwarning("No phones running",
+                                 "Boot phones first (Step 3).")
+            return
+        serials = [p["serial"] for p in phones]
+        steps = state["groups"][0].get("steps", []) if state.get("groups") else []
+        try:
+            import urllib.request
+            url = f"http://localhost:{DASHBOARD_PORT}/api/scheduler/start"
+            body = json.dumps({"serials": serials, "steps": steps,
+                              "hits_per_day": hits}).encode()
+            req = urllib.request.Request(
+                url, data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST")
+            with urllib.request.urlopen(req, timeout=5) as r:
+                result = json.loads(r.read())
+            if result.get("ok"):
+                self._sched_lbl.config(
+                    text=f"Hitting {len(serials)} phones {hits}×/day randomly",
+                    fg=GREEN)
+                self._log("Scheduler started.\n")
+            else:
+                self._sched_lbl.config(text="Failed: " + str(result), fg=RED)
+        except Exception as e:
+            self._sched_lbl.config(text=f"Error: {e}", fg=RED)
+
+
 
 class GroupsPage(PageBase):
     def __init__(self, parent):
@@ -3333,7 +3400,39 @@ class LaunchPage(PageBase):
                                   font=FS, bg=BG3, fg=T2)
         self._srv_lbl.pack(side="left", padx=10)
 
-        # Groups
+    
+        # Schedule
+        sched = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        sched.pack(fill="x", pady=(0, 8))
+        tk.Label(sched, text="C — Daily Schedule",
+                 font=("Segoe UI", 11, "bold"), bg=BG3,
+                 fg=PURPLE, anchor="w").pack(fill="x")
+        tk.Label(sched,
+                 text="Automate hits spread randomly across 24 hours per phone.",
+                 font=FS, bg=BG3, fg=T2, anchor="w", wraplength=640).pack(
+                     fill="x", pady=(2, 8))
+
+        sched_row = tk.Frame(sched, bg=BG3)
+        sched_row.pack(fill="x")
+        tk.Label(sched_row, text="Hits/day:", font=FS, bg=BG3, fg=T2).pack(side="left")
+        self._sched_hits_var = tk.IntVar(value=720)
+        tk.Entry(sched_row, textvariable=self._sched_hits_var, font=FM,
+                 bg=BG2, fg=T1, insertbackground=T1, relief="flat",
+                 width=8).pack(side="left", padx=6)
+        tk.Label(sched_row, text="per phone", font=FS, bg=BG3, fg=T2).pack(side="left")
+        self._sched_btn = tk.Button(sched_row,
+                                   text="▶ Start Schedule",
+                                   font=("Segoe UI", 10, "bold"),
+                                   bg=PURPLE, fg=BG, relief="flat",
+                                   cursor="hand2", padx=12, pady=6,
+                                   command=self._start_schedule)
+        self._sched_btn.pack(side="left", padx=(8, 0))
+        self._sched_lbl = tk.Label(sched_row, text="", font=FS, bg=BG3, fg=T2)
+        self._sched_lbl.pack(side="left", padx=8)
+
+
+
+    # Groups
         grp = tk.Frame(self, bg=BG3, padx=14, pady=12)
         grp.pack(fill="x", pady=(0, 8))
         tk.Label(grp, text="B — Run Groups",

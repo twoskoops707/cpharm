@@ -586,6 +586,34 @@ async def handle_post(path: str, body: bytes) -> bytes:
         return json_ok({"ok": True})
 
     # ── Groups: run different sequences on different phone sets in parallel ──
+
+    # ── Full identity reset (new IP + new Android ID + new MAC) ──
+    if path == "/api/identity/reset":
+        serial = data.get("serial", "").strip()
+        if not serial:
+            return json_err("no serial")
+        idx = _phone_idx_from_serial(serial)
+        loop = asyncio.get_running_loop()
+        def do_reset():
+            result = tor_manager.full_identity_reset(serial, idx)
+            asyncio.run_coroutine_threadsafe(
+                broadcast({"type": "log", "msg": f"{serial}: reset — tor={result['tor_circuit_rotated']} android_id={result['new_android_id'][:8]}… mac={result['new_mac']}"}), loop)
+        threading.Thread(target=do_reset, daemon=True).start()
+        return json_ok({"ok": True})
+
+    # ── Reset all running phones ──
+    if path == "/api/identity/reset_all":
+        phones = [p for p in list_phones() if p["running"]]
+        loop = asyncio.get_running_loop()
+        def do_reset_all():
+            for p in phones:
+                idx = _phone_idx_from_serial(p["serial"])
+                result = tor_manager.full_identity_reset(p["serial"], idx)
+                asyncio.run_coroutine_threadsafe(
+                    broadcast({"type": "log", "msg": f"{p['name']}: reset ✓ tor={result['tor_circuit_rotated']} android_id={result['new_android_id'][:8]}…"}), loop)
+        threading.Thread(target=do_reset_all, daemon=True).start()
+        return json_ok({"ok": True})
+
     if path == "/api/groups/run":
         raw_groups = data.get("groups")
         if not raw_groups:
@@ -633,13 +661,19 @@ async def handle_post(path: str, body: bytes) -> bytes:
                     _adb(serial, "shell", "input", "text", text)
                 elif t == "rotate_identity":
                     idx = _phone_idx_from_serial(serial)
-                    tor_manager.rotate_identity_adb(serial, idx)
+                    tor_manager.full_identity_reset(serial, idx)
+                elif t == "full_reset":
+                    idx = _phone_idx_from_serial(serial)
+                    result = tor_manager.full_identity_reset(serial, idx)
+                    log.info("full_reset %s: tor=%s android_id=%s mac=%s",
+                             serial, result["tor_circuit_rotated"],
+                             result["new_android_id"], result["new_mac"])
                 time.sleep(0.3)
 
         def _run_group(group: dict):
             name    = group.get("name", "Group")
-            steps   = group.get("steps", [])
-            serials = [s for s in group.get("phones", []) if s in all_phones]
+            phone_map = group.get("phones", {})   # {serial: {steps:[...]}}
+            serials = [s for s in phone_map.keys() if s in all_phones]
             stagger = int(group.get("stagger_secs", 0))
             repeat  = int(group.get("repeat", 1))
             forever = bool(group.get("repeat_forever", False))
@@ -661,10 +695,21 @@ async def handle_post(path: str, body: bytes) -> bytes:
                                 break
                             time.sleep(0.5)
                     phone_name = all_phones[serial]["name"]
+                    phone_steps = (phone_map.get(serial, {}) or {}).get("steps", [])
                     asyncio.run_coroutine_threadsafe(
                         broadcast({"type": "log",
-                                   "msg": f"[{name}] Running on {phone_name}"}), loop)
-                    _run_steps_adb(steps, serial, name)
+                                   "msg": f"[{name}] Running [{iteration+1}] on {phone_name}"}), loop)
+                    _run_steps_adb(phone_steps, serial, name)
+                    # After this phone's sequence: full anonymity reset
+                    if phone_steps:
+                        idx = _phone_idx_from_serial(serial)
+                        asyncio.run_coroutine_threadsafe(
+                            broadcast({"type": "log",
+                                       "msg": f"[{name}] Resetting identity on {phone_name}…"}), loop)
+                        tor_manager.full_identity_reset(serial, idx)
+                        asyncio.run_coroutine_threadsafe(
+                            broadcast({"type": "log",
+                                       "msg": f"[{name}] {phone_name} identity reset ✓"}), loop)
                 iteration += 1
 
             asyncio.run_coroutine_threadsafe(
@@ -691,6 +736,69 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 _running_groups[k] = False
             await broadcast({"type": "log", "msg": "Stopping all groups…"})
         return json_ok({"ok": True})
+
+
+    # ── Clone master steps to all phones in a group ──
+    if path == "/api/groups/clone":
+        group_name = data.get("name", "").strip()
+        source_serial = data.get("source_serial", "").strip()
+        cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
+        if not cfg_path.exists():
+            return json_err("no saved groups_config.json found")
+        cfg = json.loads(cfg_path.read_text())
+        groups = cfg.get("groups", [])
+        target = None
+        for g in groups:
+            if g.get("name") == group_name:
+                target = g
+                break
+        if not target:
+            return json_err(f"group '{group_name}' not found")
+        source_steps = []
+        phone_map = target.get("phones", {})
+        if source_serial and source_serial in phone_map:
+            source_steps = (phone_map[source_serial] or {}).get("steps", [])
+        elif isinstance(target.get("steps"), list) and target["steps"]:
+            # Legacy: shared steps (backwards compat)
+            source_steps = target["steps"]
+        if not source_steps:
+            return json_err("no source steps found to clone")
+        # Clone to all phones in the group
+        for serial in phone_map:
+            if isinstance(phone_map[serial], dict):
+                phone_map[serial]["steps"] = list(source_steps)
+            else:
+                phone_map[serial] = {"steps": list(source_steps)}
+        cfg_path.write_text(json.dumps(cfg, indent=2))
+        return json_ok({"ok": True, "cloned": len(phone_map), "steps_count": len(source_steps)})
+
+    # ── Get/Update per-phone steps ──
+    if path == "/api/groups/phone_steps":
+        group_name = data.get("name", "").strip()
+        serial = data.get("serial", "").strip()
+        new_steps = data.get("steps")
+        cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
+        if not cfg_path.exists():
+            return json_err("no saved groups_config.json found")
+        cfg = json.loads(cfg_path.read_text())
+        for g in cfg.get("groups", []):
+            if g.get("name") == group_name:
+                phone_map = g.get("phones", {})
+                if new_steps is not None:
+                    # Update steps for this phone
+                    if serial not in phone_map:
+                        phone_map[serial] = {}
+                    if isinstance(phone_map[serial], dict):
+                        phone_map[serial]["steps"] = new_steps
+                    else:
+                        phone_map[serial] = {"steps": new_steps}
+                    cfg_path.write_text(json.dumps(cfg, indent=2))
+                    return json_ok({"ok": True, "serial": serial, "steps": new_steps})
+                else:
+                    # Return current steps for this phone
+                    steps = (phone_map.get(serial) or {}).get("steps", []) if isinstance(phone_map.get(serial), dict) else []
+                    return json_ok({"serial": serial, "steps": steps})
+        return json_err("group not found")
 
     if path == "/api/groups/load":
         cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"

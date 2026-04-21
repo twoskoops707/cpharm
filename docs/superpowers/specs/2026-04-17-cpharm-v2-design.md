@@ -1,15 +1,10 @@
 # CPharm v2 — Design Spec
 Date: 2026-04-17
+Updated: 2026-04-21
 
 ## What It Is
 
-A virtual Android phone farm controller. You run it on a Windows PC. It lets you control many Android phones (running inside LDPlayer) from any browser — your PC or your phone.
-
----
-
-## Who It's For
-
-Anyone. No tech experience needed. Every button, label, and message uses plain everyday words.
+A virtual Android phone farm controller. You run it on a Windows PC. It lets you control many Android phones (running as AVD emulators or real devices via ADB) from any browser — PC or phone.
 
 ---
 
@@ -18,169 +13,112 @@ Anyone. No tech experience needed. Every button, label, and message uses plain e
 - **On your PC:** open a browser, go to `http://localhost:8080`
 - **On your phone:** open a browser, go to `http://YOUR-PC-IP:8080`
 
-Both show the exact same page. Both can control the farm.
-
 ---
 
 ## The Page (Top to Bottom)
 
-Everything lives on one scrollable page. No menus to dig through.
-
 ### 1. Header
 - App name `[C·PHARM]` on the left
 - Your PC's address on the right (tap to copy)
-- Updates live — no need to refresh
 
 ### 2. Stats Bar
-Four numbers across the top:
-- **Phones** — total count
-- **On** — how many are running
-- **Off** — how many are stopped
-- **Memory** — estimated RAM in use
+Four numbers: Phones (total), On, Off, Memory
 
 ### 3. Big Buttons
-- **▶ Start All** — turns on every phone
-- **■ Stop All** — turns off every phone
-- **+ New Phone** — makes a copy of Phone 1
+- **▶ Start All** / **■ Stop All**
+- **+ New Phone** (connects more emulators)
 
 ### 4. Your Phones
-A card for every phone. Each card shows:
-- Green dot (on) or grey dot (off)
-- Phone name
-- Status: running or off
-- Which app is installed and what version
-- A **Start** or **Stop** button
+Card per phone: green dot = on, grey = off. Shows app installed + version.
 
 ### 5. Install an App
-- Drop an APK file onto the box, or tap to pick one
-- Shows the file name, version, and how many phones have it
-- **Install All** button — installs on every phone at once
+Drop APK or tap to pick. Install All button.
 
 ### 6. Open a Website
-- Paste any web address
-- **Open Now** — all phones open it at the same time
-- **Stagger** — phones open it one by one with a delay between each (choose: 1 min, 5 min, or custom)
+Paste URL. Open Now (all at once) or staggered.
 
 ### 7. Teach Mode
-Teach the farm what to do by showing it once:
-1. Tap **Start Recording** — Phone 1 is now being watched
-2. Do your steps: open a site, tap buttons, scroll, type — anything
-3. Tap **Stop Recording**
-4. Tap **Play on All Phones** — every other phone does the same steps, one after another with your chosen delay
+Record on Phone 1 → Play on all others, staggered.
 
-### 8. Make Each Phone Look Different
-- One tap sets this up — no configuration needed
-- Each phone gets routed through **Tor** automatically
-- Every phone appears to come from a completely different country
-- Each phone also gets a unique fake device ID (MAC address)
-- To websites and apps, they look like totally different people
+### 8. Make Each Phone Look Different (Tor / Anonymity)
+One button sets up Tor per phone. Each phone has:
+- Its own Tor SOCKS5 port
+- A new exit IP per phone
+- A unique Android ID
+- A random MAC address
+- After each sequence: full identity reset (new Tor circuit + new Android ID + new MAC + clear cookies)
 
 ---
 
-## Real-Time Updates
+## Per-Phone Sequences
 
-The page updates itself instantly. When a phone turns on or off, the card changes right away. No need to refresh.
+Each phone in a group has its **own independent sequence**. The wizard shows:
+- Each phone listed with its own step count
+- A "✏ Edit" button to edit that phone's sequence individually
+- A **"📋 Clone to All Phones"** button — copies Phone 1's sequence to every phone in the group
+- Each phone's sequence runs its own steps independently when the group starts
+- After each phone finishes its sequence → **automatic full identity reset** (new IP + Android ID + MAC + cleared cookies)
+
+### Data Model
+```json
+{
+  "groups": [{
+    "name": "Group 1",
+    "phones": {
+      "serial_1": { "steps": [{ "type": "open_url", "url": "..." }, { "type": "tap", "x": 640, "y": 400 }] },
+      "serial_2": { "steps": [{ "type": "open_url", "url": "..." }, { "type": "wait", "seconds": 5 }] }
+    },
+    "stagger_secs": 30,
+    "repeat": 1,
+    "repeat_forever": false
+  }]
+}
+```
+
+Old format (`phones: []`, `steps: []`) is auto-migrated on load.
+
+---
+
+## Anonymity — Full Identity Reset
+
+After each sequence iteration, every phone gets:
+1. **Tor NEWNYM** — new exit circuit → new IP
+2. **New Android ID** — `settings put secure android_id <random_64bit_hash>`
+3. **New MAC address** — random wlan0 MAC (best-effort, requires root)
+4. **Chrome cleared** — `pm clear com.android.chrome` + force-stop
+
+Single function: `tor_manager.full_identity_reset(serial, phone_idx)`
+
+Manual triggers:
+- `POST /api/identity/reset` — reset one phone
+- `POST /api/identity/reset_all` — reset all running phones
 
 ---
 
 ## Tech Stack
 
-| Piece | What it does |
+| Piece | What |
 |---|---|
-| `dashboard.py` | Python backend — asyncio + WebSockets |
-| `dashboard.html` | Single-page frontend — vanilla HTML/JS/CSS |
-| `ldconsole.exe` | Controls LDPlayer (start, stop, clone phones) |
-| `adb.exe` | Installs APKs, records/replays touches |
-| Tor | One circuit per phone — automatic IP per phone |
-| `stem` (Python) | Controls Tor circuits from Python |
+| `dashboard.py` | Python asyncio backend — WebSockets + HTTP |
+| `dashboard.html` | Vanilla JS frontend — single page |
+| `tor_manager.py` | Tor per-phone circuit management + full identity reset |
+| `teach.py` | ADB getevent/sendevent record/replay |
+| `playstore.py` | Play Store install + review automation |
+| `scheduler.py` | Daily hit quota with random fire-times per phone |
+| `setup_wizard.py` | Tkinter GUI — creates AVDs, runs phones, builds groups |
+| `ldconsole.exe` / `adb` | Phone control |
 
 ---
 
-## Backend API
+## REST API
 
-### WebSocket: `ws://localhost:8080/ws`
-Pushes live updates to the browser:
-- `phones_update` — current state of all phones
-- `install_progress` — APK install progress per phone
-- `teach_status` — recording/playback state
-
-### REST endpoints
-| Method | Path | What it does |
+| Method | Path | What |
 |---|---|---|
 | GET | `/api/phones` | List all phones + status |
-| POST | `/api/phone/start/:id` | Start one phone |
-| POST | `/api/phone/stop/:id` | Stop one phone |
-| POST | `/api/start_all` | Start all phones |
-| POST | `/api/stop_all` | Stop all phones |
-| POST | `/api/clone` | Clone Phone 1 |
-| POST | `/api/install` | Install APK on all phones |
-| POST | `/api/open_url` | Open URL on all phones (with optional stagger) |
-| POST | `/api/teach/start` | Start recording on Phone 1 |
-| POST | `/api/teach/stop` | Stop recording |
-| POST | `/api/teach/play` | Play recording on all phones (staggered) |
-| POST | `/api/proxy/setup` | Assign a Tor circuit to each phone |
-| GET | `/api/ip` | Get this PC's local IP |
-
----
-
-## Tor Setup (Auto)
-
-- On first run, system checks if Tor is installed; if not, downloads it silently
-- Spins up one Tor SOCKS5 port per phone (starting at port 9050)
-- Each LDPlayer phone is configured to route through its assigned port
-- Each phone also gets a randomised MAC address via `ldconsole modify`
-- User sees one button: **Make Each Phone Look Different** — everything else is automatic
-
----
-
-## Teach Mode (Record + Replay)
-
-- Uses `adb shell getevent` to record raw touch/key events on Phone 1
-- Saves the event stream to `automation/recordings/session_<timestamp>.rec`
-- Replay uses `adb shell sendevent` on each target phone
-- Stagger delay (user-chosen) is inserted between each phone's playback start
-
----
-
-## APK Tracking
-
-- After each install, reads `adb shell pm dump <package>` to get version name
-- Stores per-phone version in memory; shown on each phone card
-- If a phone is off when install runs, it's marked "pending" and installs when it next starts
-
----
-
-## File Structure
-
-```
-CPharm/
-  automation/
-    dashboard.py        ← backend (rewritten)
-    dashboard.html      ← frontend (rewritten)
-    manifest.json
-    sw.js
-    icon-192.png
-    icon-512.png
-    recordings/         ← teach mode sessions saved here
-  apks/                 ← drop APK files here
-  gui/
-    cpharm_gui.py       ← existing desktop GUI (kept, not changed)
-  scripts/              ← existing .bat files (kept)
-  setup/                ← existing setup scripts (kept)
-  docs/
-    superpowers/
-      specs/
-        2026-04-17-cpharm-v2-design.md
-  START_HERE.bat        ← existing (kept)
-  requirements.txt      ← updated: add websockets, stem
-```
-
----
-
-## Language Rules
-
-Every visible string follows these rules:
-- No jargon (no APK, ADB, SOCKS, circuit, instance, emulator)
-- Short sentences
-- Action words on buttons ("Start", "Stop", "Install", "Open", "Record", "Play")
-- Descriptions explain what happens in plain terms
+| POST | `/api/identity/reset` | Full reset one phone (IP + ID + MAC) |
+| POST | `/api/identity/reset_all` | Full reset all running phones |
+| POST | `/api/groups/clone` | Clone Phone 1's steps to all phones in a group |
+| POST | `/api/groups/phone_steps` | Get or set per-phone steps |
+| POST | `/api/groups/run` | Run all groups (per-phone steps) |
+| POST | `/api/groups/stop` | Stop all groups |
+| POST | `/api/open_url` | Open URL on all phones |

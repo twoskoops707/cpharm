@@ -101,13 +101,108 @@ state = {
     "_emu_procs":  [],
     "groups": [{
         "name":           "Group 1",
-        "phones":         [],
-        "steps":          [],
+        "phones":         {},      # {serial: {"steps": [...], "name": "Phone 1"}}
         "stagger_secs":   30,
         "repeat":         1,
         "repeat_forever": False,
     }],
 }
+
+
+# ─── per-phone sequence editor ────────────────────────────────────────────────
+
+class PerPhoneSequenceEditor(tk.Toplevel):
+    """Edit the sequence for ONE specific phone within a group.
+    
+    Each phone gets its own independent steps list. Cloning makes
+    a copy of the master (Phone 1) steps to all other phones.
+    """
+    def __init__(self, parent, serial, phone_name, steps_list):
+        super().__init__(parent)
+        self.steps_list = steps_list   # shared reference — mutates group directly
+        self.serial     = serial
+        self.title(f"Sequence — {phone_name}")
+        self.config(bg=BG)
+        self.geometry("640x540")
+        self.resizable(True, True)
+        self.grab_set()
+        self.transient(parent)
+
+        tk.Label(self, text=f"Phone: {phone_name}  ({serial})",
+                 font=("Segoe UI", 13, "bold"), bg=BG, fg=T1).pack(
+                     pady=(14, 2), padx=16, anchor="w")
+        tk.Label(self,
+                 text="This is THIS phone's own sequence. "
+                      "Editing here does not change other phones.",
+                 font=FS, bg=BG, fg=T2).pack(padx=16, anchor="w", pady=(0, 8))
+
+        ctrl = tk.Frame(self, bg=BG)
+        ctrl.pack(fill="x", padx=16, pady=4)
+        for text, cmd, color in [
+            ("+ Add Step",  self._add,    GREEN),
+            ("Remove",      self._remove, RED),
+            ("▲ Up",        self._up,     BG3),
+            ("▼ Down",      self._dn,     BG3),
+        ]:
+            tk.Button(ctrl, text=text, command=cmd,
+                      bg=color, fg=BG if color not in (BG3,) else T1,
+                      font=("Segoe UI", 10, "bold"),
+                      relief="flat", cursor="hand2",
+                      padx=10, pady=6).pack(side="left", padx=(0, 6))
+
+        fr = tk.Frame(self, bg=BG2)
+        fr.pack(fill="both", expand=True, padx=16, pady=8)
+        self._lb = tk.Listbox(fr, font=FM, bg=BG2, fg=T1,
+                              selectbackground=ACCENT, relief="flat",
+                              height=12, activestyle="none")
+        sb = tk.Scrollbar(fr, orient="vertical", command=self._lb.yview)
+        self._lb.configure(yscrollcommand=sb.set)
+        self._lb.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        bottom = tk.Frame(self, bg=BG)
+        bottom.pack(fill="x", padx=16, pady=10)
+        tk.Button(bottom, text="Done ✓",
+                  font=("Segoe UI", 11, "bold"),
+                  bg=GREEN, fg=BG, relief="flat",
+                  cursor="hand2", command=self.destroy,
+                  padx=16, pady=8).pack(side="right")
+
+        self._refresh()
+
+    def _refresh(self):
+        self._lb.delete(0, "end")
+        for i, s in enumerate(self.steps_list, 1):
+            self._lb.insert("end", f"  {i:>2}.  {describe_step(s)}")
+
+    def _add(self):
+        dlg = AddStepDialog(self)
+        self.wait_window(dlg)
+        if dlg.result:
+            self.steps_list.append(dlg.result)
+            self._refresh()
+
+    def _remove(self):
+        sel = self._lb.curselection()
+        if sel:
+            del self.steps_list[sel[0]]
+            self._refresh()
+
+    def _up(self):
+        sel = self._lb.curselection()
+        if not sel or sel[0] == 0: return
+        i = sel[0]
+        self.steps_list[i-1], self.steps_list[i] = self.steps_list[i], self.steps_list[i-1]
+        self._refresh(); self._lb.selection_set(i-1)
+
+    def _dn(self):
+        sel = self._lb.curselection()
+        if not sel or sel[0] >= len(self.steps_list) - 1: return
+        i = sel[0]
+        self.steps_list[i], self.steps_list[i+1] = self.steps_list[i+1], self.steps_list[i]
+        self._refresh(); self._lb.selection_set(i+1)
+
+
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -3119,16 +3214,25 @@ class GroupsPage(PageBase):
     def on_enter(self):
         if state["phones"] and state["groups"]:
             for g in state["groups"]:
-                if not g["phones"]:
-                    g["phones"] = [p["serial"] for p in state["phones"]]
+                phones_field = g["phones"]
+                # Migrate old list format → per-phone dict format
+                if isinstance(phones_field, list):
+                    phones_field = {p: {"steps": list(g.get("steps", []))}
+                                    for p in phones_field}
+                    g["phones"] = phones_field
+                elif not isinstance(phones_field, dict):
+                    g["phones"] = {}
+                # Auto-assign phones if group has no phones
+                if not phones_field and state["phones"]:
+                    for p in state["phones"]:
+                        g["phones"][p["serial"]] = {"steps": list(g.get("steps", []))}
         self._rebuild()
 
     def _add_group(self):
         n = len(state["groups"]) + 1
         state["groups"].append({
             "name":           f"Group {n}",
-            "phones":         [],
-            "steps":          [],
+            "phones":         {},
             "stagger_secs":   30,
             "repeat":         1,
             "repeat_forever": False,
@@ -3263,7 +3367,150 @@ class GroupsPage(PageBase):
         rep_var.trace("w", save)
         forever_var.trace("w", save)
 
+    def _build_card(self, idx, group):
+        colors = [ACCENT, GREEN, YELLOW, RED, PURPLE]
+        col    = colors[idx % len(colors)]
+
+        card = tk.Frame(self._inner, bg=BG2, padx=14, pady=12,
+                        highlightthickness=1, highlightbackground=BORDER)
+
+        hdr = tk.Frame(card, bg=BG2)
+        hdr.pack(fill="x")
+        tk.Frame(hdr, bg=col, width=5).pack(side="left", fill="y", padx=(0, 10))
+
+        name_var = tk.StringVar(value=group["name"])
+        tk.Entry(hdr, textvariable=name_var, font=("Segoe UI", 13, "bold"),
+                 bg=BG3, fg=T1, relief="flat", width=20,
+                 insertbackground=T1).pack(side="left")
+        name_var.trace("w", lambda *_: group.update({"name": name_var.get()}))
+
+        if len(state["groups"]) > 1:
+            tk.Button(hdr, text="Remove", font=FS, bg=RED, fg=BG,
+                      relief="flat", cursor="hand2", padx=8, pady=3,
+                      command=lambda i=idx: self._remove_group(i)).pack(side="right")
+
+        tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=8)
+
+        # ── Per-phone sequence editor ─────────────────────────────────────
+        phones_frame = tk.Frame(card, bg=BG2)
+        phones_frame.pack(fill="x", pady=(0, 8))
+
+        tk.Label(phones_frame, text="Per-Phone Sequences",
+                 font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1, anchor="w").pack(fill="x")
+
+        phone_map = group.get("phones", {})
+
+        if not state["phones"]:
+            tk.Label(phones_frame, text="Go back to Step 3 and start the phones first.",
+                     font=FS, bg=BG2, fg=RED).pack(anchor="w")
+        else:
+            for phone in state["phones"]:
+                serial = phone["serial"]
+                pdata = phone_map.get(serial, {})
+                steps = pdata.get("steps", []) if isinstance(pdata, dict) else []
+                psteps = steps  # keep reference for mutation
+
+                row = tk.Frame(phones_frame, bg=BG3, padx=8, pady=5)
+                row.pack(fill="x", pady=2)
+
+                # Phone name
+                tk.Label(row, text=f"{phone['name']}",
+                         font=FM, bg=BG3, fg=T1, width=18, anchor="w").pack(side="left")
+
+                # Step count
+                step_cnt = len(psteps)
+                cnt_lbl = tk.Label(row, text=f"{step_cnt} steps",
+                                   font=FM, bg=BG3,
+                                   fg=GREEN if step_cnt else YELLOW, width=10, anchor="w")
+                cnt_lbl.pack(side="left", padx=(4, 6))
+
+                # Edit this phone's sequence
+                def edit_phone(serial=serial, psteps_ref=[psteps], cnt_lbl=cnt_lbl):
+                    win = PerPhoneSequenceEditor(
+                        self.app, serial,
+                        state["phones"][next(i for i, p in enumerate(state["phones"]) if p["serial"]==serial)]["name"],
+                        psteps_ref[0])
+                    self.app.wait_window(win)
+                    cnt_lbl.config(text=f"{len(psteps_ref[0])} steps",
+                                   fg=GREEN if psteps_ref[0] else YELLOW)
+
+                tk.Button(row, text="✏ Edit",
+                          font=FS, bg=ACCENT, fg=BG, relief="flat",
+                          cursor="hand2", command=edit_phone,
+                          padx=6, pady=2).pack(side="left", padx=(2, 0))
+
+                # Toggle
+                var = tk.BooleanVar(value=serial in phone_map)
+
+                def toggle(v=var, s=serial, ref=[psteps]):
+                    if v.get():
+                        if s not in group["phones"]:
+                            group["phones"][s] = {"steps": ref[0]}
+                    else:
+                        group["phones"].pop(s, None)
+
+                tk.Checkbutton(row, text="", variable=var, onvalue=True, offvalue=False,
+                               command=toggle, font=FB, bg=BG3, fg=T1, selectcolor=GREEN,
+                               activebackground=BG3).pack(side="right")
+
+            # ── Clone master button ───────────────────────────────────────────
+            if state["phones"] and len(state["phones"]) > 1:
+                clone_row = tk.Frame(phones_frame, bg=BG2)
+                clone_row.pack(fill="x", pady=(6, 0))
+                master_serial = state["phones"][0]["serial"]
+                master_steps = (phone_map.get(master_serial, {}) or {}).get("steps", [])                                if isinstance(phone_map.get(master_serial), dict) else []
+
+                def clone_all(i=idx, ms=master_serial, msteps=master_steps):
+                    # Clone Phone 1's sequence to all phones in this group
+                    for phone in state["phones"]:
+                        s = phone["serial"]
+                        if s not in group["phones"]:
+                            group["phones"][s] = {"steps": list(msteps)}
+                        else:
+                            group["phones"][s]["steps"] = list(msteps)
+                    self._rebuild()
+                    self._log_write(f"[{state['groups'][i]['name']}] Cloned to all phones ✓")
+
+                tk.Button(clone_row, text="📋  Clone to All Phones (Phone 1 is master)",
+                          font=FS, bg=PURPLE, fg=BG, relief="flat", cursor="hand2",
+                          command=clone_all, padx=8, pady=4).pack(side="left")
+
+        tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=(0, 8))
+
+        # Timing
+        timing = tk.Frame(card, bg=BG2)
+        timing.pack(fill="x")
+
+        def lbl(text): return tk.Label(timing, text=text, font=FS, bg=BG2, fg=T2)
+        def spin(var, lo, hi, w=5):
+            return tk.Spinbox(timing, from_=lo, to=hi, textvariable=var,
+                              width=w, font=FM, bg=BG3, fg=T1, relief="flat")
+
+        stag_var    = tk.IntVar(value=group["stagger_secs"])
+        rep_var     = tk.IntVar(value=group["repeat"])
+        forever_var = tk.BooleanVar(value=group["repeat_forever"])
+
+        lbl("Delay between phones:").pack(side="left")
+        spin(stag_var, 0, 3600).pack(side="left", padx=4)
+        lbl("sec  |  Repeat:").pack(side="left", padx=(4, 0))
+        spin(rep_var, 1, 9999).pack(side="left", padx=4)
+        lbl("times  |").pack(side="left")
+        tk.Checkbutton(timing, text="Forever", variable=forever_var,
+                       font=FS, bg=BG2, fg=T1, selectcolor=BG3,
+                       activebackground=BG2).pack(side="left", padx=4)
+
+        def save(*_):
+            group.update({"stagger_secs": stag_var.get(),
+                          "repeat":       rep_var.get(),
+                          "repeat_forever": forever_var.get()})
+
+        stag_var.trace("w", save)
+        rep_var.trace("w", save)
+        forever_var.trace("w", save)
+
         return card
+
+    def can_advance(self):        return card
 
     def can_advance(self):
         for g in state["groups"]:

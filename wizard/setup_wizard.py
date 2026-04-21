@@ -2599,7 +2599,7 @@ class BootPage(PageBase):
                  text="Boot the virtual phones. First boot takes 2–5 min per phone.",
                  font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 8))
         phone_row = tk.Frame(phone_ctrl, bg=BG3)
-        phone_row.pack(fill="x")
+        phone_row.pack(fill="x", pady=(4, 8))
         self._boot_btn = tk.Button(phone_row, text="▶  Start All Phones",
                                   font=("Segoe UI", 10, "bold"),
                                   bg=GREEN, fg=BG, relief="flat",
@@ -3018,7 +3018,7 @@ class BootPage(PageBase):
         self._btn_srv_start.config(state="normal")
         self._btn_srv_stop.config(state="disabled")
         self._btn_run.config(state="disabled")
-        self._log_write("Server stopped.\n")
+        self._log_write("Server stopped.")
 
     def _api(self, path, body):
         import urllib.request
@@ -3310,11 +3310,6 @@ class GroupsPage(PageBase):
         tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=(0, 8))
 
         # Sequence
-        seq_ctrl = tk.Frame(card, bg=BG2)
-        seq_ctrl.pack(fill="x")
-        tk.Label(seq_ctrl, text="What these phones do:",
-                 font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1, anchor="w").pack(fill="x")
-
         step_row = tk.Frame(card, bg=BG2)
         step_row.pack(fill="x", pady=(4, 8))
         step_lbl = tk.Label(step_row,
@@ -3332,7 +3327,7 @@ class GroupsPage(PageBase):
 
         tk.Button(step_row, text="✏  Edit Sequence", font=FS,
                   bg=ACCENT, fg=BG, relief="flat", cursor="hand2",
-                  command=edit).pack(side="left")
+                  command=edit).pack(side="left", padx=(2, 0))
 
         tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=(0, 8))
 
@@ -3465,9 +3460,9 @@ class GroupsPage(PageBase):
                     for phone in state["phones"]:
                         s = phone["serial"]
                         if s not in group["phones"]:
-                            group["phones"][s] = {"steps": list(msteps)}
-                        else:
                             group["phones"][s]["steps"] = list(msteps)
+                        else:
+                            group["phones"][s] = {"steps": list(msteps)}
                     self._rebuild()
                     self._log_write(f"[{state['groups'][i]['name']}] Cloned to all phones ✓")
 
@@ -3571,9 +3566,10 @@ class SequenceEditorWindow(tk.Toplevel):
         bottom = tk.Frame(self, bg=BG)
         bottom.pack(fill="x", padx=16, pady=10)
         if state["phones"]:
-            tk.Button(bottom, text="▶ Test on Phone 1", font=FS,
-                      bg=YELLOW, fg=BG, relief="flat", cursor="hand2",
-                      command=self._test, padx=10, pady=6).pack(side="left")
+            tk.Button(bottom, text="Open Dashboard in Browser",
+                  font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
+                  command=lambda: webbrowser.open(
+                      f"http://localhost:{DASHBOARD_PORT}")).pack(side="left", padx=(0, 8))
         tk.Button(bottom, text="Done ✓",
                   font=("Segoe UI", 11, "bold"),
                   bg=GREEN, fg=BG, relief="flat",

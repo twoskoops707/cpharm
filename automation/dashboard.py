@@ -661,7 +661,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                     _adb(serial, "shell", "input", "text", text)
                 elif t == "rotate_identity":
                     idx = _phone_idx_from_serial(serial)
-                    tor_manager.full_identity_reset(serial, idx)
+                    tor_manager.rotate_identity_adb(serial, idx)
                 elif t == "full_reset":
                     idx = _phone_idx_from_serial(serial)
                     result = tor_manager.full_identity_reset(serial, idx)

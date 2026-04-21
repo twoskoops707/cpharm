@@ -3458,7 +3458,7 @@ class GroupsPage(PageBase):
                 clone_row = tk.Frame(phones_frame, bg=BG2)
                 clone_row.pack(fill="x", pady=(6, 0))
                 master_serial = state["phones"][0]["serial"]
-                master_steps = (phone_map.get(master_serial, {}) or {}).get("steps", [])                                if isinstance(phone_map.get(master_serial), dict) else []
+                master_steps = (phone_map.get(master_serial, {}) or {}).get("steps", [])
 
                 def clone_all(i=idx, ms=master_serial, msteps=master_steps):
                     # Clone Phone 1's sequence to all phones in this group

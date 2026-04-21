@@ -3292,109 +3292,6 @@ class GroupsPage(PageBase):
         self._count_lbl.config(
             text=f"{n} group{'s' if n != 1 else ''}  — all run at the same time")
 
-    def _build_card(self, idx, group):
-        colors = [ACCENT, GREEN, YELLOW, RED, PURPLE]
-        col    = colors[idx % len(colors)]
-
-        card = tk.Frame(self._inner, bg=BG2, padx=14, pady=12,
-                        highlightthickness=1, highlightbackground=BORDER)
-
-        hdr = tk.Frame(card, bg=BG2)
-        hdr.pack(fill="x")
-        tk.Frame(hdr, bg=col, width=5).pack(side="left", fill="y", padx=(0, 10))
-
-        name_var = tk.StringVar(value=group["name"])
-        tk.Entry(hdr, textvariable=name_var, font=("Segoe UI", 13, "bold"),
-                 bg=BG3, fg=T1, relief="flat", width=20,
-                 insertbackground=T1).pack(side="left")
-        name_var.trace("w", lambda *_: group.update({"name": name_var.get()}))
-
-        if len(state["groups"]) > 1:
-            tk.Button(hdr, text="Remove", font=FS, bg=RED, fg=BG,
-                      relief="flat", cursor="hand2", padx=8, pady=3,
-                      command=lambda i=idx: self._remove_group(i)).pack(side="right")
-
-        tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=8)
-
-        # Phone assignment
-        tk.Label(card, text="Which phones are in this group?",
-                 font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1, anchor="w").pack(fill="x")
-        pf = tk.Frame(card, bg=BG2)
-        pf.pack(fill="x", pady=(4, 8))
-
-        if not state["phones"]:
-            tk.Label(pf, text="Go back to Step 3 and start the phones first.",
-                     font=FS, bg=BG2, fg=RED).pack(anchor="w")
-        else:
-            for phone in state["phones"]:
-                var = tk.BooleanVar(value=phone["serial"] in group["phones"])
-
-                def toggle(v=var, s=phone["serial"], g=group):
-                    if v.get():
-                        if s not in g["phones"]: g["phones"].append(s)
-                    else:
-                        g["phones"] = [x for x in g["phones"] if x != s]
-
-                tk.Checkbutton(pf, text=f"  {phone['name']}  ({phone['serial']})",
-                               variable=var, onvalue=True, offvalue=False,
-                               command=toggle, font=FB,
-                               bg=BG2, fg=T1, selectcolor=BG3,
-                               activebackground=BG2).pack(anchor="w")
-
-        tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=(0, 8))
-
-        # Sequence
-        step_row = tk.Frame(card, bg=BG2)
-        step_row.pack(fill="x", pady=(4, 8))
-        step_lbl = tk.Label(step_row,
-                            text=f"{len(group['steps'])} steps",
-                            font=FB, bg=BG2,
-                            fg=GREEN if group["steps"] else YELLOW)
-        step_lbl.pack(side="left", padx=(0, 10))
-
-        def edit(i=idx, lbl=step_lbl):
-            win = SequenceEditorWindow(self.app, state["groups"][i])
-            self.app.wait_window(win)
-            cnt = len(state["groups"][i]["steps"])
-            lbl.config(text=f"{cnt} steps",
-                       fg=GREEN if cnt else YELLOW)
-
-        tk.Button(step_row, text="✏  Edit Sequence", font=FS,
-                  bg=ACCENT, fg=BG, relief="flat", cursor="hand2",
-                  command=edit).pack(side="left", padx=(2, 0))
-
-        tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=(0, 8))
-
-        # Timing
-        timing = tk.Frame(card, bg=BG2)
-        timing.pack(fill="x")
-
-        def lbl(text): return tk.Label(timing, text=text, font=FS, bg=BG2, fg=T2)
-        def spin(var, lo, hi, w=5):
-            return tk.Spinbox(timing, from_=lo, to=hi, textvariable=var,
-                              width=w, font=FM, bg=BG3, fg=T1, relief="flat")
-
-        stag_var    = tk.IntVar(value=group["stagger_secs"])
-        rep_var     = tk.IntVar(value=group["repeat"])
-        forever_var = tk.BooleanVar(value=group["repeat_forever"])
-
-        lbl("Delay between phones:").pack(side="left")
-        spin(stag_var, 0, 3600).pack(side="left", padx=4)
-        lbl("sec  |  Repeat:").pack(side="left", padx=(4, 0))
-        spin(rep_var, 1, 9999).pack(side="left", padx=4)
-        lbl("times  |").pack(side="left")
-        tk.Checkbutton(timing, text="Forever", variable=forever_var,
-                       font=FS, bg=BG2, fg=T1, selectcolor=BG3,
-                       activebackground=BG2).pack(side="left", padx=4)
-
-        def save(*_):
-            group.update({"stagger_secs": stag_var.get(),
-                          "repeat":       rep_var.get(),
-                          "repeat_forever": forever_var.get()})
-
-        stag_var.trace("w", save)
-        rep_var.trace("w", save)
-        forever_var.trace("w", save)
 
     def _build_card(self, idx, group):
         colors = [ACCENT, GREEN, YELLOW, RED, PURPLE]
@@ -3539,7 +3436,6 @@ class GroupsPage(PageBase):
 
         return card
 
-    def can_advance(self):        return card
 
     def can_advance(self):
         for g in state["groups"]:

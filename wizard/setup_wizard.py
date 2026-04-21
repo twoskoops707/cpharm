@@ -524,7 +524,7 @@ def _direct_download_platform_tools(sdk_path, log_fn=None):
 
 def _direct_download_emulator(sdk_path, log_fn=None):
     """
-    Download emulator directly via Python urllib, bypassing Java/sdkmanager.
+    Download emulator directly via Python urllib, bypassinging Java/sdkmanager.
     Fetches Google's repository manifest XML to find the current emulator URL,
     then downloads and extracts the ZIP.
     """
@@ -702,7 +702,7 @@ def _write_sdk_licenses(sdk: str):
 def _direct_download_system_image(arch: str, sdk_path: str, log_fn=None) -> bool:
     """
     Download the Android 34 google_apis system image directly via Python urllib,
-    bypassing Java/sdkmanager.  Parses Google's repository XML to find the URL.
+    bypassinging Java/sdkmanager.  Parses Google's repository XML to find the URL.
     """
     import xml.etree.ElementTree as ET
     REPO_XML = "https://dl.google.com/android/repository/sys-img/google_apis/sys-img2-3.xml"
@@ -1108,7 +1108,6 @@ def create_avd(name, log_fn=None):
 
 def start_emulator(avd_name, port):
     emu   = sdk_tool("emulator")
-    flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
     env   = _sdk_env()
 
     # -accel auto — let the emulator pick the best accelerator available
@@ -1121,17 +1120,23 @@ def start_emulator(avd_name, port):
     accel_args = ["-accel", "auto", "-gpu", "swiftshader_indirect",
                   "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"]
 
+    # Open a visible console window so the user can watch the emulator boot.
+    # CREATE_NEW_CONSOLE opens a real cmd window — the emulator output is visible.
+    # We still write to a log file for crash diagnostics.
+    launch_flags = subprocess.CREATE_NEW_CONSOLE if IS_WIN else 0
+
     try:
         log_dir = Path(os.environ.get("TEMP", r"C:\Temp"))
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = open(log_dir / f"cpharm_emu_{avd_name}.log", "w")
+        log_path = log_dir / f"cpharm_emu_{avd_name}.log"
+        log_file = open(log_path, "w")
     except Exception:
         log_file = subprocess.DEVNULL
+        log_path = None
 
     # On Windows, emulator may be a .bat wrapper (emulator.bat/emulator.cmd).
     # Popen with a list on Windows does NOT automatically run .bat files —
-    # we must use shell=True so cmd.exe handles them. Build the full command
-    # as a single string so shell=True works correctly.
+    # we must use shell=True so cmd.exe handles them.
     argv = [emu, "-avd", avd_name, "-port", str(port)] + accel_args
     cmd_str = subprocess.list2cmdline(argv)
 
@@ -1140,12 +1145,12 @@ def start_emulator(avd_name, port):
         stdout=log_file,
         stderr=log_file,
         env=env,
-        creationflags=flags,
+        creationflags=launch_flags,
         shell=True,
     )
     if log_file is not subprocess.DEVNULL:
         proc._log_file = log_file
-    return proc
+    return proc, log_path
 
 
 def wait_for_boot(serial, timeout=300):
@@ -2099,7 +2104,7 @@ class AndroidStudioPage(PageBase):
 
             if not downloaded:
                 self._log_write("Both cmdline-tools URLs failed.")
-                self._set_status("❌", "Download failed — check internet connection.", color=RED)
+                self._set_status("Network blocked — see options below", color=RED)
                 self._set_progress(0, "")
                 return
 
@@ -2117,21 +2122,12 @@ class AndroidStudioPage(PageBase):
         with zipfile.ZipFile(zip_path, "r") as zf:
             zf.extractall(extract_tmp)
 
-        # The zip contains a single top-level folder called "cmdline-tools"
-        # We need it at sdk/cmdline-tools/latest/
-        inner = extract_tmp / "cmdline-tools"
-        latest_dir = tools_dir / "latest"
-        if latest_dir.exists():
-            shutil.rmtree(latest_dir)
-        shutil.move(str(inner), str(latest_dir))
-        shutil.rmtree(extract_tmp)
-        zip_path.unlink(missing_ok=True)
         # The zip ships a remotePackage package.xml (for distribution).
         # sdkmanager reads localPackage format when scanning installed packages.
         # Write the correct localPackage package.xml so sdkmanager sees emulator
         # as installed and doesn't block system image install with a dependency error.
         _write_local_package_xml(
-            latest_dir / "package.xml",
+            extract_tmp / "cmdline-tools" / "package.xml",
             path_id="cmdline-tools;latest",
             major=16, minor=0, micro=0,
             display="Android SDK Command-line Tools (latest)",
@@ -2192,7 +2188,7 @@ class AndroidStudioPage(PageBase):
         if not Path(sdk_tool("emulator")).exists():
             self._log("\n⚠  sdkmanager couldn't install emulator — Java network blocked by firewall.")
             self._log("   Switching to direct Python download (bypasses Java network stack)…\n")
-            self._set_status("⬇", "Downloading emulator directly…",
+            self._set_status("Downloading emulator directly…",
                              detail="Java is blocked by firewall — using Python downloader instead.",
                              color=YELLOW)
             self._set_progress(70, "Direct downloading emulator…")
@@ -2466,7 +2462,7 @@ class PhoneFarmPage(PageBase):
                       "  2.  Creates one Pixel 6 virtual phone per slot\n"
                       "  3.  Each phone gets a unique device ID and storage\n"
                       "  4.  Names them CPharm_Phone_1, CPharm_Phone_2, etc.",
-                 font=FB, bg=BG2, fg=T2, justify="left", anchor="w").pack(fill="x", pady=(4, 0))
+                 font=FB, bg=BG2, fg=T2, justify="left", anchor="w").pack(fill="x", pady=(8, 0))
 
         # Create button
         create_row = tk.Frame(self, bg=BG)
@@ -2593,8 +2589,8 @@ class BootPage(PageBase):
         phone_ctrl = tk.Frame(self, bg=BG3, padx=14, pady=12)
         phone_ctrl.pack(fill="x", pady=(0, 8))
         tk.Label(phone_ctrl, text="Start Phones",
-                 font=("Segoe UI", 11, "bold"), bg=BG3,
-                 fg=ACCENT, anchor="w").pack(fill="x")
+                 font=("Segoe UI", 11, "bold"),
+                 bg=BG3, fg=ACCENT, anchor="w").pack(fill="x")
         tk.Label(phone_ctrl,
                  text="Boot the virtual phones. First boot takes 2–5 min per phone.",
                  font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 8))
@@ -2896,7 +2892,7 @@ class BootPage(PageBase):
         self._log_write(f"Starting {len(avds)} phone(s)...\n")
 
         def go():
-            procs = []
+            procs = []          # (avd_name, serial, proc, log_path)
             for i, avd in enumerate(avds):
                 port = 5554 + i * 2
                 serial = f"emulator-{port}"
@@ -2904,16 +2900,43 @@ class BootPage(PageBase):
                     self._overall_lbl.config(text=f"Launching {a}...", fg=YELLOW)
                 ))
                 try:
-                    proc = start_emulator(avd, port)
-                    procs.append((avd, serial, proc))
-                    self._log_write(f"  Launched {avd} on port {port}\n")
+                    proc, log_path = start_emulator(avd, port)
                 except Exception as e:
-                    self._log_write(f"  ❌ {avd} failed: {e}\n")
+                    self._log_write(f"  ❌ {avd} start failed: {e}\n")
+                    continue
 
-            state["_emu_procs"] = [p for _, _, p in procs]
+                # Detect instant crash (proc exits before we even wait for boot)
+                time.sleep(1.5)
+                crash = proc.poll()
+                if crash is not None:
+                    # Emulator exited immediately — read its output for the error
+                    err_lines = []
+                    if log_path and Path(log_path).exists():
+                        try:
+                            err_lines = Path(log_path).read_text(errors="ignore").splitlines()[-12:]
+                        except Exception:
+                            pass
+                    err_msg = "\n".join(err_lines) if err_lines else f"(exit code {crash})"
+                    self._log_write(
+                        f"  ❌ {avd} CRASHED immediately (exit {crash}):\n"
+                        f"     {err_msg[:300]}\n"
+                        f"     Log: {log_path or 'N/A'}"
+                    )
+                    self.after(0, lambda a=avd: (
+                        self._overall_lbl.config(text=f"❌ {a} crashed", fg=RED)
+                    ))
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                    continue
+
+                procs.append((avd, serial, proc, log_path))
+                self._log_write(f"  Launched {avd} on port {port} — waiting for boot...\n")
+
+            state["_emu_procs"] = [p for _, _, p, _ in procs]
             phones = []
-
-            for avd, serial, _ in procs:
+            for avd, serial, proc, log_path in procs:
                 self.after(0, lambda a=avd: (
                     self._overall_lbl.config(text=f"Booting {a}...", fg=YELLOW)
                 ))
@@ -2935,16 +2958,27 @@ class BootPage(PageBase):
                         self._overall_lbl.config(text=f"✅ {a} running", fg=GREEN)
                     ))
                 else:
+                    # Boot timeout — dump emulator log for diagnosis
+                    err_lines = []
+                    if log_path and Path(log_path).exists():
+                        try:
+                            err_lines = Path(log_path).read_text(errors="ignore").splitlines()[-20:]
+                        except Exception:
+                            pass
+                    err_msg = "\n".join(err_lines) if err_lines else "(no log)"
                     self._log_write(
-                        f"  ❌ {avd} timed out. Enable Windows Hypervisor Platform:\n"
-                        f"     Settings → Turn Windows features on/off → Windows Hypervisor Platform ✅\n")
+                        f"  ❌ {avd} BOOT TIMED OUT.\n"
+                        f"     Enable Windows Hypervisor Platform:\n"
+                        f"       Settings → Turn Windows features on/off → Windows Hypervisor Platform ✅\n"
+                        f"     Emulator log:\n"
+                        f"     {err_msg[:400]}")
                     self.after(0, lambda a=avd: (
-                        self._overall_lbl.config(text=f"❌ {a} failed", fg=RED)
+                        self._overall_lbl.config(text=f"❌ {a} timed out", fg=RED)
                     ))
 
             state["phones"] = phones
-            state["_emu_procs"] = [p for _, _, p in procs]
-            n = len(state["phones"])
+            state["_emu_procs"] = [p for _, _, p, _ in procs]
+            n = len(phones)
             self.after(0, lambda: (
                 self._boot_btn.config(state="normal"),
                 self._stop_btn.config(
@@ -3459,7 +3493,7 @@ class GroupsPage(PageBase):
                     # Clone Phone 1's sequence to all phones in this group
                     for phone in state["phones"]:
                         s = phone["serial"]
-                        if s not in group["phones"]:
+                        if s in group["phones"]:
                             group["phones"][s]["steps"] = list(msteps)
                         else:
                             group["phones"][s] = {"steps": list(msteps)}

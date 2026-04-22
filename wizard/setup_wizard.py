@@ -2368,18 +2368,34 @@ class AndroidStudioPage(PageBase):
         manual = self._path_var.get().strip()
         if manual and Path(manual, "platform-tools").exists():
             state["sdk_path"] = manual
+            self._log_write(f"Manual path set: {manual}\n")
+
         sdk = state.get("sdk_path", "")
         if not sdk:
             self._set_status("⬇", "Android SDK not installed yet.",
-                             detail="Click the button below to install it automatically.",
+                             detail="Click Install below, or paste folder path above and click Check.",
                              color=T2)
+            self._log_write("No SDK path found. Install it or enter a path above.\n")
             self._ready = False
             return False
-        has_emu = Path(sdk_tool("emulator")).exists()
-        has_avd = Path(sdk_tool("avdmanager")).exists()
-        has_sdk = Path(sdk_tool("sdkmanager")).exists()
+
+        self._log_write(f"Checking SDK at: {sdk}\n")
+
+        # Check tools directly in common locations — more reliable than sdk_tool()
+        base = Path(sdk)
+        has_emu = (base / "emulator" / "emulator.exe").exists() or (base / "emulator" / "emulator").exists()
+        has_avd = (base / "cmdline-tools" / "latest" / "bin" / "avdmanager.bat").exists() \
+                  or (base / "cmdline-tools" / "latest" / "bin" / "avdmanager").exists() \
+                  or (base / "tools" / "bin" / "avdmanager.bat").exists()
+        has_sdk = (base / "cmdline-tools" / "latest" / "bin" / "sdkmanager.bat").exists() \
+                  or (base / "cmdline-tools" / "latest" / "bin" / "sdkmanager").exists()
+
+        self._log_write(f"  emulator: {'found' if has_emu else 'missing'}\n")
+        self._log_write(f"  avdmanager: {'found' if has_avd else 'missing'}\n")
+        self._log_write(f"  sdkmanager: {'found' if has_sdk else 'missing'}\n")
 
         if has_emu and has_avd and has_sdk:
+            self._log_write("All tools present!\n")
             self._finish_ok(sdk)
             return True
 
@@ -2390,9 +2406,10 @@ class AndroidStudioPage(PageBase):
         self._set_status(
             "⚙",
             f"SDK found but missing: {', '.join(missing)}",
-            detail="Click the button below to install the missing pieces.",
+            detail="Click Install Missing Tools below.",
             color=YELLOW,
         )
+        self._log_write(f"Missing: {', '.join(missing)} — click Install below.\n")
         self._install_btn.config(
             state="normal",
             text=f"Install Missing Tools ({', '.join(missing)})",
@@ -2401,6 +2418,96 @@ class AndroidStudioPage(PageBase):
         self._ready = False
         return False
 
+    def _do_firewall(self):
+        ok = _add_firewall_exception_for_java()
+        if ok:
+            self._log_write("\nFirewall rule submitted — approve the UAC prompt that appeared.")
+            self._log_write("Then click Try Again.\n")
+        else:
+            self._log_write("\n❌  Could not launch PowerShell — add the rule manually:\n")
+            self._log_write('   Windows Security → Firewall → Advanced → Outbound Rules')
+            self._log_write('   → New Rule → Program → browse to java.exe → Allow\n')
+
+    def _show_java_button(self):
+        if hasattr(self, "_java_btn"):
+            return
+        self._java_btn = tk.Button(
+            self,
+            text="☕  Download Java for Windows ARM64  (opens browser)",
+            font=("Segoe UI", 11, "bold"),
+            bg=YELLOW, fg="#000000",
+            relief="flat", cursor="hand2",
+            padx=16, pady=10,
+            command=lambda: webbrowser.open(JAVA_DOWNLOAD_URL),
+        )
+        self._java_btn.pack(fill="x", pady=(6, 0))
+
+    # ── main install flow ─────────────────────────────────────────────────────
+
+    def _install_all(self):
+        if self._working:
+            return
+        self._working = True
+        self._install_btn.config(state="disabled", text="Working… please wait")
+        threading.Thread(target=self._install_thread, daemon=True).start()
+
+    def _install_thread(self):
+        try:
+            self._set_progress(0, "Starting…")
+
+            if not self._check_java():
+                self._install_java()
+            else:
+                self._set_row("java", "✅  Already installed", GREEN)
+
+            self._set_progress(20, "")
+
+            if not self._check_python():
+                self._install_python()
+            else:
+                self._set_row("python", "✅  Already installed", GREEN)
+                state["python_cmd"] = _find_python() or "python"
+
+            self._set_progress(40, "")
+
+            if not self._check_packages():
+                self._install_packages()
+            else:
+                self._set_row("packages", "✅  Already installed", GREEN)
+
+            self._set_progress(56, "")
+
+            if not self._check_tor():
+                self._install_tor()
+            else:
+                self._set_row("tor", "✅  Already installed", GREEN)
+
+            self._set_progress(74, "")
+
+            if not self._check_cpharm():
+                self._install_cpharm()
+            else:
+                self._set_row("cpharm", "✅  Already here", GREEN)
+
+            self._set_progress(100, "Done!")
+            self._log_write("\n✅  All done. Click Next → to continue.")
+            self._ready = True
+            self._install_btn.config(
+                state="normal",
+                text="✅  Ready — click Next →",
+                bg=GREEN,
+            )
+        except Exception as exc:
+            self._log_write(f"\n❌  Error: {exc}")
+            self._install_btn.config(state="normal", text="⬇   Try Again")
+        finally:
+            self._working = False
+
+    # ── page hooks ────────────────────────────────────────────────────────────
+
+    def on_enter(self):
+        self._check()
+
     def can_advance(self):
         if self._ready:
             return True
@@ -2408,168 +2515,6 @@ class AndroidStudioPage(PageBase):
             "Not ready yet",
             "Click 'Install Android SDK' and wait for it to finish first.\n\n"
             "The wizard will download and set everything up automatically."
-        )
-        return False
-
-
-# ─── page 3: phone farm setup ─────────────────────────────────────────────────
-
-class PhoneFarmPage(PageBase):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self._done = False
-        self.header(
-            "Step 2 — Create Virtual Phones",
-            "The wizard downloads Android 14 and creates your virtual phones automatically.\n"
-            "One-time setup. Each phone uses ~2 GB RAM + ~4 GB disk."
-        )
-
-        # Count selection
-        count_box = tk.Frame(self, bg=BG3, padx=16, pady=14)
-        count_box.pack(fill="x", pady=(0, 10))
-        tk.Label(count_box, text="How many virtual phones?",
-                 font=("Segoe UI", 11, "bold"), bg=BG3, fg=T1, anchor="w").pack(fill="x")
-        tk.Label(count_box,
-                 text="16 GB RAM → up to 5 phones  |  32 GB RAM → up to 10 phones\n"
-                      "Start small. You can always add more later.",
-                 font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(4, 10))
-
-        picker = tk.Frame(count_box, bg=BG3)
-        picker.pack(fill="x", pady=(4, 8))
-
-        self._count_btns: dict[int, tk.Button] = {}
-        for n in [1, 2, 3, 5, 8, 10]:
-            b = tk.Button(picker, text=str(n), width=4,
-                          font=("Segoe UI", 12, "bold"),
-                          bg=ACCENT if n == 3 else BG2,
-                          fg=BG if n == 3 else T1,
-                          relief="flat", cursor="hand2",
-                          command=lambda v=n: self._pick_count(v))
-            b.pack(side="left", padx=3)
-            self._count_btns[n] = b
-
-        self._count_lbl = tk.Label(count_box, text="3 phones selected",
-                                    font=FS, bg=BG3, fg=T2)
-        self._count_lbl.pack(anchor="w", pady=(8, 0))
-
-        # What happens box
-        explain = tk.Frame(self, bg=BG2, padx=14, pady=10)
-        explain.pack(fill="x", pady=(0, 10))
-        tk.Label(explain, text="What clicking Create does:",
-                 font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1, anchor="w").pack(fill="x")
-        tk.Label(explain,
-                 text="  1.  Downloads Android 14 system image (~1 GB) — only once\n"
-                      "  2.  Creates one Pixel 6 virtual phone per slot\n"
-                      "  3.  Each phone gets a unique device ID and storage\n"
-                      "  4.  Names them CPharm_Phone_1, CPharm_Phone_2, etc.",
-                 font=FB, bg=BG2, fg=T2, justify="left", anchor="w").pack(fill="x", pady=(8, 0))
-
-        # Create button
-        create_row = tk.Frame(self, bg=BG)
-        create_row.pack(fill="x", pady=(0, 8))
-        self._create_btn = tk.Button(create_row,
-                                     text="  ▶  Create Phone Farm  ",
-                                     font=("Segoe UI", 12, "bold"),
-                                     bg=GREEN, fg=BG, relief="flat",
-                                     cursor="hand2", command=self._create,
-                                     padx=20, pady=10)
-        self._create_btn.pack(side="left", padx=(0, 10))
-        self._progress_lbl = tk.Label(create_row, text="", font=FS, bg=BG, fg=T2)
-        self._progress_lbl.pack(side="left")
-
-        # Log
-        log_fr = tk.Frame(self, bg=BG2)
-        log_fr.pack(fill="both", expand=True, pady=(4, 0))
-        self._log_box = tk.Text(log_fr, height=9, font=FM, bg=BG2, fg=T1,
-                                relief="flat", state="disabled", wrap="word")
-        sb = tk.Scrollbar(log_fr, orient="vertical", command=self._log_box.yview)
-        self._log_box.configure(yscrollcommand=sb.set)
-        self._log_box.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-
-    def _pick_count(self, n):
-        state["num_phones"] = n
-        for num, btn in self._count_btns.items():
-            btn.config(bg=ACCENT if num == n else BG2,
-                       fg=BG    if num == n else T1)
-        ram  = n * 2
-        disk = n * 4
-        self._count_lbl.config(
-            text=f"{n} phone{'s' if n != 1 else ''} selected  "
-                 f"(~{ram} GB RAM, ~{disk} GB disk needed)")
-
-    def on_enter(self):
-        self._pick_count(state.get("num_phones", 3))
-        existing = [a for a in list_avds() if a.startswith("CPharm_Phone_")]
-        if existing:
-            state["avds"] = existing
-            self._log_write(f"Found {len(existing)} existing phone(s): "
-                            f"{', '.join(existing)}\n")
-            self._log_write("Phones already created! Click Next → to continue.\n")
-            self._progress_lbl.config(
-                text=f"✅  {len(existing)} phone(s) ready", fg=GREEN)
-            self._done = True
-
-    def _log_write(self, text):
-        self._log_box.config(state="normal")
-        self._log_box.insert("end", text)
-        self._log_box.see("end")
-        self._log_box.config(state="disabled")
-
-    def _create(self):
-        n = state.get("num_phones", 3)
-        self._create_btn.config(state="disabled", text=" Creating phones… ")
-        self._log_write(f"Creating {n} virtual phone(s). This may take 10–30 minutes.\n\n")
-
-        def go():
-            created = []
-            for i in range(1, n + 1):
-                name = f"CPharm_Phone_{i}"
-                self._progress_lbl.config(
-                    text=f"Creating {i}/{n}: {name}…", fg=YELLOW)
-                self._log_write(f"══ Phone {i} of {n}: {name} ══\n")
-                try:
-                    ok, err = create_avd(name, log_fn=self._log_write)
-                except Exception as exc:
-                    ok, err = False, str(exc)
-                if ok:
-                    created.append(name)
-                else:
-                    self._log_write(f"  ❌  Error: {err}\n")
-
-            state["avds"] = created
-            total = len(created)
-
-            if created:
-                self._log_write(f"\n✅  Done! {total} phone(s) created.\n")
-                self._log_write("Click Next → to start the phones.\n")
-                self._done = True
-                self._progress_lbl.config(
-                    text=f"✅  {total} phone(s) ready!", fg=GREEN)
-            else:
-                self._log_write("\n❌  No phones were created. "
-                                "Check errors above.\n")
-                self._progress_lbl.config(
-                    text="❌  Failed — check log", fg=RED)
-
-            self._create_btn.config(
-                state="normal",
-                text="✅  Phones Created!" if created else "  ▶  Try Again  ")
-
-        threading.Thread(target=go, daemon=True).start()
-
-    def can_advance(self):
-        avds = state.get("avds", [])
-        if avds:
-            return True
-        running = [a for a in list_avds() if a.startswith("CPharm_Phone_")]
-        if running:
-            state["avds"] = running
-            return True
-        messagebox.showinfo(
-            "Phones not created yet",
-            "Click 'Create Phone Farm' and wait for it to finish.\n\n"
-            "This downloads Android 14 and sets up virtual phones — only happens once."
         )
         return False
 
@@ -2878,7 +2823,7 @@ class BootPage(PageBase):
         if not avds:
             messagebox.showerror("No phones", "Go back and create phones first.")
             return
-        self._boot_btn.config(state="disabled")
+        self._boot_btn.config(state="disabled", text="Starting…")
         self._stop_btn.config(state="normal")
         self._log_write(f"Starting {len(avds)} phone(s)...\n")
 
@@ -2963,7 +2908,7 @@ class BootPage(PageBase):
             state["_emu_procs"] = [p for _, _, p, _ in procs]
             n = len(phones)
             self.after(0, lambda: (
-                self._boot_btn.config(state="normal"),
+                self._boot_btn.config(state="normal", text="Starting…"),
                 self._stop_btn.config(
                     state="disabled" if not phones else "normal"),
                 self._overall_lbl.config(
@@ -2989,7 +2934,7 @@ class BootPage(PageBase):
                 pass
         state["_emu_procs"] = []
         state["phones"] = []
-        self._boot_btn.config(state="normal")
+        self._boot_btn.config(state="normal", text="Starting…")
         self._stop_btn.config(state="disabled")
         self._overall_lbl.config(text="All phones stopped.", fg=T2)
         self._log_write("All phones stopped.\n")

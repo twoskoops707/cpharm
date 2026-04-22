@@ -97,7 +97,7 @@ state = {
     "sdk_path":    "",
     "num_phones":  3,
     "phones":      [],
-    "avds":        [],
+    "avds":      [],
     "_emu_procs":  [],
     "groups": [{
         "name":           "Group 1",
@@ -2599,15 +2599,13 @@ class BootPage(PageBase):
         self._boot_btn = tk.Button(phone_row, text="▶  Start All Phones",
                                   font=("Segoe UI", 10, "bold"),
                                   bg=GREEN, fg=BG, relief="flat",
-                                  cursor="hand2", padx=14, pady=7,
-                                  command=self._boot_all)
+                                  cursor="hand2", command=self._boot_all)
         self._boot_btn.pack(side="left", padx=(0, 8))
         self._stop_btn = tk.Button(phone_row, text="■  Stop All",
                                   font=("Segoe UI", 10, "bold"),
                                   bg=RED, fg=BG, relief="flat",
-                                  cursor="hand2", padx=14, pady=7,
-                                  state="disabled",
-                                  command=self._stop_all)
+                                  cursor="hand2", command=self._stop_all,
+                                  state="disabled")
         self._stop_btn.pack(side="left")
         self._overall_lbl = tk.Label(phone_row, text="",
                                      font=FS, bg=BG3, fg=T2)
@@ -2629,8 +2627,7 @@ class BootPage(PageBase):
                                    text="🔧  Setup Chrome on All Phones",
                                    font=("Segoe UI", 10, "bold"),
                                    bg=YELLOW, fg=BG, relief="flat",
-                                   cursor="hand2", padx=14, pady=6,
-                                   command=self._setup_chrome_all)
+                                   cursor="hand2", command=self._setup_chrome_all)
         self._chrome_btn.pack(side="left", padx=(0, 10))
         self._chrome_lbl = tk.Label(chrome_ctrl, text="", font=FS, bg=BG3, fg=T2)
         self._chrome_lbl.pack(side="left")
@@ -2673,14 +2670,12 @@ class BootPage(PageBase):
         self._btn_srv_start = tk.Button(srv_row, text="▶  Start Server",
                                         font=("Segoe UI", 10, "bold"),
                                         bg=GREEN, fg=BG, relief="flat",
-                                        cursor="hand2", padx=14, pady=7,
-                                        command=self._start_server)
+                                        cursor="hand2", command=self._start_server)
         self._btn_srv_start.pack(side="left", padx=(0, 8))
         self._btn_srv_stop = tk.Button(srv_row, text="■  Stop Server",
                                        font=("Segoe UI", 10, "bold"),
                                        bg=RED, fg=BG, relief="flat",
-                                       cursor="hand2", padx=14, pady=7,
-                                       state="disabled",
+                                       cursor="hand2", state="disabled",
                                        command=self._stop_server)
         self._btn_srv_stop.pack(side="left")
         self._srv_lbl = tk.Label(srv_row, text="Server not running",
@@ -2711,8 +2706,7 @@ class BootPage(PageBase):
                                    text="▶ Start Schedule",
                                    font=("Segoe UI", 10, "bold"),
                                    bg=PURPLE, fg=BG, relief="flat",
-                                   cursor="hand2", padx=12, pady=6,
-                                   command=self._start_schedule)
+                                   cursor="hand2", command=self._start_schedule)
         self._sched_btn.pack(side="left", padx=(8, 0))
         self._sched_lbl = tk.Label(sched_row, text="", font=FS, bg=BG3, fg=T2)
         self._sched_lbl.pack(side="left", padx=8)
@@ -2733,15 +2727,12 @@ class BootPage(PageBase):
         self._btn_run = tk.Button(grp_row, text="▶  Run All Groups",
                                   font=("Segoe UI", 10, "bold"),
                                   bg=GREEN, fg=BG, relief="flat",
-                                  cursor="hand2", padx=14, pady=7,
-                                  state="disabled",
-                                  command=self._run_groups)
+                                  cursor="hand2", command=self._run_groups)
         self._btn_run.pack(side="left", padx=(0, 8))
         self._btn_stop_grp = tk.Button(grp_row, text="■  Stop All Groups",
                                        font=("Segoe UI", 10, "bold"),
                                        bg=RED, fg=BG, relief="flat",
-                                       cursor="hand2", padx=14, pady=7,
-                                       state="disabled",
+                                       cursor="hand2", state="disabled",
                                        command=self._stop_groups)
         self._btn_stop_grp.pack(side="left")
         self._run_lbl = tk.Label(grp_row, text="", font=FS, bg=BG3, fg=T2)
@@ -2932,14 +2923,6 @@ class BootPage(PageBase):
                     continue
 
                 procs.append((avd, serial, proc, log_path))
-                self._log_write(f"  Launched {avd} on port {port} — waiting for boot...\n")
-
-            state["_emu_procs"] = [p for _, _, p, _ in procs]
-            phones = []
-            for avd, serial, proc, log_path in procs:
-                self.after(0, lambda a=avd: (
-                    self._overall_lbl.config(text=f"Booting {a}...", fg=YELLOW)
-                ))
                 self._log_write(f"  Waiting for {avd} to boot (can take 2-5 min)...\n")
                 ok = wait_for_boot(serial)
                 if not ok:
@@ -3068,19 +3051,19 @@ class BootPage(PageBase):
             return {"error": str(e)}
 
     def _run_groups(self):
-        self._log_write("Starting all groups…\n")
+        self._log_write("Starting all groups…")
         self._btn_run.config(state="disabled")
         self._btn_stop_grp.config(state="normal")
 
         def go():
             result = self._api("/api/groups/run", {"groups": state["groups"]})
             if "error" in result:
-                self._log_write(f"❌  {result['error']}\n")
+                self._log_write(f"❌  {result['error']}")
                 self._btn_run.config(state="normal")
                 self._btn_stop_grp.config(state="disabled")
             else:
                 n = result.get("groups", len(state["groups"]))
-                self._log_write(f"✅  {n} group(s) running in parallel!\n")
+                self._log_write(f"✅  {n} group(s) running in parallel!")
                 self._run_lbl.config(text=f"{n} running", fg=GREEN)
 
         threading.Thread(target=go, daemon=True).start()
@@ -3088,12 +3071,44 @@ class BootPage(PageBase):
     def _stop_groups(self):
         def go():
             self._api("/api/groups/stop", {})
-            self._log_write("All groups stopped.\n")
+            self._log_write("All groups stopped.")
             self._run_lbl.config(text="", fg=T2)
             self._btn_run.config(state="normal")
             self._btn_stop_grp.config(state="disabled")
 
         threading.Thread(target=go, daemon=True).start()
+
+
+    def _start_schedule(self):
+        """Start the daily schedule on all booted phones."""
+        hits = self._sched_hits_var.get()
+        phones = state.get("phones", [])
+        if not phones:
+            messagebox.showwarning("No phones running",
+                                   "Boot phones first (Step 3).")
+            return
+        serials = [p["serial"] for p in phones]
+        steps = state["groups"][0].get("steps", []) if state.get("groups") else []
+        try:
+            import urllib.request
+            url = f"http://localhost:{DASHBOARD_PORT}/api/scheduler/start"
+            body = json.dumps({"serials": serials, "steps": steps,
+                              "hits_per_day": hits}).encode()
+            req = urllib.request.Request(
+                url, data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST")
+            with urllib.request.urlopen(req, timeout=5) as r:
+                result = json.loads(r.read())
+            if result.get("ok"):
+                self._sched_lbl.config(
+                    text=f"Hitting {len(serials)} phones {hits}×/day randomly",
+                    fg=GREEN)
+                self._log_write("Scheduler started.\n")
+            else:
+                self._sched_lbl.config(text="Failed: " + str(result), fg=RED)
+        except Exception as e:
+            self._sched_lbl.config(text=f"Error: {e}", fg=RED)
 
 
 # ─── page 5: google play testing guide ───────────────────────────────────────
@@ -3188,7 +3203,7 @@ class PlayStorePage(PageBase):
         phones = state.get("phones", [])
         if not phones:
             messagebox.showwarning("No phones running",
-                                 "Boot phones first (Step 3).")
+                                   "Boot phones first (Step 3).")
             return
         serials = [p["serial"] for p in phones]
         steps = state["groups"][0].get("steps", []) if state.get("groups") else []
@@ -3212,7 +3227,6 @@ class PlayStorePage(PageBase):
                 self._sched_lbl.config(text="Failed: " + str(result), fg=RED)
         except Exception as e:
             self._sched_lbl.config(text=f"Error: {e}", fg=RED)
-
 
 
 class GroupsPage(PageBase):
@@ -3733,15 +3747,13 @@ class LaunchPage(PageBase):
         self._btn_srv_start = tk.Button(srv_row, text="▶  Start Server",
                                         font=("Segoe UI", 10, "bold"),
                                         bg=GREEN, fg=BG, relief="flat",
-                                        cursor="hand2", padx=14, pady=7,
-                                        command=self._start_server)
+                                        cursor="hand2", command=self._start_server)
         self._btn_srv_start.pack(side="left", padx=(0, 8))
         self._btn_srv_stop = tk.Button(srv_row, text="■  Stop Server",
                                        font=("Segoe UI", 10, "bold"),
                                        bg=RED, fg=BG, relief="flat",
-                                       cursor="hand2", padx=14, pady=7,
-                                       state="disabled",
-                                       command=self._stop_server)
+                                       cursor="hand2", command=self._stop_server,
+                                       state="disabled")
         self._btn_srv_stop.pack(side="left")
         self._srv_lbl = tk.Label(srv_row, text="Server not running",
                                   font=FS, bg=BG3, fg=T2)
@@ -3771,8 +3783,7 @@ class LaunchPage(PageBase):
                                    text="▶ Start Schedule",
                                    font=("Segoe UI", 10, "bold"),
                                    bg=PURPLE, fg=BG, relief="flat",
-                                   cursor="hand2", padx=12, pady=6,
-                                   command=self._start_schedule)
+                                   cursor="hand2", command=self._start_schedule)
         self._sched_btn.pack(side="left", padx=(8, 0))
         self._sched_lbl = tk.Label(sched_row, text="", font=FS, bg=BG3, fg=T2)
         self._sched_lbl.pack(side="left", padx=8)
@@ -3793,15 +3804,12 @@ class LaunchPage(PageBase):
         self._btn_run = tk.Button(grp_row, text="▶  Run All Groups",
                                   font=("Segoe UI", 10, "bold"),
                                   bg=GREEN, fg=BG, relief="flat",
-                                  cursor="hand2", padx=14, pady=7,
-                                  state="disabled",
-                                  command=self._run_groups)
+                                  cursor="hand2", command=self._run_groups)
         self._btn_run.pack(side="left", padx=(0, 8))
         self._btn_stop_grp = tk.Button(grp_row, text="■  Stop All Groups",
                                        font=("Segoe UI", 10, "bold"),
                                        bg=RED, fg=BG, relief="flat",
-                                       cursor="hand2", padx=14, pady=7,
-                                       state="disabled",
+                                       cursor="hand2", state="disabled",
                                        command=self._stop_groups)
         self._btn_stop_grp.pack(side="left")
         self._run_lbl = tk.Label(grp_row, text="", font=FS, bg=BG3, fg=T2)
@@ -3971,6 +3979,37 @@ class LaunchPage(PageBase):
             self._btn_stop_grp.config(state="disabled")
 
         threading.Thread(target=go, daemon=True).start()
+
+    def _start_schedule(self):
+        """Start the daily schedule on all booted phones."""
+        hits = self._sched_hits_var.get()
+        phones = state.get("phones", [])
+        if not phones:
+            messagebox.showwarning("No phones running",
+                                   "Boot phones first (Step 3).")
+            return
+        serials = [p["serial"] for p in phones]
+        steps = state["groups"][0].get("steps", []) if state.get("groups") else []
+        try:
+            import urllib.request
+            url = f"http://localhost:{DASHBOARD_PORT}/api/scheduler/start"
+            body = json.dumps({"serials": serials, "steps": steps,
+                              "hits_per_day": hits}).encode()
+            req = urllib.request.Request(
+                url, data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST")
+            with urllib.request.urlopen(req, timeout=5) as r:
+                result = json.loads(r.read())
+            if result.get("ok"):
+                self._sched_lbl.config(
+                    text=f"Hitting {len(serials)} phones {hits}×/day randomly",
+                    fg=GREEN)
+                self._log_write("Scheduler started.\n")
+            else:
+                self._sched_lbl.config(text="Failed: " + str(result), fg=RED)
+        except Exception as e:
+            self._sched_lbl.config(text=f"Error: {e}", fg=RED)
 
 
 # ─── main wizard ──────────────────────────────────────────────────────────────

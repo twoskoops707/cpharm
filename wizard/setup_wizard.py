@@ -1074,7 +1074,7 @@ def create_avd(name, log_fn=None):
         try:
             proc = subprocess.Popen(
                 [avdmgr, "create", "avd", "-n", name,
-                 "-k", image, "-d", device, "--force"],
+                 "-k", image, "-d", device],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -1117,7 +1117,7 @@ def start_emulator(avd_name, port):
     # -no-boot-anim             — skip boot animation (faster boot)
     # -no-audio                 — prevent audio device errors on ARM
     # -wipe-data                — start with clean userdata (fresh identity each run)
-    accel_args = ["-accel", "auto", "-gpu", "swiftshader_indirect",
+    accel_args = ["-gpu", "swiftshader_indirect",
                   "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"]
 
     # Open a visible console window so the user can watch the emulator boot.

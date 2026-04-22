@@ -404,7 +404,10 @@ async def handle_post(path: str, body: bytes) -> bytes:
             return json_err("only .apk files allowed")
         APK_DIR.mkdir(exist_ok=True)
         dest = APK_DIR / safe_name
-        dest.write_bytes(base64.b64decode(file_b64))
+        try:
+            dest.write_bytes(base64.b64decode(file_b64))
+        except Exception:
+            return json_err("invalid base64 data")
         return json_ok({"ok": True, "name": safe_name})
 
     # ── APK install ──
@@ -780,7 +783,10 @@ async def handle_post(path: str, body: bytes) -> bytes:
         cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
         if not cfg_path.exists():
             return json_err("no saved groups_config.json found")
-        cfg = json.loads(cfg_path.read_text())
+        try:
+            cfg = json.loads(cfg_path.read_text())
+        except Exception:
+            return json_err("corrupt groups_config.json")
         for g in cfg.get("groups", []):
             if g.get("name") == group_name:
                 phone_map = g.get("phones", {})
@@ -941,7 +947,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
 
 async def handle_scheduler(path, body_bytes):
     from scheduler import handle_scheduler as _hs
-    return await _hs(path, body_bytes)
+    return await _hs(path, body_bytes=body_bytes)
 
 async def ws_handler(websocket):
     _ws_clients.add(websocket)

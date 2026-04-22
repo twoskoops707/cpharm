@@ -1,29 +1,43 @@
-"""CPharm Scheduler — daily hit quota per phone with random fire-times.
+"""
+CPharm Scheduler — daily hit quota per phone with random fire-times.
 Per-phone: given hits_per_day, generates N fire-times spread randomly across 24h and executes the sequence.
 """
-import asyncio, datetime, json, logging, random, sys, threading, time as _time
+import asyncio
+import datetime
+import json
+import logging
+import random
+import sys
+import threading
+import time as _time
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent))
+
 import dashboard
 import tor_manager
 
 log = logging.getLogger("scheduler")
-PHONE_SCHED = {}   # serial → {"hits": N, "times": [epoch], "idx": N}
-RUNNING = {}        # serial → bool
+
+PHONE_SCHED = {}   # serial -> {"hits": N, "times": [epoch], "idx": N}
+RUNNING = {}        # serial -> bool
 _main_loop = None   # event loop captured from async context
 
-def _name(serial):
+
+def _name(serial: str) -> str:
     try:
         return next(p["name"] for p in dashboard.list_phones() if p["serial"] == serial)
     except StopIteration:
         return serial
 
-def _gen_today(hits):
+
+def _gen_today(hits: int) -> list[float]:
     mn = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     offsets = sorted(random.uniform(0, 86400) for _ in range(hits))
     return [mn + o for o in offsets]
 
-def _run_steps(serial, steps):
+
+def _run_steps(serial: str, steps: list):
     for step in (steps or []):
         t = step.get("type", "")
         if t == "open_url":
@@ -52,11 +66,13 @@ def _run_steps(serial, steps):
             tor_manager.rotate_identity_adb(serial, idx)
         _time.sleep(random.uniform(0.35, 0.55))
 
-def _broadcast_from_thread(msg):
+
+def _broadcast_from_thread(msg: dict):
     if _main_loop is not None:
         asyncio.run_coroutine_threadsafe(dashboard.broadcast(msg), _main_loop)
 
-def _sched_loop(serial, steps, hits_per_day):
+
+def _sched_loop(serial: str, steps: list, hits_per_day: int):
     log.info("[scheduler] %s started (%s hits/day)", _name(serial), hits_per_day)
     while RUNNING.get(serial, False):
         info = PHONE_SCHED.get(serial, {})
@@ -90,7 +106,8 @@ def _sched_loop(serial, steps, hits_per_day):
     log.info("[scheduler] %s stopped", _name(serial))
     RUNNING.pop(serial, None)
 
-async def handle_scheduler(path, body_bytes, method="POST"):
+
+async def handle_scheduler(path: str, body_bytes: bytes, method: str = "POST"):
     global _main_loop
     _main_loop = asyncio.get_running_loop()
 
@@ -100,6 +117,7 @@ async def handle_scheduler(path, body_bytes, method="POST"):
             data = json.loads(body_bytes)
         except Exception:
             pass
+
     if path == "/api/scheduler/generate":
         serials = data.get("serials", [])
         hits = int(data.get("hits_per_day", 0))
@@ -109,6 +127,7 @@ async def handle_scheduler(path, body_bytes, method="POST"):
             PHONE_SCHED[s] = {"hits": hits, "times": times, "idx": 0}
             result[s] = [datetime.datetime.fromtimestamp(t).strftime("%H:%M") for t in times[:12]]
         return dashboard.json_ok({"schedule": result})
+
     if path == "/api/scheduler/start":
         serials = data.get("serials", [])
         steps = data.get("steps", [])
@@ -122,10 +141,12 @@ async def handle_scheduler(path, body_bytes, method="POST"):
             t.start()
             started.append(s)
         return dashboard.json_ok({"started": started})
+
     if path == "/api/scheduler/stop":
         for k in list(RUNNING):
             RUNNING[k] = False
         return dashboard.json_ok({"ok": True})
+
     if path == "/api/scheduler/status":
         out = {}
         for s, info in PHONE_SCHED.items():
@@ -138,4 +159,5 @@ async def handle_scheduler(path, body_bytes, method="POST"):
                 "running": RUNNING.get(s, False),
             }
         return dashboard.json_ok(out)
+
     return dashboard.json_ok({"ok": False, "error": "unknown route"})

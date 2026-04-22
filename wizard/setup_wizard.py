@@ -2521,6 +2521,169 @@ class AndroidStudioPage(PageBase):
 
 # ─── page 4: boot phones ──────────────────────────────────────────────────────
 
+class PhoneFarmPage(PageBase):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._done = False
+        self.header(
+            "Step 2 — Create Virtual Phones",
+            "The wizard downloads Android 14 and creates your virtual phones automatically.\n"
+            "One-time setup. Each phone uses ~2 GB RAM + ~4 GB disk."
+        )
+
+        # Count selection
+        count_box = tk.Frame(self, bg=BG3, padx=16, pady=14)
+        count_box.pack(fill="x", pady=(0, 10))
+        tk.Label(count_box, text="How many virtual phones?",
+                 font=("Segoe UI", 11, "bold"), bg=BG3, fg=T1, anchor="w").pack(fill="x")
+        tk.Label(count_box,
+                 text="16 GB RAM → up to 5 phones  |  32 GB RAM → up to 10 phones\n"
+                      "Start small. You can always add more later.",
+                 font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(4, 10))
+
+        picker = tk.Frame(count_box, bg=BG3)
+        picker.pack(fill="x", pady=(4, 8))
+
+        self._count_btns: dict[int, tk.Button] = {}
+        for n in [1, 2, 3, 5, 8, 10]:
+            b = tk.Button(picker, text=str(n), width=4,
+                          font=("Segoe UI", 12, "bold"),
+                          bg=ACCENT if n == 3 else BG2,
+                          fg=BG if n == 3 else T1,
+                          relief="flat", cursor="hand2",
+                          command=lambda v=n: self._pick_count(v))
+            b.pack(side="left", padx=3)
+            self._count_btns[n] = b
+
+        self._count_lbl = tk.Label(count_box, text="3 phones selected",
+                                    font=FS, bg=BG3, fg=T2)
+        self._count_lbl.pack(anchor="w", pady=(8, 0))
+
+        # What happens box
+        explain = tk.Frame(self, bg=BG2, padx=14, pady=10)
+        explain.pack(fill="x", pady=(0, 10))
+        tk.Label(explain, text="What clicking Create does:",
+                 font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1, anchor="w").pack(fill="x")
+        tk.Label(explain,
+                 text="  1.  Downloads Android 14 system image (~1 GB) — only once\n"
+                      "  2.  Creates one Pixel 6 virtual phone per slot\n"
+                      "  3.  Each phone gets a unique device ID and storage\n"
+                      "  4.  Names them CPharm_Phone_1, CPharm_Phone_2, etc.",
+                 font=FB, bg=BG2, fg=T2, justify="left", anchor="w").pack(fill="x", pady=(8, 0))
+
+        # Create button
+        create_row = tk.Frame(self, bg=BG)
+        create_row.pack(fill="x", pady=(0, 8))
+        self._create_btn = tk.Button(create_row,
+                                     text="  ▶  Create Phone Farm  ",
+                                     font=("Segoe UI", 12, "bold"),
+                                     bg=GREEN, fg=BG, relief="flat",
+                                     cursor="hand2", command=self._create,
+                                     padx=20, pady=10)
+        self._create_btn.pack(side="left", padx=(0, 10))
+        self._progress_lbl = tk.Label(create_row, text="", font=FS, bg=BG, fg=T2)
+        self._progress_lbl.pack(side="left")
+
+        # Log
+        log_fr = tk.Frame(self, bg=BG2)
+        log_fr.pack(fill="both", expand=True, pady=(4, 0))
+        self._log_box = tk.Text(log_fr, height=9, font=FM, bg=BG2, fg=T1,
+                                relief="flat", state="disabled", wrap="word")
+        sb = tk.Scrollbar(log_fr, orient="vertical", command=self._log_box.yview)
+        self._log_box.configure(yscrollcommand=sb.set)
+        self._log_box.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+    def _pick_count(self, n):
+        state["num_phones"] = n
+        for num, btn in self._count_btns.items():
+            btn.config(bg=ACCENT if num == n else BG2,
+                       fg=BG    if num == n else T1)
+        ram  = n * 2
+        disk = n * 4
+        self._count_lbl.config(
+            text=f"{n} phone{'s' if n != 1 else ''} selected  "
+                 f"(~{ram} GB RAM, ~{disk} GB disk needed)")
+
+    def on_enter(self):
+        self._pick_count(state.get("num_phones", 3))
+        existing = [a for a in list_avds() if a.startswith("CPharm_Phone_")]
+        if existing:
+            state["avds"] = existing
+            self._log_write(f"Found {len(existing)} existing phone(s): "
+                            f"{', '.join(existing)}\n")
+            self._log_write("Phones already created! Click Next → to continue.\n")
+            self._progress_lbl.config(
+                text=f"✅  {len(existing)} phone(s) ready", fg=GREEN)
+            self._done = True
+
+    def _log_write(self, text):
+        self._log_box.config(state="normal")
+        self._log_box.insert("end", text)
+        self._log_box.see("end")
+        self._log_box.config(state="disabled")
+
+    def _create(self):
+        n = state.get("num_phones", 3)
+        self._create_btn.config(state="disabled", text=" Creating phones… ")
+        self._log_write(f"Creating {n} virtual phone(s). This may take 10–30 minutes.\n\n")
+
+        def go():
+            created = []
+            for i in range(1, n + 1):
+                name = f"CPharm_Phone_{i}"
+                self._progress_lbl.config(
+                    text=f"Creating {i}/{n}: {name}…", fg=YELLOW)
+                self._log_write(f"══ Phone {i} of {n}: {name} ══\n")
+                try:
+                    ok, err = create_avd(name, log_fn=self._log_write)
+                except Exception as exc:
+                    ok, err = False, str(exc)
+                if ok:
+                    created.append(name)
+                else:
+                    self._log_write(f"  ❌  Error: {err}\n")
+
+            state["avds"] = created
+            total = len(created)
+
+            if created:
+                self._log_write(f"\n✅  Done! {total} phone(s) created.\n")
+                self._log_write("Click Next → to start the phones.\n")
+                self._done = True
+                self._progress_lbl.config(
+                    text=f"✅  {total} phone(s) ready!", fg=GREEN)
+            else:
+                self._log_write("\n❌  No phones were created. "
+                                "Check errors above.\n")
+                self._progress_lbl.config(
+                    text="❌  Failed — check log", fg=RED)
+
+            self._create_btn.config(
+                state="normal",
+                text="✅  Phones Created!" if created else "  ▶  Try Again  ")
+
+        threading.Thread(target=go, daemon=True).start()
+
+    def can_advance(self):
+        avds = state.get("avds", [])
+        if avds:
+            return True
+        running = [a for a in list_avds() if a.startswith("CPharm_Phone_")]
+        if running:
+            state["avds"] = running
+            return True
+        messagebox.showinfo(
+            "Phones not created yet",
+            "Click 'Create Phone Farm' and wait for it to finish.\n\n"
+            "This downloads Android 14 and sets up virtual phones — only happens once."
+        )
+        return False
+
+
+# ─── page 4: boot phones ──────────────────────────────────────────────────────
+
+
 class BootPage(PageBase):
     def __init__(self, parent):
         super().__init__(parent)

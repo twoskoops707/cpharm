@@ -3427,6 +3427,13 @@ class PlayStorePage(PageBase):
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfig(win_id, width=e.width))
 
+    def on_enter(self):  pass
+    def can_advance(self): return True
+
+    def _log_write(self, text):
+        self.app._status_write(text)
+
+
         sections = [
             (ACCENT, "What is Closed Testing?",
              "Google lets you test your app with specific people before going live.\n"

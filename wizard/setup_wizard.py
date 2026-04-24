@@ -248,6 +248,18 @@ def list_adb_devices():
     return devices
 
 
+def _is_valid_sdk(p: str) -> bool:
+    if not p:
+        return False
+    base = Path(p)
+    if (base / "platform-tools").exists():
+        return True
+    ext = ".bat" if IS_WIN else ""
+    for ct in (base / "cmdline-tools").glob(f"*/bin/sdkmanager{ext}"):
+        return True
+    return False
+
+
 def find_sdk():
     candidates = [
         os.environ.get("ANDROID_HOME", ""),
@@ -259,7 +271,7 @@ def find_sdk():
         "C:/Users/Public/Android/Sdk",
     ]
     for p in candidates:
-        if p and Path(p, "platform-tools").exists():
+        if _is_valid_sdk(p):
             return str(Path(p))
     return ""
 
@@ -2359,16 +2371,19 @@ class AndroidStudioPage(PageBase):
 
     def _browse(self):
         d = filedialog.askdirectory(
-            title="Select Android SDK folder  (the one containing platform-tools)")
+            title="Select Android SDK root folder  (contains cmdline-tools or platform-tools)")
         if d:
             self._path_var.set(d)
             self._check()
 
     def _check(self):
         manual = self._path_var.get().strip()
-        if manual and Path(manual, "platform-tools").exists():
+        if manual and _is_valid_sdk(manual):
             state["sdk_path"] = manual
             self._log_write(f"Manual path set: {manual}\n")
+        elif manual:
+            self._log_write(f"Path entered but no SDK found there: {manual}\n")
+            self._log_write("  Expected: cmdline-tools/latest/bin/sdkmanager or platform-tools/\n")
 
         sdk = state.get("sdk_path", "")
         if not sdk:

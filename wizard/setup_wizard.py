@@ -2578,6 +2578,9 @@ class PhoneFarmPage(PageBase):
         self._log_box.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
 
+    def _update_type_labels(self):
+        pass
+
     def _pick_count(self, n):
         state["num_phones"] = n
         for num, btn in self._count_btns.items():

@@ -1854,6 +1854,7 @@ class PrerequisitesPage(PageBase):
         threading.Thread(target=self._install_thread, daemon=True).start()
 
     def _install_thread(self):
+        import socket; socket.setdefaulttimeout(30)
         try:
             self._set_progress(0, "Starting…")
 
@@ -2400,6 +2401,7 @@ class AndroidStudioPage(PageBase):
         threading.Thread(target=self._install_thread, daemon=True).start()
 
     def _install_thread(self):
+        import socket; socket.setdefaulttimeout(30)
         try:
             self._set_progress(0, "Starting…")
 

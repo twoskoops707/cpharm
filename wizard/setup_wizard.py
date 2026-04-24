@@ -3980,6 +3980,9 @@ class LaunchPage(PageBase):
         self._log_box.see("end")
         self._log_box.config(state="disabled")
 
+    def _log_write(self, text):
+        self._log(text)
+
     def _save(self):
         d = state.get("cpharm_dir", "")
         if not d:

@@ -1447,21 +1447,8 @@ class WelcomePage(PageBase):
 # ─── page 2: prerequisites auto-install ──────────────────────────────────────
 
 def _fetch_latest_tor_url() -> str:
-    try:
-        with urllib.request.urlopen(
-            "https://dist.torproject.org/torbrowser/", timeout=8
-        ) as r:
-            content = r.read().decode()
-        versions = re.findall(r'href="(\d+\.\d+\.\d+)/"', content)
-        if versions:
-            latest = sorted(versions,
-                            key=lambda v: tuple(int(x) for x in v.split(".")))[-1]
-            return (
-                f"https://dist.torproject.org/torbrowser/{latest}/"
-                f"tor-expert-bundle-windows-x86_64-{latest}.tar.gz"
-            )
-    except Exception:
-        pass
+    # Use the fallback directly — dist.torproject.org is slow/unreliable on some networks
+    # and blocking here freezes the entire install thread. The fallback is always current enough.
     return TOR_FALLBACK_URL
 
 
@@ -1607,7 +1594,10 @@ class PrerequisitesPage(PageBase):
                 mb   = done / 1_048_576
                 tot  = total / 1_048_576
                 self._set_progress(pct, f"{label}  {mb:.0f} / {tot:.0f} MB")
-        urllib.request.urlretrieve(url, dest, hook)
+        try:
+            urllib.request.urlretrieve(url, dest, hook)
+        except Exception as e:
+            raise RuntimeError(f"Failed to download {label} from {url}: {e}") from e
 
     # ── checks ────────────────────────────────────────────────────────────────
 

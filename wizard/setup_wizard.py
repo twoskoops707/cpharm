@@ -947,7 +947,43 @@ def _ensure_emulator_meta(sdk, log_fn=None):
                    "    to get the full emulator package with device definitions.\n")
 
 
-def create_avd(name, log_fn=None):
+def delete_avd(name, log_fn=None):
+    """Delete an AVD and its data directory. Returns (success, message)."""
+    sdk = state.get("sdk_path") or find_sdk()
+    if not sdk:
+        return False, "Android SDK not found"
+    sdkmgr_path = _canonical_sdkmanager(sdk)
+    ext   = ".bat" if IS_WIN else ""
+    avdmgr = str(Path(sdkmgr_path).parent / f"avdmanager{ext}")
+    flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
+    if log_fn:
+        log_fn(f"  Deleting AVD: {name}…\n")
+    try:
+        r = subprocess.run(
+            [avdmgr, "delete", "avd", "-n", name],
+            capture_output=True, text=True, timeout=60,
+            env=_sdk_env(), creationflags=flags,
+        )
+        out = (r.stdout + r.stderr).strip()
+        if log_fn:
+            log_fn(out + "\n")
+        # Clean up AVD data directory too
+        avd_dir = Path(os.path.expanduser("~/.android/avd"), name + ".avd")
+        if avd_dir.exists():
+            shutil.rmtree(avd_dir, ignore_errors=True)
+            if log_fn:
+                log_fn(f"  Removed data: {avd_dir}\n")
+        if r.returncode == 0 or "deleted" in out.lower() or "not found" in out.lower():
+            if log_fn:
+                log_fn(f"  ✅  {name} deleted.\n")
+            return True, ""
+        return False, out
+    except Exception as e:
+        return False, str(e)
+
+
+def create_avd(name, device_id, arch, log_fn=None):
+    """Create an AVD. device_id and arch are passed explicitly — no hardcoding."""
     sdk = state.get("sdk_path") or find_sdk()
     if not sdk:
         return False, "Android SDK not found"
@@ -956,7 +992,6 @@ def create_avd(name, log_fn=None):
     sdkmgr_path = _canonical_sdkmanager(sdk)
     ext    = ".bat" if IS_WIN else ""
     avdmgr = str(Path(sdkmgr_path).parent / f"avdmanager{ext}")
-    arch   = _machine_arch()
     image  = f"system-images;android-34;google_apis;{arch}"
 
     java_home = _find_java_home()
@@ -1045,8 +1080,8 @@ def create_avd(name, log_fn=None):
     # and AVD creation fails with "emulator package must be installed!"
     _ensure_emulator_meta(sdk, log_fn)
 
-    # Discover device IDs that are actually present in this SDK installation.
-    # Never guess IDs — avdmanager -d is case-sensitive and varies between SDK versions.
+    # Discover device IDs available in this SDK installation.
+    # device_id is passed in — validate it exists, fall back gracefully.
     try:
         r = subprocess.run(
             [avdmgr, "list", "device", "-c"],
@@ -1057,21 +1092,18 @@ def create_avd(name, log_fn=None):
     except Exception:
         all_ids = []
 
-    # Preferred device IDs in priority order — use the first one that exists in this SDK.
-    preferred = ["pixel_6", "pixel_5", "pixel_4", "pixel_3", "pixel_2",
-                 "pixel_xl", "pixel", "nexus_6p", "nexus_6", "nexus_5"]
-    device_profiles = [d for d in preferred if d in all_ids]
-
-    # If none of our preferred IDs exist, fall back to the first available device
-    if not device_profiles and all_ids:
+    # Use the requested device_id if it exists in this SDK; otherwise try the first available.
+    if device_id in all_ids:
+        device_profiles = [device_id]
+    elif all_ids:
         device_profiles = [all_ids[0]]
-
-    if not device_profiles:
-        device_profiles = ["pixel_6"]   # last resort — avdmanager will give a clear error
+        if log_fn:
+            log_fn(f"  Requested device '{device_id}' not found — using '{all_ids[0]}' instead.\n")
+    else:
+        device_profiles = [device_id]   # last resort
 
     if log_fn:
-        log_fn(f"  Available device IDs (first 5): {all_ids[:5]}\n")
-        log_fn(f"  Will try: {device_profiles}\n")
+        log_fn(f"  Device ID: {device_profiles[0]}\n")
 
     if not Path(avdmgr).exists():
         return False, (
@@ -2368,7 +2400,68 @@ class AndroidStudioPage(PageBase):
         )
         self._java_btn.pack(fill="x", pady=(6, 0))
 
-    # ── standard page hooks ───────────────────────────────────────────────────
+    # ── main install flow ─────────────────────────────────────────────────────
+
+    def _install_all(self):
+        if self._working:
+            return
+        self._working = True
+        self._install_btn.config(state="disabled", text="Working… please wait")
+        threading.Thread(target=self._install_thread, daemon=True).start()
+
+    def _install_thread(self):
+        try:
+            self._set_progress(0, "Starting…")
+
+            if not self._check_java():
+                self._install_java()
+            else:
+                self._set_row("java", "✅  Already installed", GREEN)
+
+            self._set_progress(20, "")
+
+            if not self._check_python():
+                self._install_python()
+            else:
+                self._set_row("python", "✅  Already installed", GREEN)
+                state["python_cmd"] = _find_python() or "python"
+
+            self._set_progress(40, "")
+
+            if not self._check_packages():
+                self._install_packages()
+            else:
+                self._set_row("packages", "✅  Already installed", GREEN)
+
+            self._set_progress(56, "")
+
+            if not self._check_tor():
+                self._install_tor()
+            else:
+                self._set_row("tor", "✅  Already installed", GREEN)
+
+            self._set_progress(74, "")
+
+            if not self._check_cpharm():
+                self._install_cpharm()
+            else:
+                self._set_row("cpharm", "✅  Already here", GREEN)
+
+            self._set_progress(100, "Done!")
+            self._log_write("\n✅  All done. Click Next → to continue.")
+            self._ready = True
+            self._install_btn.config(
+                state="normal",
+                text="✅  Ready — click Next →",
+                bg=GREEN,
+            )
+        except Exception as exc:
+            self._log_write(f"\n❌  Error: {exc}")
+            self._install_btn.config(state="normal", text="⬇   Try Again")
+        finally:
+            self._working = False
+
+    # ── page hooks ────────────────────────────────────────────────────────────
 
     def on_enter(self):
         self._check()
@@ -2578,6 +2671,31 @@ class PhoneFarmPage(PageBase):
                                     font=FS, bg=BG3, fg=T2)
         self._count_lbl.pack(anchor="w", pady=(8, 0))
 
+        # Per-phone name entries
+        self._phone_name_vars: dict[int, tk.StringVar] = {}
+        self._phone_rows: dict[int, dict] = {}
+        self._phone_frame = tk.Frame(count_box, bg=BG3)
+        self._phone_frame.pack(fill="x", pady=(4, 0))
+
+        # Phone type selection
+        type_box = tk.Frame(count_box, bg=BG3, pady=6)
+        type_box.pack(fill="x")
+        tk.Label(type_box, text="Phone type:", font=FS, bg=BG3, fg=T2).pack(side="left")
+        self._phone_type_var = tk.StringVar(value="pixel_6")
+        for disp, val in [
+            ("Pixel 6 (recommended)", "pixel_6"),
+            ("Pixel 5",              "pixel_5"),
+            ("Pixel 4",              "pixel_4"),
+            ("Pixel 3",              "pixel_3"),
+            ("Pixel 2",              "pixel_2"),
+            ("Nexus 6P",             "nexus_6p"),
+            ("Nexus 5",              "nexus_5"),
+        ]:
+            tk.Radiobutton(type_box, text=disp, variable=self._phone_type_var,
+                           value=val, font=FS, bg=BG3, fg=T1,
+                           selectcolor=BG2, activebackground=BG3,
+                           command=self._update_type_labels).pack(side="left", padx=(0, 8))
+
         # What happens box
         explain = tk.Frame(self, bg=BG2, padx=14, pady=10)
         explain.pack(fill="x", pady=(0, 10))
@@ -2622,16 +2740,33 @@ class PhoneFarmPage(PageBase):
         disk = n * 4
         self._count_lbl.config(
             text=f"{n} phone{'s' if n != 1 else ''} selected  "
-                 f"(~{ram} GB RAM, ~{disk} GB disk needed)")
+                 f"(~{ram} GB RAM, ~{disk} GB disk)")
+        # Rebuild per-phone name entry rows
+        for w in self._phone_frame.winfo_children():
+            w.destroy()
+        self._phone_rows.clear()
+        for i in range(1, n + 1):
+            row = tk.Frame(self._phone_frame, bg=BG2, padx=6, pady=3)
+            row.pack(fill="x", pady=1)
+            tk.Label(row, text=f"Phone {i}:", font=FM, bg=BG2, fg=T2,
+                     width=10, anchor="w").pack(side="left")
+            name_var = tk.StringVar(value=f"CPharm_Phone_{i}")
+            self._phone_name_vars[i] = name_var
+            tk.Entry(row, textvariable=name_var, font=FM, bg=BG3, fg=T1,
+                     insertbackground=T1, relief="flat", width=22).pack(side="left", padx=(0, 6))
+            # Init row dict
+            if i not in self._phone_rows:
+                self._phone_rows[i] = {}
+            self._phone_rows[i]["name_var"] = name_var
 
     def on_enter(self):
         self._pick_count(state.get("num_phones", 3))
         existing = [a for a in list_avds() if a.startswith("CPharm_Phone_")]
+        state["avds"] = existing
         if existing:
-            state["avds"] = existing
             self._log_write(f"Found {len(existing)} existing phone(s): "
                             f"{', '.join(existing)}\n")
-            self._log_write("Phones already created! Click Next → to continue.\n")
+            self._log_write("Click Next → to continue, or Create / Recreate to overwrite.\n")
             self._progress_lbl.config(
                 text=f"✅  {len(existing)} phone(s) ready", fg=GREEN)
             self._done = True
@@ -2644,43 +2779,74 @@ class PhoneFarmPage(PageBase):
 
     def _create(self):
         n = state.get("num_phones", 3)
+        # Collect user-specified names
+        names = []
+        for i in range(1, n + 1):
+            row = self._phone_rows.get(i, {})
+            name_var = row.get("name_var")
+            name = name_var.get().strip() if name_var else ""
+            if not name:
+                name = f"CPharm_Phone_{i}"
+            names.append(name)
+
+        # Check for duplicate names
+        seen = set()
+        duplicates = [nm for nm in names if nm in seen or seen.add(nm)]
+        if duplicates:
+            messagebox.showwarning("Duplicate Names",
+                f"These phone names are duplicated: {duplicates}\n"
+                "Give each phone a unique name.")
+            return
+
+        device_id = self._phone_type_var.get()
+        arch = _machine_arch()
+
+        # Check if any name already exists as an AVD
+        existing = set(list_avds())
+        conflicts = [nm for nm in names if nm in existing]
+        if conflicts:
+            resp = messagebox.askyesno(
+                "Names Already Exist",
+                f"These AVDs already exist: {conflicts}\n\n"
+                "Click YES to delete them first and recreate.\n"
+                "Click NO to skip those names.")
+            if not resp:
+                return
+            for nm in conflicts:
+                delete_avd(nm, log_fn=self._log_write)
+
         self._create_btn.config(state="disabled", text=" Creating phones… ")
-        self._log_write(f"Creating {n} virtual phone(s). This may take 10–30 minutes.\n\n")
+        self._log_write(f"Creating {n} phone(s) using '{device_id}'…\n\n")
 
         def go():
             created = []
-            for i in range(1, n + 1):
-                name = f"CPharm_Phone_{i}"
-                self._progress_lbl.config(
-                    text=f"Creating {i}/{n}: {name}…", fg=YELLOW)
-                self._log_write(f"══ Phone {i} of {n}: {name} ══\n")
+            for i, name in enumerate(names, 1):
+                self.after(0, lambda i=i, name=name:
+                    self._progress_lbl.config(
+                        text=f"Creating {i}/{len(names)}: {name}…", fg=YELLOW))
+                self._log_write(f"══ {name} ══\n")
                 try:
-                    ok, err = create_avd(name, log_fn=self._log_write)
+                    ok, err = create_avd(name, device_id, arch, log_fn=self._log_write)
                 except Exception as exc:
                     ok, err = False, str(exc)
                 if ok:
                     created.append(name)
                 else:
-                    self._log_write(f"  ❌  Error: {err}\n")
+                    self._log_write(f"  ❌  {err}\n")
 
             state["avds"] = created
-            total = len(created)
-
             if created:
-                self._log_write(f"\n✅  Done! {total} phone(s) created.\n")
-                self._log_write("Click Next → to start the phones.\n")
+                self._log_write(f"\n✅  {len(created)} phone(s) created!\n"
+                               "Click Next → to start them.\n")
                 self._done = True
-                self._progress_lbl.config(
-                    text=f"✅  {total} phone(s) ready!", fg=GREEN)
+                self._progress_lbl.config(text=f"✅  {len(created)} ready!", fg=GREEN)
             else:
-                self._log_write("\n❌  No phones were created. "
-                                "Check errors above.\n")
-                self._progress_lbl.config(
-                    text="❌  Failed — check log", fg=RED)
+                self._log_write("\n❌  No phones created — see errors above.\n")
+                self._progress_lbl.config(text="❌  Failed", fg=RED)
 
             self._create_btn.config(
                 state="normal",
-                text="✅  Phones Created!" if created else "  ▶  Try Again  ")
+                text="✅  Done!" if created else "  ▶  Try Again  ")
 
         threading.Thread(target=go, daemon=True).start()
 
@@ -2934,8 +3100,8 @@ class BootPage(PageBase):
             tk.Label(row, text=f"ADB: {serial}", font=FM, bg=BG2,
                      fg=T3, width=20, anchor="w").pack(side="left")
             lbl = tk.Label(row, text="Not started", font=FS,
-                           bg=BG2, fg=T3)
-            lbl.pack(side="left", padx=6)
+                           bg=BG2, fg=T3, width=22, anchor="e")
+            lbl.pack(side="right")
             self._status_rows[avd] = lbl
 
     def _log_write(self, text):
@@ -3204,7 +3370,6 @@ class BootPage(PageBase):
             self._btn_stop_grp.config(state="disabled")
 
         threading.Thread(target=go, daemon=True).start()
-
 
     def _start_schedule(self):
         """Start the daily schedule on all booted phones."""

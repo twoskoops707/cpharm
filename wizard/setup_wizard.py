@@ -2021,6 +2021,10 @@ class AndroidStudioPage(PageBase):
         # Delegate to the shared helper which checks JBR, all common locations, etc.
         return bool(_find_java_home())
 
+    # Alias so both call styles work throughout the class
+    def _log_write(self, text):
+        self._log(text)
+
     # ── auto install ──────────────────────────────────────────────────────────
 
     def _auto_install(self):
@@ -3234,8 +3238,6 @@ class BootPage(PageBase):
             self._sched_lbl.config(text=f"Error: {e}", fg=RED)
 
 
-# ─── page 5: google play testing guide ───────────────────────────────────────
-
 class PlayStorePage(PageBase):
     """Explains how to use the phone farm for Google Play closed testing."""
     def __init__(self, parent):
@@ -3266,7 +3268,7 @@ class PlayStorePage(PageBase):
              "These testers install the app through the normal Play Store — it looks real.\n"
              "Your virtual phones act as the 'testers'. Google accepts emulators for this."),
 
-            (GREEN, "Step A — Upload Your APK to Play Console",
+            (GREEN, "Step A — UploadYour APK to Play Console",
              "1. Go to play.google.com/console and sign in\n"
              "2. Create a new app (or open your existing one)\n"
              "3. Go to:  Testing → Internal testing  (or Closed testing)\n"
@@ -3315,41 +3317,6 @@ class PlayStorePage(PageBase):
                   relief="flat", cursor="hand2", padx=14, pady=8,
                   command=lambda: webbrowser.open("https://play.google.com/console")).pack(
                       anchor="w", pady=10, padx=2)
-
-
-# ─── page 6: groups & sequences ───────────────────────────────────────────────
-
-
-    def _start_schedule(self):
-        """Start the daily schedule on all booted phones."""
-        hits = self._sched_hits_var.get()
-        phones = state.get("phones", [])
-        if not phones:
-            messagebox.showwarning("No phones running",
-                                   "Boot phones first (Step 3).")
-            return
-        serials = [p["serial"] for p in phones]
-        steps = state["groups"][0].get("steps", []) if state.get("groups") else []
-        try:
-            import urllib.request
-            url = f"http://localhost:{DASHBOARD_PORT}/api/scheduler/start"
-            body = json.dumps({"serials": serials, "steps": steps,
-                              "hits_per_day": hits}).encode()
-            req = urllib.request.Request(
-                url, data=body,
-                headers={"Content-Type": "application/json"},
-                method="POST")
-            with urllib.request.urlopen(req, timeout=5) as r:
-                result = json.loads(r.read())
-            if result.get("ok"):
-                self._sched_lbl.config(
-                    text=f"Hitting {len(serials)} phones {hits}×/day randomly",
-                    fg=GREEN)
-                self._log_write("Scheduler started.\n")
-            else:
-                self._sched_lbl.config(text="Failed: " + str(result), fg=RED)
-        except Exception as e:
-            self._sched_lbl.config(text=f"Error: {e}", fg=RED)
 
 
 class GroupsPage(PageBase):
@@ -3478,7 +3445,7 @@ class GroupsPage(PageBase):
 
                 # Phone name
                 tk.Label(row, text=f"{phone['name']}",
-                         font=FM, bg=BG3, fg=T1, width=18, anchor="w").pack(side="left")
+                 font=FM, bg=BG3, fg=T1, width=18, anchor="w").pack(side="left")
 
                 # Step count
                 step_cnt = len(psteps)

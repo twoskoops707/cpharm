@@ -544,10 +544,9 @@ def _direct_download_emulator(sdk_path, log_fn=None):
             log_fn("      Check VPN, proxy, or router DNS settings.\n")
         return False
 
-    # Find the emulator Windows ZIP URL in the manifest; prefer ARM64 on ARM64 hosts
-    host_is_arm64 = _machine_arch() == "arm64-v8a"
+    # Google only ships a Windows x64 emulator binary — no ARM64 Windows native binary exists.
+    # On ARM64 Windows the x64 emulator runs via WOW64; WHPX accelerates x86_64 guests.
     emulator_url = None
-    emulator_url_x64 = None
     try:
         root = ET.fromstring(xml_data)
         for pkg in root.iter():
@@ -557,28 +556,15 @@ def _direct_download_emulator(sdk_path, log_fn=None):
                     if tag == "url":
                         val = (archive.text or "").strip()
                         if "windows" in val and val.endswith(".zip"):
-                            if "arm64" in val.lower() or "aarch64" in val.lower():
-                                emulator_url = BASE_URL + val
-                                break
-                            elif emulator_url_x64 is None:
-                                emulator_url_x64 = BASE_URL + val
+                            emulator_url = BASE_URL + val
+                            break
                 if emulator_url:
                     break
     except ET.ParseError:
         pass
 
-    if host_is_arm64 and emulator_url:
-        pass
-    elif emulator_url_x64:
-        emulator_url = emulator_url_x64
-
     if not emulator_url:
-        if host_is_arm64:
-            matches = re.findall(r"emulator-windows[^\"<\s]*arm64[^\"<\s]*\.zip", xml_data, re.I)
-            if not matches:
-                matches = re.findall(r"emulator-windows[^\"<\s]+\.zip", xml_data)
-        else:
-            matches = re.findall(r"emulator-windows[^\"<\s]+\.zip", xml_data)
+        matches = re.findall(r"emulator-windows[^\"<\s]+\.zip", xml_data)
         if matches:
             emulator_url = BASE_URL + matches[-1]
 
@@ -1143,14 +1129,15 @@ def start_emulator(avd_name, port):
     emu   = sdk_tool("emulator")
     env   = _sdk_env()
 
-    # -accel auto — let the emulator pick the best accelerator available
-    # (HAXM on Intel, WHPX on ARM64 Windows, KVM on Linux)
+    # -accel auto — explicitly tell emulator to auto-select best accelerator
+    # (WHPX on ARM64 Windows, HAXM on Intel, KVM on Linux)
     # -gpu swiftshader_indirect — software renderer; prevents GPU crash without Vulkan
     # -no-snapshot-save         — don't save state on shutdown (faster, cleaner)
     # -no-boot-anim             — skip boot animation (faster boot)
     # -no-audio                 — prevent audio device errors on ARM
     # -wipe-data                — start with clean userdata (fresh identity each run)
-    accel_args = ["-gpu", "swiftshader_indirect",
+    accel_args = ["-accel", "auto",
+                  "-gpu", "swiftshader_indirect",
                   "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"]
 
     # Open a visible console window so the user can watch the emulator boot.
@@ -2695,7 +2682,9 @@ class PhoneFarmPage(PageBase):
         avds = state.get("avds", [])
         if avds:
             return True
-        running = [a for a in list_avds() if a.startswith("CPharm_Phone_")]
+        prefix = state.get("phone_prefix", "CPharm_Phone")
+        running = [a for a in list_avds()
+                   if a.startswith(prefix + "_") or a.startswith("CPharm_Phone_")]
         if running:
             state["avds"] = running
             return True

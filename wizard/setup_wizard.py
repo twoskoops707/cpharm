@@ -497,7 +497,7 @@ def _direct_download_platform_tools(sdk_path, log_fn=None):
     if log_fn:
         log_fn(f"  Downloading platform-tools directly…\n")
     try:
-        urllib.request.urlretrieve(url, tmp)
+        _urlretrieve(url, tmp, timeout=60)
         with zipfile.ZipFile(tmp, "r") as zf:
             zf.extractall(dest)
         tmp.unlink(missing_ok=True)
@@ -578,7 +578,7 @@ def _direct_download_emulator(sdk_path, log_fn=None):
 
     tmp = Path(sdk_path) / "_emu_tmp.zip"
     try:
-        urllib.request.urlretrieve(emulator_url, tmp)
+        _urlretrieve(emulator_url, tmp, timeout=120)
         emu_dest = Path(sdk_path) / "emulator"
         if emu_dest.exists():
             shutil.rmtree(emu_dest)
@@ -754,7 +754,7 @@ def _direct_download_system_image(arch: str, sdk_path: str, log_fn=None) -> bool
     tmp  = dest / "_sysimg_tmp.zip"
     img_dir = dest / "system-images" / "android-34" / "google_apis" / arch
     try:
-        urllib.request.urlretrieve(image_url, tmp)
+        _urlretrieve(image_url, tmp, timeout=120)
         img_dir.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(tmp, "r") as zf:
             for member in zf.namelist():
@@ -1402,6 +1402,16 @@ class WelcomePage(PageBase):
 
 # ─── page 2: prerequisites auto-install ──────────────────────────────────────
 
+def _urlretrieve(url, dest, hook=None, timeout=60):
+    """Download with timeout — never hangs forever."""
+    import socket
+    old = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(timeout)
+    try:
+        _urlretrieve(url, dest, hook)
+    finally:
+        socket.setdefaulttimeout(old)
+
 def _fetch_latest_tor_url() -> str:
     try:
         with urllib.request.urlopen(
@@ -1563,7 +1573,7 @@ class PrerequisitesPage(PageBase):
                 mb   = done / 1_048_576
                 tot  = total / 1_048_576
                 self._set_progress(pct, f"{label}  {mb:.0f} / {tot:.0f} MB")
-        urllib.request.urlretrieve(url, dest, hook)
+        _urlretrieve(url, dest, hook)
 
     # ── checks ────────────────────────────────────────────────────────────────
 
@@ -1733,7 +1743,7 @@ class PrerequisitesPage(PageBase):
         self._set_row("tor", "⬇  Downloading…", ACCENT)
 
         tmp = tor_dir / "_tor_bundle.tar.gz"
-        self._download(tor_url, tmp, "Tor", 58, 72)
+        _urlretrieve(tor_url, tmp, timeout=120)
 
         self._set_row("tor", "📦  Extracting…", YELLOW)
         self._log_write("Extracting Tor…")
@@ -1765,7 +1775,7 @@ class PrerequisitesPage(PageBase):
         tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / "cpharm.zip"
         zip_ok = True
         try:
-            self._download(CPHARM_ZIP_URL, tmp, "CPharm", 76, 88)
+            _urlretrieve(CPHARM_ZIP_URL, tmp, timeout=120)
         except Exception as e:
             self._log_write(f"  ZIP download failed: {e}")
             zip_ok = False
@@ -2095,7 +2105,7 @@ class AndroidStudioPage(PageBase):
             for try_url in [CMDLINE_TOOLS_URL, CMDLINE_TOOLS_URL_ALT]:
                 self._log_write(f"Downloading from:\n  {try_url}")
                 try:
-                    urllib.request.urlretrieve(try_url, zip_path, _progress_hook)
+                    _urlretrieve(try_url, zip_path, _progress_hook, timeout=120)
                     downloaded = True
                     break
                 except Exception as e:
@@ -2274,7 +2284,7 @@ class AndroidStudioPage(PageBase):
 
         tmp = Path(sdk) / "_emu_meta.zip"
         try:
-            urllib.request.urlretrieve(meta_url, tmp)
+            _urlretrieve(meta_url, tmp, timeout=60)
             meta_dir.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(tmp, "r") as zf:
                 for member in zf.namelist():

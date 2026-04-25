@@ -1140,19 +1140,24 @@ def start_emulator(avd_name, port):
                   "-gpu", "swiftshader_indirect",
                   "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"]
 
-    # Open a visible console window so the user can watch the emulator boot.
-    # CREATE_NEW_CONSOLE opens a real cmd window — the emulator output is visible.
-    # We still write to a log file for crash diagnostics.
+    # On Windows, open a visible console window so the user can see boot output
+    # and any crash messages. Do NOT redirect stdout/stderr to a file here —
+    # file handles from the parent are not inherited into a new console, which
+    # causes the window to be blank AND can make the emulator crash immediately.
+    # On non-Windows, redirect to a log file for background operation.
     launch_flags = subprocess.CREATE_NEW_CONSOLE if IS_WIN else 0
 
-    try:
-        log_dir = Path(os.environ.get("TEMP", r"C:\Temp"))
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / f"cpharm_emu_{avd_name}.log"
-        log_file = open(log_path, "w")
-    except Exception:
-        log_file = subprocess.DEVNULL
-        log_path = None
+    log_path = None
+    if not IS_WIN:
+        try:
+            log_dir = Path(os.environ.get("TEMP", "/tmp"))
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / f"cpharm_emu_{avd_name}.log"
+            log_file = open(log_path, "w")
+        except Exception:
+            log_file = subprocess.DEVNULL
+    else:
+        log_file = None   # let output go to the new console window
 
     # On Windows, emulator may be a .bat wrapper (emulator.bat/emulator.cmd).
     # Popen with a list on Windows does NOT automatically run .bat files —
@@ -1160,15 +1165,13 @@ def start_emulator(avd_name, port):
     argv = [emu, "-avd", avd_name, "-port", str(port)] + accel_args
     cmd_str = subprocess.list2cmdline(argv)
 
-    proc = subprocess.Popen(
-        cmd_str,
-        stdout=log_file,
-        stderr=log_file,
-        env=env,
-        creationflags=launch_flags,
-        shell=True,
-    )
-    if log_file is not subprocess.DEVNULL:
+    popen_kwargs = dict(env=env, creationflags=launch_flags, shell=True)
+    if log_file is not None:
+        popen_kwargs["stdout"] = log_file
+        popen_kwargs["stderr"] = log_file
+
+    proc = subprocess.Popen(cmd_str, **popen_kwargs)
+    if log_file and log_file is not subprocess.DEVNULL:
         proc._log_file = log_file
     return proc, log_path
 

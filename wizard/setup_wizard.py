@@ -785,12 +785,18 @@ def _direct_download_system_image(arch: str, sdk_path: str, log_fn=None) -> bool
                         out_path.write_bytes(zf.read(member))
         tmp.unlink(missing_ok=True)
         TARGET_PATH = f"system-images;android-34;google_apis;{arch}"
+        _simg_display = ("Google APIs Intel x86_64 Atom System Image"
+                         if arch == "x86_64"
+                         else "Google APIs ARM 64 v8a System Image")
+        _simg_license = ("android-sdk-license"
+                         if arch == "x86_64"
+                         else "android-sdk-arm-dbt-license")
         _write_local_package_xml(
             img_dir / "package.xml",
             path_id=TARGET_PATH,
             major=14, minor=0, micro=0,
-            display="Google APIs ARM 64 v8a System Image",
-            license_ref="android-sdk-arm-dbt-license",
+            display=_simg_display,
+            license_ref=_simg_license,
             ns_type="ns4:sysImgDetailsType",
             extra_ns='xmlns:ns4="http://schemas.android.com/sdk/android/repo/sys-img2/01"',
             extra_details=(
@@ -960,6 +966,12 @@ def create_avd(name, log_fn=None):
     ext    = ".bat" if IS_WIN else ""
     avdmgr = str(Path(sdkmgr_path).parent / f"avdmanager{ext}")
     arch   = _machine_arch()
+    # On Windows, Google's SDK repository only ships x64 emulator binaries.
+    # The x64 emulator runs via WOW64 on ARM64 Windows and QEMU2 reports
+    # the host as x86_64 — arm64-v8a images cause a FATAL at launch.
+    # Use x86_64 system images on all Windows hosts; WHPX accelerates them.
+    if IS_WIN:
+        arch = "x86_64"
     image  = f"system-images;android-34;google_apis;{arch}"
 
     java_home = _find_java_home()
@@ -997,12 +1009,18 @@ def create_avd(name, log_fn=None):
         try:
             if not pkg_xml.exists() or "<localPackage" not in pkg_xml.read_text(encoding="utf-8", errors="ignore"):
                 TARGET_PATH = f"system-images;android-34;google_apis;{arch}"
+                _img_display = ("Google APIs Intel x86_64 Atom System Image"
+                                if arch == "x86_64"
+                                else "Google APIs ARM 64 v8a System Image")
+                _img_license = ("android-sdk-license"
+                                if arch == "x86_64"
+                                else "android-sdk-arm-dbt-license")
                 _write_local_package_xml(
                     pkg_xml,
                     path_id=TARGET_PATH,
                     major=14, minor=0, micro=0,
-                    display="Google APIs ARM 64 v8a System Image",
-                    license_ref="android-sdk-arm-dbt-license",
+                    display=_img_display,
+                    license_ref=_img_license,
                     ns_type="ns4:sysImgDetailsType",
                     extra_ns='xmlns:ns4="http://schemas.android.com/sdk/android/repo/sys-img2/01"',
                     extra_details=(
@@ -1089,7 +1107,7 @@ def create_avd(name, log_fn=None):
         try:
             proc = subprocess.Popen(
                 [avdmgr, "create", "avd", "-n", name,
-                 "-k", image, "-d", device],
+                 "-k", image, "-d", device, "--force"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -2481,6 +2499,19 @@ class PhoneFarmPage(PageBase):
             "One-time setup. Each phone uses ~2 GB RAM + ~4 GB disk."
         )
 
+        # Phone name prefix
+        name_box = tk.Frame(self, bg=BG3, padx=16, pady=10)
+        name_box.pack(fill="x", pady=(0, 8))
+        tk.Label(name_box, text="Phone name prefix:",
+                 font=("Segoe UI", 10, "bold"), bg=BG3, fg=T1, anchor="w").pack(side="left")
+        self._prefix_var = tk.StringVar(value=state.get("phone_prefix", "CPharm_Phone"))
+        tk.Entry(name_box, textvariable=self._prefix_var, font=FM,
+                 bg=BG2, fg=T1, insertbackground=T1, relief="flat",
+                 width=22).pack(side="left", padx=(8, 6))
+        tk.Label(name_box, text="_1, _2, _3…", font=FS, bg=BG3, fg=T3).pack(side="left")
+        self._prefix_var.trace("w", lambda *_: state.update(
+            {"phone_prefix": self._prefix_var.get().strip() or "CPharm_Phone"}))
+
         # Count selection
         count_box = tk.Frame(self, bg=BG3, padx=16, pady=14)
         count_box.pack(fill="x", pady=(0, 10))
@@ -2515,13 +2546,13 @@ class PhoneFarmPage(PageBase):
         tk.Label(explain, text="What clicking Create does:",
                  font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1, anchor="w").pack(fill="x")
         tk.Label(explain,
-                 text="  1.  Downloads Android 14 system image (~1 GB) — only once\n"
+                 text="  1.  Downloads Android 14 x86_64 system image (~1 GB) — only once\n"
                       "  2.  Creates one Pixel 6 virtual phone per slot\n"
                       "  3.  Each phone gets a unique device ID and storage\n"
-                      "  4.  Names them CPharm_Phone_1, CPharm_Phone_2, etc.",
+                      "  4.  Names them {prefix}_1, {prefix}_2, etc.",
                  font=FB, bg=BG2, fg=T2, justify="left", anchor="w").pack(fill="x", pady=(8, 0))
 
-        # Create button
+        # Create + Delete buttons
         create_row = tk.Frame(self, bg=BG)
         create_row.pack(fill="x", pady=(0, 8))
         self._create_btn = tk.Button(create_row,
@@ -2531,6 +2562,10 @@ class PhoneFarmPage(PageBase):
                                      cursor="hand2", command=self._create,
                                      padx=20, pady=10)
         self._create_btn.pack(side="left", padx=(0, 10))
+        tk.Button(create_row, text="🗑 Delete All CPharm Phones",
+                  font=FS, bg=RED, fg=BG, relief="flat",
+                  cursor="hand2", command=self._delete_phones,
+                  padx=10, pady=8).pack(side="left", padx=(0, 10))
         self._progress_lbl = tk.Label(create_row, text="", font=FS, bg=BG, fg=T2)
         self._progress_lbl.pack(side="left")
 
@@ -2557,7 +2592,10 @@ class PhoneFarmPage(PageBase):
 
     def on_enter(self):
         self._pick_count(state.get("num_phones", 3))
-        existing = [a for a in list_avds() if a.startswith("CPharm_Phone_")]
+        prefix = state.get("phone_prefix", "CPharm_Phone")
+        existing = [a for a in list_avds() if a.startswith(prefix + "_")]
+        if not existing:
+            existing = [a for a in list_avds() if a.startswith("CPharm_Phone_")]
         if existing:
             state["avds"] = existing
             self._log_write(f"Found {len(existing)} existing phone(s): "
@@ -2573,15 +2611,53 @@ class PhoneFarmPage(PageBase):
         self._log_box.see("end")
         self._log_box.config(state="disabled")
 
+    def _delete_phones(self):
+        all_avds = list_avds()
+        to_delete = [a for a in all_avds if "CPharm" in a or "cpharm" in a.lower()]
+        prefix = state.get("phone_prefix", "CPharm_Phone")
+        to_delete += [a for a in all_avds if a.startswith(prefix + "_") and a not in to_delete]
+        if not to_delete:
+            self._log_write("No CPharm phones found to delete.\n")
+            return
+        if not messagebox.askyesno(
+            "Delete phones?",
+            f"Delete {len(to_delete)} AVD(s)?\n\n" + "\n".join(to_delete)
+        ):
+            return
+        self._progress_lbl.config(text="Deleting…", fg=YELLOW)
+        def go():
+            avdmgr = sdk_tool("avdmanager")
+            flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
+            deleted = []
+            for avd in to_delete:
+                self._log_write(f"  Deleting {avd}…\n")
+                try:
+                    subprocess.run(
+                        [avdmgr, "delete", "avd", "-n", avd],
+                        capture_output=True, timeout=30,
+                        env=_sdk_env(), creationflags=flags,
+                    )
+                    deleted.append(avd)
+                except Exception as e:
+                    self._log_write(f"  ⚠ {avd}: {e}\n")
+            state["avds"] = []
+            self._done = False
+            self._progress_lbl.config(
+                text=f"✅ Deleted {len(deleted)} phone(s)" if deleted else "❌ Nothing deleted",
+                fg=GREEN if deleted else RED)
+            self._log_write(f"Deleted {len(deleted)} phone(s). Ready to create fresh.\n")
+        threading.Thread(target=go, daemon=True).start()
+
     def _create(self):
         n = state.get("num_phones", 3)
+        prefix = state.get("phone_prefix", "CPharm_Phone")
         self._create_btn.config(state="disabled", text=" Creating phones… ")
         self._log_write(f"Creating {n} virtual phone(s). This may take 10–30 minutes.\n\n")
 
         def go():
             created = []
             for i in range(1, n + 1):
-                name = f"CPharm_Phone_{i}"
+                name = f"{prefix}_{i}"
                 self._progress_lbl.config(
                     text=f"Creating {i}/{n}: {name}…", fg=YELLOW)
                 self._log_write(f"══ Phone {i} of {n}: {name} ══\n")

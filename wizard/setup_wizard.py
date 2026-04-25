@@ -1743,7 +1743,13 @@ class PrerequisitesPage(PageBase):
         self._set_row("tor", "⬇  Downloading…", ACCENT)
 
         tmp = tor_dir / "_tor_bundle.tar.gz"
-        _urlretrieve(tor_url, tmp, timeout=120)
+        try:
+            _urlretrieve(tor_url, tmp, timeout=120)
+        except Exception as e:
+            self._log_write(f"  Download failed: {e}")
+            self._set_row("tor", "❌  Failed", RED)
+            self._log_write("  Tor download failed — IP rotation will use system Tor if available.")
+            return
 
         self._set_row("tor", "📦  Extracting…", YELLOW)
         self._log_write("Extracting Tor…")

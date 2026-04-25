@@ -544,8 +544,10 @@ def _direct_download_emulator(sdk_path, log_fn=None):
             log_fn("      Check VPN, proxy, or router DNS settings.\n")
         return False
 
-    # Find the emulator Windows ZIP URL in the manifest
+    # Find the emulator Windows ZIP URL in the manifest; prefer ARM64 on ARM64 hosts
+    host_is_arm64 = _machine_arch() == "arm64-v8a"
     emulator_url = None
+    emulator_url_x64 = None
     try:
         root = ET.fromstring(xml_data)
         for pkg in root.iter():
@@ -555,15 +557,28 @@ def _direct_download_emulator(sdk_path, log_fn=None):
                     if tag == "url":
                         val = (archive.text or "").strip()
                         if "windows" in val and val.endswith(".zip"):
-                            emulator_url = BASE_URL + val
-                            break
+                            if "arm64" in val.lower() or "aarch64" in val.lower():
+                                emulator_url = BASE_URL + val
+                                break
+                            elif emulator_url_x64 is None:
+                                emulator_url_x64 = BASE_URL + val
                 if emulator_url:
                     break
     except ET.ParseError:
         pass
 
+    if host_is_arm64 and emulator_url:
+        pass
+    elif emulator_url_x64:
+        emulator_url = emulator_url_x64
+
     if not emulator_url:
-        matches = re.findall(r"emulator-windows[^\"<\s]+\.zip", xml_data)
+        if host_is_arm64:
+            matches = re.findall(r"emulator-windows[^\"<\s]*arm64[^\"<\s]*\.zip", xml_data, re.I)
+            if not matches:
+                matches = re.findall(r"emulator-windows[^\"<\s]+\.zip", xml_data)
+        else:
+            matches = re.findall(r"emulator-windows[^\"<\s]+\.zip", xml_data)
         if matches:
             emulator_url = BASE_URL + matches[-1]
 
@@ -1460,6 +1475,8 @@ class PrerequisitesPage(PageBase):
     One button. Fully automatic. User just watches the progress.
     """
 
+    _log_write = lambda self, t: self._log(t)
+
     def __init__(self, parent):
         super().__init__(parent)
         self._ready   = False
@@ -1861,17 +1878,17 @@ class PrerequisitesPage(PageBase):
 
             self._set_progress(56, "")
 
-            if not self._check_tor():
-                self._install_tor()
-            else:
-                self._set_row("tor", "✅  Already installed", GREEN)
-
-            self._set_progress(74, "")
-
             if not self._check_cpharm():
                 self._install_cpharm()
             else:
                 self._set_row("cpharm", "✅  Already here", GREEN)
+
+            self._set_progress(74, "")
+
+            if not self._check_tor():
+                self._install_tor()
+            else:
+                self._set_row("tor", "✅  Already installed", GREEN)
 
             self._set_progress(100, "Done!")
             self._log_write("\n✅  All done. Click Next → to continue.")
@@ -1925,6 +1942,8 @@ class AndroidStudioPage(PageBase):
     Auto-downloads and installs the Android SDK command-line tools.
     No Android Studio, no terminal, no manual steps.
     """
+
+    _log_write = lambda self, t: self._log(t)
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -2039,7 +2058,7 @@ class AndroidStudioPage(PageBase):
             self._do_install()
         except Exception as exc:
             self._log_write(f"\n❌  Unexpected error: {exc}")
-            self._set_status("Something went wrong — see log below.", color=RED)
+            self._set_status("❌", "Something went wrong — see log below.", color=RED)
         finally:
             self._working = False
             if not self._ready:
@@ -2120,7 +2139,7 @@ class AndroidStudioPage(PageBase):
 
             if not downloaded:
                 self._log_write("Both cmdline-tools URLs failed.")
-                self._set_status("Network blocked — see options below", color=RED)
+                self._set_status("❌", "Network blocked — see options below", color=RED)
                 self._set_progress(0, "")
                 return
 
@@ -2151,6 +2170,11 @@ class AndroidStudioPage(PageBase):
             ns_type="ns5:genericDetailsType",
             extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
         )
+        latest_dir = tools_dir / "latest"
+        if latest_dir.exists():
+            shutil.rmtree(latest_dir)
+        shutil.move(str(extract_tmp / "cmdline-tools"), str(latest_dir))
+        shutil.rmtree(extract_tmp, ignore_errors=True)
         self._log_write("Extraction done ✅")
         self._set_progress(62, "Extracted.")
 
@@ -2204,7 +2228,7 @@ class AndroidStudioPage(PageBase):
         if not Path(sdk_tool("emulator")).exists():
             self._log("\n⚠  sdkmanager couldn't install emulator — Java network blocked by firewall.")
             self._log("   Switching to direct Python download (bypasses Java network stack)…\n")
-            self._set_status("Downloading emulator directly…",
+            self._set_status("⬇", "Downloading emulator directly…",
                              detail="Java is blocked by firewall — using Python downloader instead.",
                              color=YELLOW)
             self._set_progress(70, "Direct downloading emulator…")
@@ -2433,96 +2457,6 @@ class AndroidStudioPage(PageBase):
         )
         self._ready = False
         return False
-
-    def _do_firewall(self):
-        ok = _add_firewall_exception_for_java()
-        if ok:
-            self._log_write("\nFirewall rule submitted — approve the UAC prompt that appeared.")
-            self._log_write("Then click Try Again.\n")
-        else:
-            self._log_write("\n❌  Could not launch PowerShell — add the rule manually:\n")
-            self._log_write('   Windows Security → Firewall → Advanced → Outbound Rules')
-            self._log_write('   → New Rule → Program → browse to java.exe → Allow\n')
-
-    def _show_java_button(self):
-        if hasattr(self, "_java_btn"):
-            return
-        self._java_btn = tk.Button(
-            self,
-            text="☕  Download Java for Windows ARM64  (opens browser)",
-            font=("Segoe UI", 11, "bold"),
-            bg=YELLOW, fg="#000000",
-            relief="flat", cursor="hand2",
-            padx=16, pady=10,
-            command=lambda: webbrowser.open(JAVA_DOWNLOAD_URL),
-        )
-        self._java_btn.pack(fill="x", pady=(6, 0))
-
-    # ── main install flow ─────────────────────────────────────────────────────
-
-    def _install_all(self):
-        if self._working:
-            return
-        self._working = True
-        self._install_btn.config(state="disabled", text="Working… please wait")
-        threading.Thread(target=self._install_thread, daemon=True).start()
-
-    def _install_thread(self):
-        try:
-            self._set_progress(0, "Starting…")
-
-            if not self._check_java():
-                self._install_java()
-            else:
-                self._set_row("java", "✅  Already installed", GREEN)
-
-            self._set_progress(20, "")
-
-            if not self._check_python():
-                self._install_python()
-            else:
-                self._set_row("python", "✅  Already installed", GREEN)
-                state["python_cmd"] = _find_python() or "python"
-
-            self._set_progress(40, "")
-
-            if not self._check_packages():
-                self._install_packages()
-            else:
-                self._set_row("packages", "✅  Already installed", GREEN)
-
-            self._set_progress(56, "")
-
-            if not self._check_tor():
-                self._install_tor()
-            else:
-                self._set_row("tor", "✅  Already installed", GREEN)
-
-            self._set_progress(74, "")
-
-            if not self._check_cpharm():
-                self._install_cpharm()
-            else:
-                self._set_row("cpharm", "✅  Already here", GREEN)
-
-            self._set_progress(100, "Done!")
-            self._log_write("\n✅  All done. Click Next → to continue.")
-            self._ready = True
-            self._install_btn.config(
-                state="normal",
-                text="✅  Ready — click Next →",
-                bg=GREEN,
-            )
-        except Exception as exc:
-            self._log_write(f"\n❌  Error: {exc}")
-            self._install_btn.config(state="normal", text="⬇   Try Again")
-        finally:
-            self._working = False
-
-    # ── page hooks ────────────────────────────────────────────────────────────
-
-    def on_enter(self):
-        self._check()
 
     def can_advance(self):
         if self._ready:
@@ -3008,6 +2942,7 @@ class BootPage(PageBase):
 
         def go():
             procs = []          # (avd_name, serial, proc, log_path)
+            phones = []
             for i, avd in enumerate(avds):
                 port = 5554 + i * 2
                 serial = f"emulator-{port}"
@@ -3212,7 +3147,7 @@ class BootPage(PageBase):
                                    "Boot phones first (Step 3).")
             return
         serials = [p["serial"] for p in phones]
-        steps = state["groups"][0].get("steps", []) if state.get("groups") else []
+        steps = next(iter(state["groups"][0]["phones"].values()), {}).get("steps", []) if state.get("groups") else []
         try:
             import urllib.request
             url = f"http://localhost:{DASHBOARD_PORT}/api/scheduler/start"
@@ -3319,38 +3254,6 @@ class PlayStorePage(PageBase):
 
 
 # ─── page 6: groups & sequences ───────────────────────────────────────────────
-
-
-    def _start_schedule(self):
-        """Start the daily schedule on all booted phones."""
-        hits = self._sched_hits_var.get()
-        phones = state.get("phones", [])
-        if not phones:
-            messagebox.showwarning("No phones running",
-                                   "Boot phones first (Step 3).")
-            return
-        serials = [p["serial"] for p in phones]
-        steps = state["groups"][0].get("steps", []) if state.get("groups") else []
-        try:
-            import urllib.request
-            url = f"http://localhost:{DASHBOARD_PORT}/api/scheduler/start"
-            body = json.dumps({"serials": serials, "steps": steps,
-                              "hits_per_day": hits}).encode()
-            req = urllib.request.Request(
-                url, data=body,
-                headers={"Content-Type": "application/json"},
-                method="POST")
-            with urllib.request.urlopen(req, timeout=5) as r:
-                result = json.loads(r.read())
-            if result.get("ok"):
-                self._sched_lbl.config(
-                    text=f"Hitting {len(serials)} phones {hits}×/day randomly",
-                    fg=GREEN)
-                self._log_write("Scheduler started.\n")
-            else:
-                self._sched_lbl.config(text="Failed: " + str(result), fg=RED)
-        except Exception as e:
-            self._sched_lbl.config(text=f"Error: {e}", fg=RED)
 
 
 class GroupsPage(PageBase):
@@ -3574,6 +3477,10 @@ class GroupsPage(PageBase):
 
         return card
 
+
+    def _log_write(self, text: str):
+        self._count_lbl.config(text=text, fg=GREEN)
+        self.after(3000, self._rebuild)
 
     def can_advance(self):
         for g in state["groups"]:
@@ -3984,7 +3891,7 @@ class LaunchPage(PageBase):
             rep = "forever" if g["repeat_forever"] else f"{g['repeat']}×"
             lines.append(
                 f"  {g['name']}  |  {len(names)} phone(s)  |  "
-                f"{len(g['steps'])} steps  |  stagger {g['stagger_secs']}s  |  {rep}")
+                f"{len(next(iter(g['phones'].values()), {}).get('steps', []))} steps  |  stagger {g['stagger_secs']}s  |  {rep}")
         self._summary.config(state="normal")
         self._summary.delete("1.0", "end")
         self._summary.insert("end", "\n".join(lines) or "  (no groups)")
@@ -4113,7 +4020,7 @@ class LaunchPage(PageBase):
                                    "Boot phones first (Step 3).")
             return
         serials = [p["serial"] for p in phones]
-        steps = state["groups"][0].get("steps", []) if state.get("groups") else []
+        steps = next(iter(state["groups"][0]["phones"].values()), {}).get("steps", []) if state.get("groups") else []
         try:
             import urllib.request
             url = f"http://localhost:{DASHBOARD_PORT}/api/scheduler/start"

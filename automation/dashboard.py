@@ -686,8 +686,28 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 broadcast({"type": "log", "msg": f"[{name}] Starting on {len(serials)} phone(s)"}),
                 loop)
 
+            def _run_one_phone(serial, iteration):
+                if not _running_groups.get(name):
+                    return
+                phone_name = all_phones[serial]["name"]
+                phone_steps = (phone_map.get(serial, {}) or {}).get("steps", [])
+                asyncio.run_coroutine_threadsafe(
+                    broadcast({"type": "log",
+                               "msg": f"[{name}] Running [{iteration+1}] on {phone_name}"}), loop)
+                _run_steps_adb(phone_steps, serial, name)
+                if phone_steps:
+                    idx = _phone_idx_from_serial(serial)
+                    asyncio.run_coroutine_threadsafe(
+                        broadcast({"type": "log",
+                                   "msg": f"[{name}] Resetting identity on {phone_name}…"}), loop)
+                    tor_manager.full_identity_reset(serial, idx)
+                    asyncio.run_coroutine_threadsafe(
+                        broadcast({"type": "log",
+                                   "msg": f"[{name}] {phone_name} identity reset ✓"}), loop)
+
             iteration = 0
             while _running_groups.get(name) and (forever or iteration < repeat):
+                threads = []
                 for i, serial in enumerate(serials):
                     if not _running_groups.get(name):
                         break
@@ -697,22 +717,12 @@ async def handle_post(path: str, body: bytes) -> bytes:
                             if not _running_groups.get(name):
                                 break
                             time.sleep(0.5)
-                    phone_name = all_phones[serial]["name"]
-                    phone_steps = (phone_map.get(serial, {}) or {}).get("steps", [])
-                    asyncio.run_coroutine_threadsafe(
-                        broadcast({"type": "log",
-                                   "msg": f"[{name}] Running [{iteration+1}] on {phone_name}"}), loop)
-                    _run_steps_adb(phone_steps, serial, name)
-                    # After this phone's sequence: full anonymity reset
-                    if phone_steps:
-                        idx = _phone_idx_from_serial(serial)
-                        asyncio.run_coroutine_threadsafe(
-                            broadcast({"type": "log",
-                                       "msg": f"[{name}] Resetting identity on {phone_name}…"}), loop)
-                        tor_manager.full_identity_reset(serial, idx)
-                        asyncio.run_coroutine_threadsafe(
-                            broadcast({"type": "log",
-                                       "msg": f"[{name}] {phone_name} identity reset ✓"}), loop)
+                    t = threading.Thread(
+                        target=_run_one_phone, args=(serial, iteration), daemon=True)
+                    t.start()
+                    threads.append(t)
+                for t in threads:
+                    t.join()
                 iteration += 1
 
             asyncio.run_coroutine_threadsafe(

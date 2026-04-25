@@ -64,6 +64,16 @@ def _run_steps(serial: str, steps: list):
         elif t == "rotate_identity":
             idx = dashboard._phone_idx_from_serial(serial)
             tor_manager.rotate_identity_adb(serial, idx)
+        elif t == "clear_cookies":
+            pkg = step.get("package", "com.android.chrome")
+            dashboard._adb(serial, "shell", "pm", "clear", pkg)
+            dashboard._adb(serial, "shell", "am", "force-stop", pkg)
+        elif t == "type_text":
+            text = step.get("text", "")
+            dashboard._adb(serial, "shell", "input", "text", text.replace(" ", "%s"))
+        elif t == "full_reset":
+            idx = dashboard._phone_idx_from_serial(serial)
+            tor_manager.full_identity_reset(serial, idx)
         _time.sleep(random.uniform(0.35, 0.55))
 
 

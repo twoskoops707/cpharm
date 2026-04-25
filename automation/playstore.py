@@ -1,8 +1,8 @@
-import random
 """
 Play Store Tester - ADB-based organic Play Store activity per phone.
 All functions use device serials (consistent with dashboard.py / teach.py).
 """
+import random
 import subprocess
 import time
 import threading

@@ -1,9 +1,9 @@
-import random
 """
 Teach Mode - record taps on the first phone, replay on all others staggered.
 Uses ADB device serials - works with any connected Android device.
 """
 import json
+import random
 import subprocess
 import threading
 import time

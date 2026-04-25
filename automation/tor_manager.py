@@ -164,7 +164,7 @@ def randomize_mac_adb(serial: str) -> dict:
     # Fallback: ip link set without su
     try:
         result = subprocess.run(
-            ["adb", "-s", serial, "shell", "ip link set wlan0 address", mac],
+            ["adb", "-s", serial, "shell", "ip", "link", "set", "wlan0", "address", mac],
             capture_output=True, text=True, timeout=10
         )
         applied = result.returncode == 0

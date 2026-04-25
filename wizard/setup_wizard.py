@@ -1423,7 +1423,7 @@ def _urlretrieve(url, dest, hook=None, timeout=60):
     old = socket.getdefaulttimeout()
     socket.setdefaulttimeout(timeout)
     try:
-        _urlretrieve(url, dest, hook)
+        urllib.request.urlretrieve(url, dest, hook)
     finally:
         socket.setdefaulttimeout(old)
 
@@ -3493,143 +3493,6 @@ class GroupsPage(PageBase):
         return True
 
 
-# ─── sequence editor window ───────────────────────────────────────────────────
-
-class SequenceEditorWindow(tk.Toplevel):
-    def __init__(self, parent, group):
-        super().__init__(parent)
-        self.group = group
-        self.title(f"Sequence — {group['name']}")
-        self.config(bg=BG)
-        self.geometry("640x560")
-        self.resizable(True, True)
-        self.grab_set()
-        self.transient(parent)
-
-        tk.Label(self, text=f"Sequence: {group['name']}",
-                 font=("Segoe UI", 14, "bold"), bg=BG, fg=T1).pack(
-                     pady=(14, 2), padx=16, anchor="w")
-        tk.Label(self,
-                 text="Each step runs top-to-bottom on the phone. "
-                      "Drag to reorder, or use ▲ / ▼.",
-                 font=FS, bg=BG, fg=T2).pack(padx=16, anchor="w", pady=(0, 8))
-
-        ctrl = tk.Frame(self, bg=BG)
-        ctrl.pack(fill="x", padx=16, pady=4)
-        for text, cmd, color in [
-            ("+ Add Step",  self._add,    GREEN),
-            ("Remove",      self._remove, RED),
-            ("▲ Up",        self._up,     BG3),
-            ("▼ Down",      self._dn,     BG3),
-        ]:
-            tk.Button(ctrl, text=text, command=cmd,
-                      bg=color, fg=BG if color not in (BG3,) else T1,
-                      font=("Segoe UI", 10, "bold"),
-                      relief="flat", cursor="hand2",
-                      padx=10, pady=6).pack(side="left", padx=(0, 6))
-
-        fr = tk.Frame(self, bg=BG2)
-        fr.pack(fill="both", expand=True, padx=16, pady=8)
-        self._lb = tk.Listbox(fr, font=FM, bg=BG2, fg=T1,
-                              selectbackground=ACCENT, relief="flat",
-                              height=12, activestyle="none")
-        sb = tk.Scrollbar(fr, orient="vertical", command=self._lb.yview)
-        self._lb.configure(yscrollcommand=sb.set)
-        self._lb.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-
-        bottom = tk.Frame(self, bg=BG)
-        bottom.pack(fill="x", padx=16, pady=10)
-        if state["phones"]:
-            tk.Button(bottom, text="Open Dashboard in Browser",
-                  font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
-                  command=lambda: webbrowser.open(
-                      f"http://localhost:{DASHBOARD_PORT}")).pack(side="left", padx=(0, 8))
-        tk.Button(bottom, text="Done ✓",
-                  font=("Segoe UI", 11, "bold"),
-                  bg=GREEN, fg=BG, relief="flat",
-                  cursor="hand2", command=self.destroy,
-                  padx=16, pady=8).pack(side="right")
-
-        self._refresh()
-
-    def _refresh(self):
-        self._lb.delete(0, "end")
-        for i, s in enumerate(self.group["steps"], 1):
-            self._lb.insert("end", f"  {i:>2}.  {describe_step(s)}")
-
-    def _add(self):
-        dlg = AddStepDialog(self)
-        self.wait_window(dlg)
-        if dlg.result:
-            self.group["steps"].append(dlg.result)
-            self._refresh()
-
-    def _remove(self):
-        sel = self._lb.curselection()
-        if sel:
-            del self.group["steps"][sel[0]]
-            self._refresh()
-
-    def _up(self):
-        sel = self._lb.curselection()
-        if not sel or sel[0] == 0: return
-        i = sel[0]
-        self.group["steps"][i-1], self.group["steps"][i] = \
-            self.group["steps"][i], self.group["steps"][i-1]
-        self._refresh(); self._lb.selection_set(i-1)
-
-    def _dn(self):
-        sel = self._lb.curselection()
-        if not sel or sel[0] >= len(self.group["steps"]) - 1: return
-        i = sel[0]
-        self.group["steps"][i], self.group["steps"][i+1] = \
-            self.group["steps"][i+1], self.group["steps"][i]
-        self._refresh(); self._lb.selection_set(i+1)
-
-    def _test(self):
-        serial = state["phones"][0]["serial"]
-        steps  = list(self.group["steps"])
-        threading.Thread(
-            target=lambda: execute_steps(steps, serial), daemon=True).start()
-    def _save_sequence(self):
-        from tkinter import filedialog as fd, messagebox as mb
-        fn = fd.asksaveasfilename(
-            title="Save sequence", defaultextension=".json",
-            filetypes=[("JSON files", "*.json")],
-            initialfile="sequence_{}.json".format(self.group["name"].replace(" ", "_")),
-        )
-        if not fn: return
-        try:
-            import json
-            data = {"name": self.group["name"], "steps": self.group["steps"]}
-            Path(fn).write_text(json.dumps(data, indent=2))
-            self.group["_last_save"] = fn
-            self._log("Saved -> " + fn)
-        except Exception as e:
-            mb.showerror("Save failed", str(e))
-
-    def _load_sequence(self):
-        from tkinter import filedialog as fd, messagebox as mb
-        fn = fd.askopenfilename(
-            title="Load sequence",
-            filetypes=[("JSON files", "*.json")],
-        )
-        if not fn: return
-        try:
-            import json
-            data = json.loads(Path(fn).read_text())
-            steps = data.get("steps", [])
-            self.group["steps"][:] = steps
-            self._lb.delete("0", "end")
-            for s in steps:
-                self._lb.insert("end", describe_step(s))
-            self._log("Loaded {} steps from {}".format(len(steps), fn))
-        except Exception as e:
-            mb.showerror("Load failed", str(e))
-
-
-
 # ─── add step dialog ──────────────────────────────────────────────────────────
 
 class AddStepDialog(tk.Toplevel):
@@ -3902,6 +3765,8 @@ class LaunchPage(PageBase):
         self._log_box.insert("end", text + "\n")
         self._log_box.see("end")
         self._log_box.config(state="disabled")
+
+    _log_write = lambda self, t: self._log(t)
 
     def _save(self):
         d = state.get("cpharm_dir", "")

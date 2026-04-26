@@ -1139,13 +1139,16 @@ def start_emulator(avd_name, port):
 
     # -accel auto — explicitly tell emulator to auto-select best accelerator
     # (WHPX on ARM64 Windows, HAXM on Intel, KVM on Linux)
-    # -gpu swiftshader_indirect — software renderer; prevents GPU crash without Vulkan
+    # -gpu auto  — use host GPU via Vulkan when available (Adreno on Snapdragon Windows
+    #              ships an x64 Vulkan ICD that the WOW64 emulator can load); falls back
+    #              to swiftshader_indirect only if the host GPU lacks Vulkan support.
+    #              swiftshader_indirect (CPU-only) causes 15-30 min boot times on ARM.
     # -no-snapshot-save         — don't save state on shutdown (faster, cleaner)
     # -no-boot-anim             — skip boot animation (faster boot)
     # -no-audio                 — prevent audio device errors on ARM
     # -wipe-data                — start with clean userdata (fresh identity each run)
     accel_args = ["-accel", "auto",
-                  "-gpu", "swiftshader_indirect",
+                  "-gpu", "auto",
                   "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"]
 
     # CREATE_NO_WINDOW hides the console window (no blank/flashing terminal).
@@ -3055,11 +3058,11 @@ class BootPage(PageBase):
                     continue
 
                 procs.append((avd, serial, proc, log_path))
-                self._log_write(f"  Waiting for {avd} to boot (can take 2-5 min)...\n")
-                ok = wait_for_boot(serial)
+                self._log_write(f"  Waiting for {avd} to boot (GPU: auto, can take 3-8 min)...\n")
+                ok = wait_for_boot(serial, timeout=480)
                 if not ok:
-                    self._log_write(f"  ⚠ {avd} slow — waiting extra 3 min...\n")
-                    ok = wait_for_boot(serial, timeout=180)
+                    self._log_write(f"  ⚠ {avd} slow — waiting extra 5 min...\n")
+                    ok = wait_for_boot(serial, timeout=300)
                 if ok:
                     new_id = rotate_android_id(serial)
                     phones.append({"serial": serial, "name": avd})
@@ -4012,8 +4015,8 @@ class CPharmWizard(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("CPharm Phone Farm Setup")
-        self.geometry("760x700")
-        self.minsize(720, 600)
+        self.geometry("820x880")
+        self.minsize(760, 700)
         self.config(bg=BG)
         self.resizable(True, True)
 

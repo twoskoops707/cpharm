@@ -956,11 +956,11 @@ def create_avd(name, log_fn=None):
     ext    = ".bat" if IS_WIN else ""
     avdmgr = str(Path(sdkmgr_path).parent / f"avdmanager{ext}")
     arch   = _machine_arch()
-    # On Windows, Google's SDK repository only ships x64 emulator binaries.
-    # The x64 emulator runs via WOW64 on ARM64 Windows and QEMU2 reports
-    # the host as x86_64 — arm64-v8a images cause a FATAL at launch.
-    # Use x86_64 system images on all Windows hosts; WHPX accelerates them.
-    if IS_WIN:
+    # On x64 Windows use x86_64 system images (WHPX-accelerated).
+    # On ARM64 Windows use arm64-v8a — the native ARM64 emulator binary runs
+    # arm64-v8a guests directly without any hypervisor requirement, avoiding
+    # the Intel/AMD CPU check that blocks x86_64 guests on Snapdragon.
+    if IS_WIN and arch == "x86_64":
         arch = "x86_64"
     image  = f"system-images;android-34;google_apis;{arch}"
 
@@ -1137,20 +1137,16 @@ def start_emulator(avd_name, port):
     emu   = sdk_tool("emulator")
     env   = _sdk_env()
 
-    # -accel whpx — force Windows Hypervisor Platform acceleration directly.
-    #   "-accel auto" rejects ARM CPUs because it checks for Intel/AMD VT-x signature
-    #   even though WHPX works fine on Snapdragon Windows. Forcing -accel whpx bypasses
-    #   that check and uses the Windows Hypervisor Platform API directly.
-    # -gpu swiftshader_indirect — Adreno Vulkan driver lacks VK_KHR_external_memory so
-    #   the emulator cannot use the real GPU for GLES; software rendering is unavoidable
-    #   on this hardware. Boot will be slower (~10-20 min) but will complete with WHPX.
-    # -no-snapshot-save         — don't save state on shutdown (faster, cleaner)
-    # -no-boot-anim             — skip boot animation (faster boot)
-    # -no-audio                 — prevent audio device errors on ARM
-    # -wipe-data                — start with clean userdata (fresh identity each run)
-    accel_args = ["-accel", "whpx",
-                  "-gpu", "swiftshader_indirect",
-                  "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"]
+    # On ARM64 Windows: arm64-v8a guest runs natively on the ARM64 emulator binary —
+    #   no hypervisor required, no Intel/AMD CPU check triggered.
+    # On x64 Windows: x86_64 guest needs -accel auto (WHPX or HAXM).
+    # -gpu swiftshader_indirect — Adreno Vulkan lacks VK_KHR_external_memory so
+    #   host GPU passthrough is unavailable; software GLES is required either way.
+    # -no-snapshot-save / -no-boot-anim / -no-audio / -wipe-data — speed + clean state
+    host_is_arm64 = IS_WIN and "arm64" in _machine_arch()
+    base_args = ["-gpu", "swiftshader_indirect",
+                 "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"]
+    accel_args = base_args if host_is_arm64 else ["-accel", "auto"] + base_args
 
     # CREATE_NO_WINDOW hides the console window (no blank/flashing terminal).
     # File-handle inheritance works fine with CREATE_NO_WINDOW — the inheritance

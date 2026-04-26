@@ -6,6 +6,7 @@ Works with any Android device: AVD emulators, BlueStacks, Genymotion, MEmu, NOX,
 import datetime
 import asyncio
 import base64
+import concurrent.futures
 import json
 import logging
 import mimetypes
@@ -23,7 +24,7 @@ from websockets.server import serve
 import tor_manager
 import teach as teach_mod
 import playstore as ps_mod
-from config import PORT, WS_PORT, APK_DIR, EMULATOR_PORTS
+from config import PORT, WS_PORT, APK_DIR, REC_DIR, EMULATOR_PORTS
 
 logging.basicConfig(level=logging.INFO, format="  %(message)s")
 log = logging.getLogger("cpharm")
@@ -46,6 +47,7 @@ _running_groups: dict[str, bool] = {}
 _app_cache:      dict[str, dict]  = {}
 _app_cache_time: dict[str, float] = {}
 APP_CACHE_TTL = 30.0
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=32)
 
 SCRIPT_DIR     = Path(__file__).parent
 HTML_FILE      = SCRIPT_DIR / "dashboard.html"
@@ -300,6 +302,9 @@ async def handle_http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
                     pass
                 break
 
+        if content_length > 50_000_000:
+            writer.close()
+            return
         body_bytes = body_start
         remaining  = content_length - len(body_start)
         while remaining > 0:
@@ -408,8 +413,10 @@ async def handle_post(path: str, body: bytes) -> bytes:
         if not filename or not file_b64:
             return json_err("missing name or data")
         safe_name = Path(filename).name
-        if not safe_name.lower().endswith(".apk"):
-            return json_err("only .apk files allowed")
+        if not re.match(r'^[A-Za-z0-9_\-. ]+\.apk$', safe_name) or not safe_name:
+            return json_err("only .apk files with safe names allowed")
+        if len(file_b64) > 200_000_000:
+            return json_err("file too large")
         APK_DIR.mkdir(exist_ok=True)
         dest = APK_DIR / safe_name
         try:
@@ -456,7 +463,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
         serial = data.get("serial", "").strip()
         if not serial:
             return json_err("no serial")
-        threading.Thread(target=lambda: _stop_device(serial), daemon=True).start()
+        _executor.submit(_stop_device, serial)
         await asyncio.sleep(1)
         await push_phones()
         return json_ok({"ok": True})
@@ -467,7 +474,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
         def stop_all():
             for p in phones:
                 _stop_device(p["serial"])
-        threading.Thread(target=stop_all, daemon=True).start()
+        _executor.submit(stop_all)
         await asyncio.sleep(1.5)
         await push_phones()
         return json_ok({"ok": True})
@@ -483,12 +490,16 @@ async def handle_post(path: str, body: bytes) -> bytes:
         url         = data.get("url", "").strip()
         auto_rotate = bool(data.get("auto_rotate", False))
         try:
-            stagger    = int(data.get("stagger_secs", 0))
-            dwell_secs = int(data.get("dwell_secs", 30))
+            stagger    = min(int(data.get("stagger_secs", 0)), 3600)
+            dwell_secs = min(int(data.get("dwell_secs", 30)), 3600)
         except (TypeError, ValueError):
             return json_err("stagger_secs and dwell_secs must be integers")
-        if not url.startswith(("http://", "https://")):
-            return json_err("URL must start with http:// or https://")
+        try:
+            _parsed = urllib.parse.urlparse(url)
+            if _parsed.scheme not in ("http", "https") or not _parsed.netloc or " " in url:
+                raise ValueError
+        except Exception:
+            return json_err("URL must be a valid http:// or https:// URL")
         phones = [p for p in list_phones() if p["running"]]
         loop   = asyncio.get_running_loop()
 
@@ -544,11 +555,17 @@ async def handle_post(path: str, body: bytes) -> bytes:
     if path == "/api/teach/play":
         rec = data.get("file") or _teach_state.get("file")
         try:
-            delay = int(data.get("delay_secs", 60))
+            delay = min(int(data.get("delay_secs", 60)), 3600)
         except (TypeError, ValueError):
             delay = 60
         if not rec:
             return json_err("no recording found")
+        try:
+            rec_resolved = Path(rec).resolve()
+            if not str(rec_resolved).startswith(str(REC_DIR.resolve())):
+                return json_err("invalid recording path")
+        except Exception:
+            return json_err("invalid recording path")
         source_serial = _teach_state.get("serial", "")
         phones = [p for p in list_phones() if p["running"] and p["serial"] != source_serial]
         _teach_state["state"] = "playing"
@@ -579,7 +596,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 broadcast({"type": "log", "msg": "All phones now look different!"}), loop
             )
 
-        threading.Thread(target=setup, daemon=True).start()
+        _executor.submit(setup)
         return json_ok({"ok": True})
 
     if path == "/api/proxy/rotate":
@@ -596,7 +613,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 broadcast({"type": "log", "msg": "All phones have new identities!"}), loop
             )
 
-        threading.Thread(target=rotate_all, daemon=True).start()
+        _executor.submit(rotate_all)
         return json_ok({"ok": True})
 
     if path == "/api/proxy/teardown":
@@ -617,7 +634,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
             result = tor_manager.full_identity_reset(serial, idx)
             asyncio.run_coroutine_threadsafe(
                 broadcast({"type": "log", "msg": f"{serial}: reset — tor={result['tor_circuit_rotated']} android_id={result['new_android_id'][:8]}… mac={result['new_mac']}"}), loop)
-        threading.Thread(target=do_reset, daemon=True).start()
+        _executor.submit(do_reset)
         return json_ok({"ok": True})
 
     # ── Reset all running phones ──
@@ -630,7 +647,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 result = tor_manager.full_identity_reset(p["serial"], idx)
                 asyncio.run_coroutine_threadsafe(
                     broadcast({"type": "log", "msg": f"{p['name']}: reset ✓ tor={result['tor_circuit_rotated']} android_id={result['new_android_id'][:8]}…"}), loop)
-        threading.Thread(target=do_reset_all, daemon=True).start()
+        _executor.submit(do_reset_all)
         return json_ok({"ok": True})
 
     if path == "/api/groups/run":
@@ -649,35 +666,61 @@ async def handle_post(path: str, body: bytes) -> bytes:
         loop = asyncio.get_running_loop()
         _running_groups.clear()
 
+        _ALLOWED_STEP_TYPES = frozenset({
+            "open_url", "tap", "wait", "swipe", "keyevent",
+            "close_app", "clear_cookies", "type_text",
+            "rotate_identity", "full_reset",
+        })
+        _PKG_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9_.]*$')
+        _KEY_RE = re.compile(r'^[A-Z0-9_]+$')
+
         def _run_steps_adb(steps: list, serial: str, group_name: str):
             for step in steps:
                 if not _running_groups.get(group_name, True):
                     break
                 t = step.get("type", "")
+                if t not in _ALLOWED_STEP_TYPES:
+                    continue
                 if t == "open_url":
+                    url = str(step.get("url", ""))
+                    try:
+                        _p = urllib.parse.urlparse(url)
+                        if _p.scheme not in ("http", "https") or not _p.netloc or " " in url:
+                            continue
+                    except Exception:
+                        continue
                     _adb(serial, "shell", "am", "start",
-                         "-a", "android.intent.action.VIEW", "-d", step.get("url", ""))
+                         "-a", "android.intent.action.VIEW", "-d", url)
                 elif t == "tap":
                     _adb(serial, "shell", "input", "tap",
-                         str(step.get("x", 0)), str(step.get("y", 0)))
+                         str(int(step.get("x", 0))), str(int(step.get("y", 0))))
                 elif t == "wait":
-                    deadline = time.time() + int(step.get("seconds", 1))
+                    secs = min(float(step.get("seconds", 1)), 300)
+                    deadline = time.time() + secs
                     while time.time() < deadline:
                         if not _running_groups.get(group_name, True):
                             break
                         time.sleep(0.25)
                 elif t == "swipe":
                     _adb(serial, "shell", "input", "swipe",
-                         str(step.get("x1", 0)), str(step.get("y1", 0)),
-                         str(step.get("x2", 0)), str(step.get("y2", 0)),
-                         str(step.get("ms", 400)))
+                         str(int(step.get("x1", 0))), str(int(step.get("y1", 0))),
+                         str(int(step.get("x2", 0))), str(int(step.get("y2", 0))),
+                         str(min(int(step.get("ms", 400)), 5000)))
                 elif t == "keyevent":
-                    _adb(serial, "shell", "input", "keyevent", step.get("key", "BACK"))
+                    key = str(step.get("key", "BACK"))
+                    if not _KEY_RE.match(key):
+                        continue
+                    _adb(serial, "shell", "input", "keyevent", key)
                 elif t == "close_app":
-                    _adb(serial, "shell", "am", "force-stop",
-                         step.get("package", "com.android.chrome"))
+                    pkg = str(step.get("package", "com.android.chrome"))
+                    if not _PKG_RE.match(pkg):
+                        continue
+                    _adb(serial, "shell", "am", "force-stop", pkg)
                 elif t == "clear_cookies":
-                    _adb(serial, "shell", "pm", "clear", "com.android.chrome")
+                    pkg = str(step.get("package", "com.android.chrome"))
+                    if not _PKG_RE.match(pkg):
+                        continue
+                    _adb(serial, "shell", "pm", "clear", pkg)
                 elif t == "type_text":
                     raw_text = step.get("text", "")
                     text = urllib.parse.quote(raw_text, safe="").replace("%20", "%s")
@@ -758,7 +801,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 broadcast({"type": "groups_status", "running": list(_running_groups.keys())}), loop)
 
         for group in raw_groups:
-            threading.Thread(target=_run_group, args=(group,), daemon=True).start()
+            _executor.submit(_run_group, group)
 
         await broadcast({"type": "groups_status", "running": [g.get("name") for g in raw_groups]})
         return json_ok({"ok": True, "groups": len(raw_groups)})
@@ -858,7 +901,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
         package = data.get("package", "").strip()
         target  = data.get("target", "all")
         try:
-            stagger = int(data.get("stagger_secs", 0))
+            stagger = min(int(data.get("stagger_secs", 0)), 3600)
         except (TypeError, ValueError):
             stagger = 0
         if not package:
@@ -879,7 +922,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                     broadcast({"type": "log", "msg": f"{p['name']}: launched {package}"}), loop
                 )
 
-        threading.Thread(target=do_launch, daemon=True).start()
+        _executor.submit(do_launch)
         return json_ok({"ok": True})
 
     # ── App tester: type text ──
@@ -898,7 +941,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 broadcast({"type": "log", "msg": f"Typed on {len(targets)} phone(s)"}), loop
             )
 
-        threading.Thread(target=do_type, daemon=True).start()
+        _executor.submit(do_type)
         return json_ok({"ok": True})
 
     # ── App tester: key event ──
@@ -940,7 +983,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 for p in targets:
                     _adb(p["serial"], *cmd)
 
-        threading.Thread(target=do_action, daemon=True).start()
+        _executor.submit(do_action)
         return json_ok({"ok": True})
 
     # ── Playstore run ──
@@ -950,9 +993,11 @@ async def handle_post(path: str, body: bytes) -> bytes:
         review  = data.get("review", "").strip()
         try:
             stars = int(data.get("stars", 0))
-            delay = int(data.get("delay_secs", 60))
+            delay = min(int(data.get("delay_secs", 60)), 3600)
         except (TypeError, ValueError):
             return json_err("stars and delay_secs must be integers")
+        if stars and not (1 <= stars <= 5):
+            return json_err("stars must be between 1 and 5")
         if package and not re.match(r'^[a-zA-Z][a-zA-Z0-9_.]*$', package):
             return json_err("invalid package name")
         phones = list_phones()
@@ -983,7 +1028,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                     broadcast({"type": "log", "msg": f"{p['name']}: opened {package}"}), loop
                 )
 
-        threading.Thread(target=_open, daemon=True).start()
+        _executor.submit(_open)
         return json_ok({"ok": True})
 
     return _http(404, "text/plain", b"Not Found")
@@ -996,6 +1041,9 @@ async def handle_scheduler(path, body_bytes):
     return await _hs(path, body_bytes=body_bytes)
 
 async def ws_handler(websocket):
+    if len(_ws_clients) >= 20:
+        await websocket.close(1008, "Too many clients")
+        return
     _ws_clients.add(websocket)
     try:
         await push_phones()
@@ -1026,8 +1074,8 @@ async def main():
     log.info("Scanning for connected devices…")
     threading.Thread(target=auto_connect_emulators, daemon=True).start()
 
-    http_server = await asyncio.start_server(handle_http, "0.0.0.0", PORT)
-    ws_server   = await serve(ws_handler, "0.0.0.0", WS_PORT)
+    http_server = await asyncio.start_server(handle_http, "127.0.0.1", PORT)
+    ws_server   = await serve(ws_handler, "127.0.0.1", WS_PORT)
 
     print("\n  ╔══════════════════════════════════════════╗")
     print("  ║   CPharm  •  ready                       ║")

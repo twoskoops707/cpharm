@@ -3,12 +3,16 @@ Teach Mode - record taps on the first phone, replay on all others staggered.
 Uses ADB device serials - works with any connected Android device.
 """
 import json
+import re
 import random
 import subprocess
 import threading
 import time
 from pathlib import Path
 from typing import Callable
+
+_DEVICE_RE = re.compile(r'^/dev/input/event\d+$')
+_HEX_DEC_RE = re.compile(r'^[0-9A-Fa-f]+$')
 
 from config import REC_DIR
 
@@ -98,11 +102,18 @@ def replay_on_phone(serial: str, recording_path: str):
         return
 
     for entry in data:
+        d     = entry.get("d", "")
+        etype = entry.get("type", "")
+        code  = entry.get("code", "")
+        value = entry.get("value", "")
+        if (not _DEVICE_RE.match(d)
+                or not _HEX_DEC_RE.match(str(etype))
+                or not _HEX_DEC_RE.match(str(code))
+                or not _HEX_DEC_RE.match(str(value))):
+            continue
         try:
             subprocess.run(
-                ["adb", "-s", serial, "shell", "sendevent",
-                 entry.get("d",""), entry.get("type",""),
-                 entry.get("code",""), entry.get("value","")],
+                ["adb", "-s", serial, "shell", "sendevent", d, etype, code, value],
                 capture_output=True, timeout=3
             )
         except subprocess.TimeoutExpired:

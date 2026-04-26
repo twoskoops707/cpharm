@@ -6,6 +6,7 @@ import asyncio
 import datetime
 import json
 import logging
+import re
 import random
 import sys
 import threading
@@ -39,35 +40,59 @@ def _gen_today(hits: int) -> list:
     return [mn + o for o in offsets]
 
 
+_ALLOWED_STEP_TYPES = frozenset({
+    "open_url", "tap", "wait", "swipe", "keyevent",
+    "close_app", "clear_cookies", "type_text",
+    "rotate_identity", "full_reset",
+})
+_PKG_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9_.]*$')
+_KEY_RE = re.compile(r'^[A-Z0-9_]+$')
+
+
 def _run_steps(serial: str, steps: list):
     for step in (steps or []):
         t = step.get("type", "")
+        if t not in _ALLOWED_STEP_TYPES:
+            continue
         if t == "open_url":
-            url = step.get("url", "https://google.com")
+            url = str(step.get("url", "https://google.com"))
+            try:
+                _p = urllib.parse.urlparse(url)
+                if _p.scheme not in ("http", "https") or not _p.netloc or " " in url:
+                    continue
+            except Exception:
+                continue
             dashboard._adb(serial, "shell", "am", "start",
                 "-a", "android.intent.action.VIEW", "-d", url,
                 "-n", "com.android.chrome/com.google.android.apps.chrome.Main",
                 "--ez", "create_new_tab", "true")
         elif t == "tap":
             dashboard._adb(serial, "shell", "input", "tap",
-                str(step.get("x", 0)), str(step.get("y", 0)))
+                str(int(step.get("x", 0))), str(int(step.get("y", 0))))
         elif t == "wait":
-            _time.sleep(float(step.get("seconds", 1)))
+            _time.sleep(min(float(step.get("seconds", 1)), 300))
         elif t == "swipe":
             dashboard._adb(serial, "shell", "input", "swipe",
-                str(step.get("x1", 0)), str(step.get("y1", 0)),
-                str(step.get("x2", 0)), str(step.get("y2", 0)),
-                str(step.get("ms", 400)))
+                str(int(step.get("x1", 0))), str(int(step.get("y1", 0))),
+                str(int(step.get("x2", 0))), str(int(step.get("y2", 0))),
+                str(min(int(step.get("ms", 400)), 5000)))
         elif t == "keyevent":
-            dashboard._adb(serial, "shell", "input", "keyevent", step.get("key", "BACK"))
+            key = str(step.get("key", "BACK"))
+            if not _KEY_RE.match(key):
+                continue
+            dashboard._adb(serial, "shell", "input", "keyevent", key)
         elif t == "close_app":
-            dashboard._adb(serial, "shell", "am", "force-stop",
-                step.get("package", "com.android.chrome"))
+            pkg = str(step.get("package", "com.android.chrome"))
+            if not _PKG_RE.match(pkg):
+                continue
+            dashboard._adb(serial, "shell", "am", "force-stop", pkg)
         elif t == "rotate_identity":
             idx = dashboard._phone_idx_from_serial(serial)
             tor_manager.rotate_identity_adb(serial, idx)
         elif t == "clear_cookies":
-            pkg = step.get("package", "com.android.chrome")
+            pkg = str(step.get("package", "com.android.chrome"))
+            if not _PKG_RE.match(pkg):
+                continue
             dashboard._adb(serial, "shell", "pm", "clear", pkg)
             dashboard._adb(serial, "shell", "am", "force-stop", pkg)
         elif t == "type_text":
@@ -144,10 +169,12 @@ async def handle_scheduler(path: str, body_bytes: bytes, method: str = "POST"):
         except Exception:
             pass
 
+    _SERIAL_RE = re.compile(r'^[A-Za-z0-9._:\-]+$')
+
     if path == "/api/scheduler/generate":
-        serials = data.get("serials", [])
+        serials = [s for s in data.get("serials", []) if _SERIAL_RE.match(str(s))]
         try:
-            hits = int(data.get("hits_per_day", 0))
+            hits = max(0, min(int(data.get("hits_per_day", 0)), 1440))
         except (TypeError, ValueError):
             return dashboard.json_err("hits_per_day must be an integer")
         result = {}
@@ -159,10 +186,10 @@ async def handle_scheduler(path: str, body_bytes: bytes, method: str = "POST"):
         return dashboard.json_ok({"schedule": result})
 
     if path == "/api/scheduler/start":
-        serials = data.get("serials", [])
+        serials = [s for s in data.get("serials", []) if _SERIAL_RE.match(str(s))]
         steps   = data.get("steps", [])
         try:
-            hits = int(data.get("hits_per_day", 0))
+            hits = max(0, min(int(data.get("hits_per_day", 0)), 1440))
         except (TypeError, ValueError):
             return dashboard.json_err("hits_per_day must be an integer")
         started = []

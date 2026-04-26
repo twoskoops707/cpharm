@@ -69,10 +69,13 @@ def start_tor_for_phone(phone_idx: int) -> int:
     cfg = tempfile.NamedTemporaryFile(
         mode="w", suffix=".cfg", delete=False, dir=str(TOR_DIR)
     )
+    cookie_path = data_dir / "control_auth_cookie"
     try:
         cfg.write(f"SocksPort {socks_port}\n")
         cfg.write(f"ControlPort {ctrl_port}\n")
         cfg.write(f"DataDirectory {data_dir}\n")
+        cfg.write(f"CookieAuthentication 1\n")
+        cfg.write(f"CookieAuthFile {cookie_path}\n")
         cfg.write("ExitNodes {us}\n")
         cfg.write("StrictNodes 0\n")
     finally:
@@ -90,9 +93,13 @@ def start_tor_for_phone(phone_idx: int) -> int:
 
 def _send_tor_newnym(ctrl_port: int) -> bool:
     """Send NEWNYM signal to Tor control port to get a fresh circuit."""
+    phone_idx = ctrl_port - BASE_PORT - 1000
+    cookie_path = TOR_DIR / f"data_{phone_idx}" / "control_auth_cookie"
     try:
+        cookie = cookie_path.read_bytes() if cookie_path.exists() else b""
         with socket.create_connection(("127.0.0.1", ctrl_port), timeout=3) as s:
-            s.sendall(b'AUTHENTICATE ""\r\n')
+            auth = b'AUTHENTICATE ' + cookie.hex().encode() + b'\r\n'
+            s.sendall(auth)
             s.recv(256)
             s.sendall(b"SIGNAL NEWNYM\r\n")
             resp = s.recv(256)
@@ -152,8 +159,10 @@ def randomize_mac_adb(serial: str) -> dict:
     Requires root (su) on the device.
     """
     mac = _random_mac()
+    import re as _re
+    if not _re.match(r'^([0-9A-F]{2}:){5}[0-9A-F]{2}$', mac, _re.IGNORECASE):
+        return {"mac": mac, "applied": False}
     try:
-        # Try root first (emulators have this)
         subprocess.run(
             ["adb", "-s", serial, "shell", "su", "-c",
              f"ip link set wlan0 address {mac}"],

@@ -1139,24 +1139,20 @@ def start_emulator(avd_name, port):
                   "-gpu", "swiftshader_indirect",
                   "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"]
 
-    # On Windows, open a visible console window so the user can see boot output
-    # and any crash messages. Do NOT redirect stdout/stderr to a file here —
-    # file handles from the parent are not inherited into a new console, which
-    # causes the window to be blank AND can make the emulator crash immediately.
-    # On non-Windows, redirect to a log file for background operation.
-    launch_flags = subprocess.CREATE_NEW_CONSOLE if IS_WIN else 0
+    # CREATE_NO_WINDOW hides the console window (no blank/flashing terminal).
+    # File-handle inheritance works fine with CREATE_NO_WINDOW — the inheritance
+    # problem only affects CREATE_NEW_CONSOLE. The emulator's graphical phone
+    # window is a separate Win32 window and still appears normally.
+    launch_flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
 
     log_path = None
-    if not IS_WIN:
-        try:
-            log_dir = Path(os.environ.get("TEMP", "/tmp"))
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_path = log_dir / f"cpharm_emu_{avd_name}.log"
-            log_file = open(log_path, "w")
-        except Exception:
-            log_file = subprocess.DEVNULL
-    else:
-        log_file = None   # let output go to the new console window
+    try:
+        log_dir = Path(os.environ.get("TEMP", "/tmp"))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"cpharm_emu_{avd_name}.log"
+        log_file = open(log_path, "w")
+    except Exception:
+        log_file = subprocess.DEVNULL
 
     # On Windows, emulator may be a .bat wrapper (emulator.bat/emulator.cmd).
     # Popen with a list on Windows does NOT automatically run .bat files —

@@ -1183,13 +1183,20 @@ def start_emulator(avd_name, port):
     return proc, log_path
 
 
-def wait_for_boot(serial, timeout=300):
+def wait_for_boot(serial, timeout=300, log_fn=None):
     adb("wait-for-device", serial=serial, timeout=timeout)
     deadline = time.time() + timeout
+    start    = time.time()
+    last_log = start
     while time.time() < deadline:
         out = adb("shell", "getprop", "sys.boot_completed", serial=serial)
         if out.strip() == "1":
             return True
+        now = time.time()
+        if log_fn and now - last_log >= 30:
+            elapsed = int(now - start)
+            log_fn(f"    still booting... ({elapsed}s elapsed)\n")
+            last_log = now
         time.sleep(3)
     return False
 
@@ -3059,10 +3066,12 @@ class BootPage(PageBase):
 
                 procs.append((avd, serial, proc, log_path))
                 self._log_write(f"  Waiting for {avd} to boot (GPU: auto, can take 3-8 min)...\n")
-                ok = wait_for_boot(serial, timeout=480)
+                if log_path and Path(log_path).exists():
+                    self._log_write(f"  Emulator log: {log_path}\n")
+                ok = wait_for_boot(serial, timeout=480, log_fn=self._log_write)
                 if not ok:
                     self._log_write(f"  ⚠ {avd} slow — waiting extra 5 min...\n")
-                    ok = wait_for_boot(serial, timeout=300)
+                    ok = wait_for_boot(serial, timeout=300, log_fn=self._log_write)
                 if ok:
                     new_id = rotate_android_id(serial)
                     phones.append({"serial": serial, "name": avd})
@@ -4031,7 +4040,7 @@ class CPharmWizard(tk.Tk):
         for P in self.PAGES:
             outer = tk.Frame(self._content, bg=BG)
             canvas = tk.Canvas(outer, bg=BG, highlightthickness=0)
-            vsb = tk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+            vsb = tk.Scrollbar(outer, orient="vertical", command=canvas.yview, width=8)
             canvas.configure(yscrollcommand=vsb.set)
             vsb.pack(side="right", fill="y")
             canvas.pack(side="left", fill="both", expand=True)

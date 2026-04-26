@@ -206,12 +206,16 @@ class PerPhoneSequenceEditor(tk.Toplevel):
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
 
+_NO_WIN = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
+
+
 def run_cmd(cmd, cwd=None, timeout=120):
     try:
         r = subprocess.run(
             cmd, capture_output=True, text=True,
             cwd=cwd, timeout=timeout,
-            shell=isinstance(cmd, str)
+            shell=isinstance(cmd, str),
+            creationflags=_NO_WIN,
         )
         return r.returncode == 0, (r.stdout + r.stderr).strip()
     except Exception as e:
@@ -224,7 +228,8 @@ def adb(*args, serial=None, timeout=20):
         cmd += ["-s", serial]
     cmd += list(args)
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=timeout, creationflags=_NO_WIN)
         return r.stdout.strip()
     except Exception:
         return ""
@@ -1064,8 +1069,12 @@ def create_avd(name, log_fn=None):
         all_ids = []
 
     # Preferred device IDs in priority order — use the first one that exists in this SDK.
-    preferred = ["pixel_6", "pixel_5", "pixel_4", "pixel_3", "pixel_2",
-                 "pixel_xl", "pixel", "nexus_6p", "nexus_6", "nexus_5"]
+    preferred = [
+        "pixel_9", "pixel_9_pro", "pixel_8", "pixel_8_pro",
+        "pixel_7", "pixel_7_pro", "pixel_6", "pixel_6_pro",
+        "pixel_5", "pixel_4", "pixel_3", "pixel_2",
+        "pixel_xl", "pixel", "nexus_6p", "nexus_6", "nexus_5",
+    ]
     device_profiles = [d for d in preferred if d in all_ids]
 
     # If none of our preferred IDs exist, fall back to the first available device
@@ -1453,7 +1462,8 @@ def _find_python() -> str:
     for cmd in ["python", "python3", "py"]:
         try:
             r = subprocess.run(
-                [cmd, "--version"], capture_output=True, text=True, timeout=6
+                [cmd, "--version"], capture_output=True, text=True,
+                timeout=6, creationflags=_NO_WIN,
             )
             if r.returncode == 0 and "Python 3" in (r.stdout + r.stderr):
                 return cmd

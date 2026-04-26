@@ -911,35 +911,59 @@ def _ensure_emulator_meta(sdk, log_fn=None):
 
     # ── Path 1: Android Studio bundled emulator ─────────────────────────
     # Android Studio ships a complete copy of the emulator with device-catalog.xml.
-    # Copy from there instead of downloading.
+    # On ARM64 Windows, Android Studio's emulator.exe IS the ARM64 native binary —
+    # copy the entire emulator directory so arm64-v8a images boot natively.
+    host_is_arm64 = IS_WIN and "arm64" in _machine_arch()
     studio_emulator = None
-    for studio_root in [
-        Path(os.environ.get("PROGRAMFILES",  "")) / "Android" / "Android Studio",
-        Path(os.environ.get("LOCALAPPDATA",    "")) / "Programs" / "Android Studio",
-        Path(os.environ.get("PROGRAMFILES",    "")) / "Android Studio",
-    ]:
-        if studio_root.exists():
+    search_roots = [
+        Path(os.environ.get("PROGRAMFILES", "")) / "Android",
+        Path(os.environ.get("LOCALAPPDATA",  "")) / "Programs" / "Android",
+        Path(os.environ.get("PROGRAMFILES",  "")) / "Android Studio",
+        Path(os.environ.get("LOCALAPPDATA",  "")) / "Programs" / "Android Studio",
+    ]
+    for search_root in search_roots:
+        if not search_root.exists():
+            continue
+        # Glob for any "Android Studio*" subdirectory (handles Studio, Studio3, etc.)
+        candidates = sorted(search_root.glob("Android Studio*"), reverse=True)
+        if not candidates and search_root.name.startswith("Android Studio"):
+            candidates = [search_root]
+        for studio_root in candidates:
             candidate = studio_root / "emulator"
             if (candidate / "meta" / "device-catalog.xml").exists():
                 studio_emulator = candidate
                 break
+        if studio_emulator:
+            break
 
     if studio_emulator:
         if log_fn:
-            log_fn(f"  Copying device-catalog.xml from Android Studio:\n"
-                   f"  {studio_emulator}\n")
+            log_fn(f"  Found Android Studio emulator:\n  {studio_emulator}\n")
         try:
-            meta_dest = emu_dir / "meta"
-            meta_dest.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(
-                studio_emulator / "meta" / "device-catalog.xml",
-                meta_dest / "device-catalog.xml",
-            )
-            # Also register the emulator as an installed package (path_id="emulator").
-            # avdmanager checks for this before listing device profiles.
+            # On ARM64 Windows, Android Studio's emulator.exe is the ARM64 native binary.
+            # Copy the entire emulator directory so arm64-v8a guests boot natively.
+            as_exe = studio_emulator / "emulator.exe"
+            if host_is_arm64 and as_exe.exists() and _pe_machine_type(str(as_exe)) == 0xAA64:
+                if log_fn:
+                    log_fn("  ARM64 emulator binary found in Android Studio — copying full emulator directory…\n")
+                if emu_dir.exists():
+                    shutil.rmtree(emu_dir)
+                shutil.copytree(str(studio_emulator), str(emu_dir))
+                if log_fn:
+                    log_fn("  ARM64 emulator installed from Android Studio ✅\n")
+            else:
+                # x64 host or AS binary is x64 — just copy device-catalog.xml
+                meta_dest = emu_dir / "meta"
+                meta_dest.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(
+                    studio_emulator / "meta" / "device-catalog.xml",
+                    meta_dest / "device-catalog.xml",
+                )
+                if log_fn:
+                    log_fn("  Copied device definitions from Android Studio ✅\n")
             _write_emulator_package_xml(emu_dir)
             _write_local_package_xml(
-                meta_dest / "package.xml",
+                emu_dir / "meta" / "package.xml",
                 path_id="emulator;meta",
                 major=36, minor=6, micro=4,
                 display="Android Emulator Device Metadata",
@@ -947,8 +971,6 @@ def _ensure_emulator_meta(sdk, log_fn=None):
                 ns_type="ns5:genericDetailsType",
                 extra_ns='xmlns:ns3="http://schemas.android.com/repository/android/generic/01"',
             )
-            if log_fn:
-                log_fn("  Copied device definitions from Android Studio ✅\n")
             installed = True
         except Exception as e:
             if log_fn:

@@ -1,7 +1,6 @@
 """
 CPharm Setup Wizard
 Virtual phone farm using Android AVD emulators.
-
 Works on Snapdragon ARM Windows.
 The wizard auto-downloads and installs the Android SDK — no Android Studio needed.
 

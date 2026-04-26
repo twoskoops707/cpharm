@@ -4022,9 +4022,30 @@ class CPharmWizard(tk.Tk):
         self._content.pack(fill="both", expand=True, padx=24, pady=14)
         self._build_footer()
 
-        self._pages = [P(self._content) for P in self.PAGES]
-        for p in self._pages:
-            p.place(relwidth=1, relheight=1)
+        self._active_canvas = None
+        self._page_wrappers = []
+        self._pages = []
+        for P in self.PAGES:
+            outer = tk.Frame(self._content, bg=BG)
+            canvas = tk.Canvas(outer, bg=BG, highlightthickness=0)
+            vsb = tk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+            canvas.configure(yscrollcommand=vsb.set)
+            vsb.pack(side="right", fill="y")
+            canvas.pack(side="left", fill="both", expand=True)
+            page = P(canvas)
+            page.app = self
+            cwin = canvas.create_window((0, 0), window=page, anchor="nw")
+            page.bind("<Configure>",
+                      lambda e, c=canvas: c.configure(scrollregion=c.bbox("all")))
+            canvas.bind("<Configure>",
+                        lambda e, c=canvas, w=cwin: c.itemconfig(w, width=e.width))
+            outer.place(relwidth=1, relheight=1)
+            self._pages.append(page)
+            self._page_wrappers.append((outer, canvas))
+
+        self.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.bind_all("<Button-4>",   self._on_mousewheel)
+        self.bind_all("<Button-5>",   self._on_mousewheel)
 
         self._current = 0
         self._show(0)
@@ -4075,9 +4096,22 @@ class CPharmWizard(tk.Tk):
                                    padx=16, pady=8)
         self._back_btn.pack(side="right", padx=(0, 8), pady=8)
 
+    def _on_mousewheel(self, event):
+        if not self._active_canvas:
+            return
+        if event.num == 4:
+            self._active_canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            self._active_canvas.yview_scroll(1, "units")
+        else:
+            self._active_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
     def _show(self, idx):
-        for i, p in enumerate(self._pages):
-            if i == idx: p.lift()
+        for i, (outer, canvas) in enumerate(self._page_wrappers):
+            if i == idx:
+                outer.lift()
+                self._active_canvas = canvas
+                canvas.yview_moveto(0)
             self._dots[i].config(
                 fg=ACCENT if i == idx else (T2 if i < idx else T3))
         total = len(self.PAGES)

@@ -2,11 +2,13 @@
 Play Store Tester - ADB-based organic Play Store activity per phone.
 All functions use device serials (consistent with dashboard.py / teach.py).
 """
+from __future__ import annotations
+
 import random
 import subprocess
 import time
 import threading
-from typing import Callable
+from typing import Callable, Optional
 
 
 def _adb(serial: str, *args, timeout: int = 20) -> str:
@@ -99,7 +101,7 @@ def search_store(serial: str, query: str) -> bool:
     return True
 
 
-def install_from_store(serial: str, package: str, on_log: Callable | None = None) -> bool:
+def install_from_store(serial: str, package: str, on_log: Optional[Callable] = None) -> bool:
     """Open the Play Store listing and tap Install.
     
     Coordinates are scaled dynamically from 1280x720 baseline.
@@ -127,7 +129,7 @@ def install_from_store(serial: str, package: str, on_log: Callable | None = None
     return True
 
 
-def launch_app(serial: str, package: str, on_log: Callable | None = None) -> bool:
+def launch_app(serial: str, package: str, on_log: Optional[Callable] = None) -> bool:
     """Launch an installed app via monkey launcher intent."""
     if on_log:
         on_log(f"{serial}: launching {package}")
@@ -143,7 +145,7 @@ def leave_review(
     package: str,
     stars: int,
     review_text: str,
-    on_log: Callable | None = None,
+    on_log: Optional[Callable] = None,
 ) -> bool:
     """Navigate to app's Play Store page, tap review section,
     select star rating, type the review, and submit.
@@ -192,8 +194,8 @@ def run_full_sequence(
     stars: int,
     review_text: str,
     delay_secs: int,
-    on_log: Callable | None = None,
-    on_complete: Callable | None = None,
+    on_log: Optional[Callable] = None,
+    on_complete: Optional[Callable] = None,
 ):
     """
     Run the full Play Store sequence on each phone, staggered by delay_secs.

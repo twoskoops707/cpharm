@@ -217,7 +217,8 @@ async def broadcast(msg: dict):
     if not _ws_clients:
         return
     data = json.dumps(msg)
-    await asyncio.gather(*[ws.send(data) for ws in _ws_clients], return_exceptions=True)
+    clients = set(_ws_clients)
+    await asyncio.gather(*[ws.send(data) for ws in clients], return_exceptions=True)
 
 
 async def push_phones():
@@ -293,7 +294,10 @@ async def handle_http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
         content_length = 0
         for line in lines[1:]:
             if line.lower().startswith("content-length:"):
-                content_length = int(line.split(":", 1)[1].strip())
+                try:
+                    content_length = int(line.split(":", 1)[1].strip())
+                except (ValueError, IndexError):
+                    pass
                 break
 
         body_bytes = body_start
@@ -324,6 +328,10 @@ async def handle_http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
         log.warning("HTTP handler error: %s", e)
     finally:
         writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
 
 
 async def handle_get(path: str) -> bytes:
@@ -423,13 +431,17 @@ async def handle_post(path: str, body: bytes) -> bytes:
         phones = [p for p in list_phones() if p["running"]]
 
         async def install_all():
+            loop = asyncio.get_running_loop()
             for p in phones:
                 serial = p["serial"]
                 await broadcast({"type": "install_progress",
                                  "serial": serial, "status": "installing"})
-                subprocess.run(
-                    ["adb", "-s", serial, "install", "-r", str(apk_path)],
-                    capture_output=True, timeout=120
+                await loop.run_in_executor(
+                    None,
+                    lambda s=serial, ap=str(apk_path): subprocess.run(
+                        ["adb", "-s", s, "install", "-r", ap],
+                        capture_output=True, timeout=120,
+                    )
                 )
                 invalidate_cache(serial)
                 await broadcast({"type": "install_progress",
@@ -444,7 +456,6 @@ async def handle_post(path: str, body: bytes) -> bytes:
         serial = data.get("serial", "").strip()
         if not serial:
             return json_err("no serial")
-        loop = asyncio.get_running_loop()
         threading.Thread(target=lambda: _stop_device(serial), daemon=True).start()
         await asyncio.sleep(1)
         await push_phones()
@@ -453,7 +464,6 @@ async def handle_post(path: str, body: bytes) -> bytes:
     # ── Stop all running devices ──
     if path == "/api/stop_all":
         phones = [p for p in list_phones() if p["running"]]
-        loop = asyncio.get_running_loop()
         def stop_all():
             for p in phones:
                 _stop_device(p["serial"])
@@ -470,10 +480,13 @@ async def handle_post(path: str, body: bytes) -> bytes:
 
     # ── URL launcher ──
     if path == "/api/open_url":
-        url          = data.get("url", "").strip()
-        stagger      = int(data.get("stagger_secs", 0))
-        auto_rotate  = bool(data.get("auto_rotate", False))
-        dwell_secs   = int(data.get("dwell_secs", 30))
+        url         = data.get("url", "").strip()
+        auto_rotate = bool(data.get("auto_rotate", False))
+        try:
+            stagger    = int(data.get("stagger_secs", 0))
+            dwell_secs = int(data.get("dwell_secs", 30))
+        except (TypeError, ValueError):
+            return json_err("stagger_secs and dwell_secs must be integers")
         if not url.startswith(("http://", "https://")):
             return json_err("URL must start with http:// or https://")
         phones = [p for p in list_phones() if p["running"]]
@@ -529,8 +542,11 @@ async def handle_post(path: str, body: bytes) -> bytes:
         return json_ok({"ok": True})
 
     if path == "/api/teach/play":
-        rec   = data.get("file") or _teach_state.get("file")
-        delay = int(data.get("delay_secs", 60))
+        rec = data.get("file") or _teach_state.get("file")
+        try:
+            delay = int(data.get("delay_secs", 60))
+        except (TypeError, ValueError):
+            delay = 60
         if not rec:
             return json_err("no recording found")
         source_serial = _teach_state.get("serial", "")
@@ -622,7 +638,10 @@ async def handle_post(path: str, body: bytes) -> bytes:
         if not raw_groups:
             cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
             if cfg_path.exists():
-                raw_groups = json.loads(cfg_path.read_text()).get("groups", [])
+                try:
+                    raw_groups = json.loads(cfg_path.read_text()).get("groups", [])
+                except (json.JSONDecodeError, OSError):
+                    return json_err("corrupt groups_config.json")
         if not raw_groups:
             return json_err("no groups provided and no saved groups_config.json found")
 
@@ -660,7 +679,8 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 elif t == "clear_cookies":
                     _adb(serial, "shell", "pm", "clear", "com.android.chrome")
                 elif t == "type_text":
-                    text = step.get("text", "").replace(" ", "%s").replace("'", "")
+                    raw_text = step.get("text", "")
+                    text = urllib.parse.quote(raw_text, safe="").replace("%20", "%s")
                     _adb(serial, "shell", "input", "text", text)
                 elif t == "rotate_identity":
                     idx = _phone_idx_from_serial(serial)
@@ -677,9 +697,13 @@ async def handle_post(path: str, body: bytes) -> bytes:
             name    = group.get("name", "Group")
             phone_map = group.get("phones", {})   # {serial: {steps:[...]}}
             serials = [s for s in phone_map.keys() if s in all_phones]
-            stagger = int(group.get("stagger_secs", 0))
-            repeat  = int(group.get("repeat", 1))
-            forever = bool(group.get("repeat_forever", False))
+            try:
+                stagger = int(group.get("stagger_secs", 0))
+                repeat  = int(group.get("repeat", 1))
+            except (TypeError, ValueError):
+                stagger, repeat = 0, 1
+            rv      = group.get("repeat_forever", False)
+            forever = rv if isinstance(rv, bool) else str(rv).lower() == "true"
 
             _running_groups[name] = True
             asyncio.run_coroutine_threadsafe(
@@ -722,7 +746,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                     t.start()
                     threads.append(t)
                 for t in threads:
-                    t.join()
+                    t.join(timeout=300)
                 iteration += 1
 
             asyncio.run_coroutine_threadsafe(
@@ -758,7 +782,10 @@ async def handle_post(path: str, body: bytes) -> bytes:
         cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
         if not cfg_path.exists():
             return json_err("no saved groups_config.json found")
-        cfg = json.loads(cfg_path.read_text())
+        try:
+            cfg = json.loads(cfg_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return json_err("corrupt groups_config.json")
         groups = cfg.get("groups", [])
         target = None
         for g in groups:
@@ -819,7 +846,10 @@ async def handle_post(path: str, body: bytes) -> bytes:
     if path == "/api/groups/load":
         cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
         if cfg_path.exists():
-            cfg = json.loads(cfg_path.read_text())
+            try:
+                cfg = json.loads(cfg_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                return json_err("corrupt groups_config.json")
             return json_ok(cfg)
         return json_err("no groups_config.json found — run the Setup Wizard first")
 
@@ -827,7 +857,10 @@ async def handle_post(path: str, body: bytes) -> bytes:
     if path == "/api/launch_app":
         package = data.get("package", "").strip()
         target  = data.get("target", "all")
-        stagger = int(data.get("stagger_secs", 0))
+        try:
+            stagger = int(data.get("stagger_secs", 0))
+        except (TypeError, ValueError):
+            stagger = 0
         if not package:
             return json_err("no package specified")
         if not re.match(r'^[a-zA-Z][a-zA-Z0-9_.]*$', package):
@@ -853,7 +886,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
     if path == "/api/input_text":
         text   = data.get("text", "")
         target = data.get("target", "all")
-        safe   = text.replace(" ", "%s").replace("'", "").replace('"', "")
+        safe   = urllib.parse.quote(text, safe="").replace("%20", "%s")
         phones  = list_phones()
         targets = [p for p in phones if p["running"] and (target == "all" or p["serial"] == target)]
         loop    = asyncio.get_running_loop()
@@ -914,9 +947,12 @@ async def handle_post(path: str, body: bytes) -> bytes:
     if path == "/api/playstore/run":
         package = data.get("package", "").strip()
         query   = data.get("query", "").strip()
-        stars   = int(data.get("stars", 0))
         review  = data.get("review", "").strip()
-        delay   = int(data.get("delay_secs", 60))
+        try:
+            stars = int(data.get("stars", 0))
+            delay = int(data.get("delay_secs", 60))
+        except (TypeError, ValueError):
+            return json_err("stars and delay_secs must be integers")
         if package and not re.match(r'^[a-zA-Z][a-zA-Z0-9_.]*$', package):
             return json_err("invalid package name")
         phones = list_phones()

@@ -6,6 +6,7 @@ Works with any ADB-connected device (real phone, AVD, BlueStacks, etc.).
 
 import os
 import random
+import socket
 import subprocess
 import tempfile
 import time
@@ -40,7 +41,6 @@ def _random_imei() -> str:
 
 def _tor_browser_running() -> bool:
     """Check if Tor Browser's Tor is already running on 9150."""
-    import socket
     try:
         with socket.create_connection(("127.0.0.1", 9150), timeout=1):
             return True
@@ -69,12 +69,14 @@ def start_tor_for_phone(phone_idx: int) -> int:
     cfg = tempfile.NamedTemporaryFile(
         mode="w", suffix=".cfg", delete=False, dir=str(TOR_DIR)
     )
-    cfg.write(f"SocksPort {socks_port}\n")
-    cfg.write(f"ControlPort {ctrl_port}\n")
-    cfg.write(f"DataDirectory {data_dir}\n")
-    cfg.write("ExitNodes {us}\n")
-    cfg.write("StrictNodes 0\n")
-    cfg.close()
+    try:
+        cfg.write(f"SocksPort {socks_port}\n")
+        cfg.write(f"ControlPort {ctrl_port}\n")
+        cfg.write(f"DataDirectory {data_dir}\n")
+        cfg.write("ExitNodes {us}\n")
+        cfg.write("StrictNodes 0\n")
+    finally:
+        cfg.close()
 
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     proc = subprocess.Popen(
@@ -88,7 +90,6 @@ def start_tor_for_phone(phone_idx: int) -> int:
 
 def _send_tor_newnym(ctrl_port: int) -> bool:
     """Send NEWNYM signal to Tor control port to get a fresh circuit."""
-    import socket
     try:
         with socket.create_connection(("127.0.0.1", ctrl_port), timeout=3) as s:
             s.sendall(b'AUTHENTICATE ""\r\n')
@@ -133,7 +134,6 @@ def rotate_identity_adb(serial: str, phone_idx: int) -> dict:
 
 
 def wait_for_tor(phone_idx: int, timeout: int = 30) -> bool:
-    import socket
     port     = BASE_PORT + phone_idx
     deadline = time.time() + timeout
     while time.time() < deadline:

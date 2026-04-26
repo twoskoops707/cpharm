@@ -2603,7 +2603,7 @@ class PhoneFarmPage(PageBase):
 
     def _delete_phones(self):
         all_avds = list_avds()
-        to_delete = [a for a in all_avds if "CPharm" in a or "cpharm" in a.lower()]
+        to_delete = [a for a in all_avds if "cpharm" in a.lower()]
         prefix = state.get("phone_prefix", "CPharm_Phone")
         to_delete += [a for a in all_avds if a.startswith(prefix + "_") and a not in to_delete]
         if not to_delete:
@@ -3215,7 +3215,8 @@ class BootPage(PageBase):
                                    "Boot phones first (Step 3).")
             return
         serials = [p["serial"] for p in phones]
-        steps = next(iter(state["groups"][0]["phones"].values()), {}).get("steps", []) if state.get("groups") else []
+        _groups = state.get("groups") or []
+        steps = next(iter(_groups[0]["phones"].values()), {}).get("steps", []) if _groups else []
         try:
             import urllib.request
             url = f"http://localhost:{DASHBOARD_PORT}/api/scheduler/start"
@@ -3461,10 +3462,12 @@ class GroupsPage(PageBase):
 
                 # Edit this phone's sequence
                 def edit_phone(serial=serial, psteps_ref=[psteps], cnt_lbl=cnt_lbl):
+                    phone_name = next(
+                        (p["name"] for p in state["phones"] if p["serial"] == serial),
+                        serial
+                    )
                     win = PerPhoneSequenceEditor(
-                        self.app, serial,
-                        state["phones"][next(i for i, p in enumerate(state["phones"]) if p["serial"]==serial)]["name"],
-                        psteps_ref[0])
+                        self.app, serial, phone_name, psteps_ref[0])
                     self.app.wait_window(win)
                     cnt_lbl.config(text=f"{len(psteps_ref[0])} steps",
                                    fg=GREEN if psteps_ref[0] else YELLOW)
@@ -3953,7 +3956,8 @@ class LaunchPage(PageBase):
                                    "Boot phones first (Step 3).")
             return
         serials = [p["serial"] for p in phones]
-        steps = next(iter(state["groups"][0]["phones"].values()), {}).get("steps", []) if state.get("groups") else []
+        _groups = state.get("groups") or []
+        steps = next(iter(_groups[0]["phones"].values()), {}).get("steps", []) if _groups else []
         try:
             import urllib.request
             url = f"http://localhost:{DASHBOARD_PORT}/api/scheduler/start"

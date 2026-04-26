@@ -51,9 +51,6 @@ def start_recording(serial: str) -> str:
                 line = line.strip()
                 if not line:
                     continue
-                # Format: /dev/input/event5: EV_XXX TYPE XXX CODE XXX VALUE XXX
-                # or:    /dev/input/event5: EV_XXX TYPE XXX CODE XXX
-                # Capture: device, event_type, event_code, event_value
                 parts = line.split()
                 if len(parts) < 4:
                     continue
@@ -70,6 +67,10 @@ def start_recording(serial: str) -> str:
                 })
         finally:
             proc.terminate()
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
             _current_file.write_text(json.dumps(events))
 
     _recording_thread = threading.Thread(target=record, daemon=True)

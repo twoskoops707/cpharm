@@ -526,15 +526,45 @@ def _direct_download_platform_tools(sdk_path, log_fn=None):
         return False
 
 
+def _pe_machine_type(exe_path: str) -> int:
+    """Read Windows PE machine type. Returns 0xAA64 for ARM64, 0x8664 for x64, 0 on error."""
+    try:
+        with open(exe_path, "rb") as f:
+            if f.read(2) != b"MZ":
+                return 0
+            f.seek(0x3C)
+            pe_off = int.from_bytes(f.read(4), "little")
+            f.seek(pe_off)
+            if f.read(4) != b"PE\x00\x00":
+                return 0
+            return int.from_bytes(f.read(2), "little")
+    except Exception:
+        return 0
+
+
 def _direct_download_emulator(sdk_path, log_fn=None):
     """
-    Download emulator directly via Python urllib, bypassinging Java/sdkmanager.
-    Fetches Google's repository manifest XML to find the current emulator URL,
-    then downloads and extracts the ZIP.
+    Download emulator directly via Python urllib, bypassing Java/sdkmanager.
+    On ARM64 Windows: preserves an existing ARM64 emulator binary and tries to
+    download the ARM64 build before falling back to x64 (which cannot run arm64-v8a).
     """
     import xml.etree.ElementTree as ET
     REPO_XML = "https://dl.google.com/android/repository/repository2-3.xml"
     BASE_URL = "https://dl.google.com/android/repository/"
+
+    host_is_arm64 = IS_WIN and "arm64" in _machine_arch()
+
+    # If an ARM64 emulator binary already exists (e.g. installed by Android Studio),
+    # don't overwrite it with an x64 binary that can't run arm64-v8a images.
+    emu_exe = Path(sdk_path) / "emulator" / "emulator.exe"
+    if host_is_arm64 and emu_exe.exists():
+        machine = _pe_machine_type(str(emu_exe))
+        if machine == 0xAA64:
+            if log_fn:
+                log_fn("  ARM64 emulator already installed — skipping download ✅\n")
+            return True
+        if log_fn:
+            log_fn("  Existing emulator is x64; will try to replace with ARM64 build.\n")
 
     if log_fn:
         log_fn("  Fetching SDK catalog via Python (bypassing Java network)…\n")
@@ -548,9 +578,7 @@ def _direct_download_emulator(sdk_path, log_fn=None):
             log_fn("      Check VPN, proxy, or router DNS settings.\n")
         return False
 
-    # Google only ships a Windows x64 emulator binary — no ARM64 Windows native binary exists.
-    # On ARM64 Windows the x64 emulator runs via WOW64; WHPX accelerates x86_64 guests.
-    emulator_url = None
+    x64_url = None
     try:
         root = ET.fromstring(xml_data)
         for pkg in root.iter():
@@ -560,22 +588,40 @@ def _direct_download_emulator(sdk_path, log_fn=None):
                     if tag == "url":
                         val = (archive.text or "").strip()
                         if "windows" in val and val.endswith(".zip"):
-                            emulator_url = BASE_URL + val
+                            x64_url = BASE_URL + val
                             break
-                if emulator_url:
+                if x64_url:
                     break
     except ET.ParseError:
         pass
 
-    if not emulator_url:
+    if not x64_url:
         matches = re.findall(r"emulator-windows[^\"<\s]+\.zip", xml_data)
         if matches:
-            emulator_url = BASE_URL + matches[-1]
+            x64_url = BASE_URL + matches[-1]
 
-    if not emulator_url:
+    if not x64_url:
         if log_fn:
             log_fn("  ❌  Emulator URL not found in repository XML.\n")
         return False
+
+    # On ARM64 Windows, try the aarch64 build first (same build ID, different arch suffix).
+    # Google doesn't list it in the repository XML but the file exists on the CDN.
+    emulator_url = x64_url
+    if host_is_arm64:
+        arm64_url = re.sub(r"emulator-windows_x64-", "emulator-windows_aarch64-", x64_url)
+        if arm64_url != x64_url:
+            try:
+                req = urllib.request.Request(arm64_url, method="HEAD")
+                with urllib.request.urlopen(req, timeout=10):
+                    emulator_url = arm64_url
+                    if log_fn:
+                        log_fn(f"  ARM64 emulator build found: {arm64_url}\n")
+            except Exception:
+                if log_fn:
+                    log_fn("  ARM64 emulator build not on CDN; using x64 build.\n"
+                           "  ⚠  arm64-v8a guests will not work with the x64 emulator.\n"
+                           "     Install Android Studio to get the ARM64 emulator binary.\n")
 
     if log_fn:
         log_fn(f"  Emulator URL: {emulator_url}\n")
@@ -590,11 +636,6 @@ def _direct_download_emulator(sdk_path, log_fn=None):
         with zipfile.ZipFile(tmp, "r") as zf:
             zf.extractall(Path(sdk_path))
         tmp.unlink(missing_ok=True)
-
-        # The ZIP ships a remotePackage package.xml (for distribution).
-        # sdkmanager reads localPackage format when scanning installed packages.
-        # Write the correct localPackage package.xml so sdkmanager sees emulator
-        # as installed and doesn't block system image install with a dependency error.
         _write_emulator_package_xml(emu_dest)
         _write_sdk_licenses(sdk_path)
         if log_fn:

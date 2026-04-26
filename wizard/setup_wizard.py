@@ -1137,18 +1137,19 @@ def start_emulator(avd_name, port):
     emu   = sdk_tool("emulator")
     env   = _sdk_env()
 
-    # -accel auto — explicitly tell emulator to auto-select best accelerator
-    # (WHPX on ARM64 Windows, HAXM on Intel, KVM on Linux)
-    # -gpu auto  — use host GPU via Vulkan when available (Adreno on Snapdragon Windows
-    #              ships an x64 Vulkan ICD that the WOW64 emulator can load); falls back
-    #              to swiftshader_indirect only if the host GPU lacks Vulkan support.
-    #              swiftshader_indirect (CPU-only) causes 15-30 min boot times on ARM.
+    # -accel whpx — force Windows Hypervisor Platform acceleration directly.
+    #   "-accel auto" rejects ARM CPUs because it checks for Intel/AMD VT-x signature
+    #   even though WHPX works fine on Snapdragon Windows. Forcing -accel whpx bypasses
+    #   that check and uses the Windows Hypervisor Platform API directly.
+    # -gpu swiftshader_indirect — Adreno Vulkan driver lacks VK_KHR_external_memory so
+    #   the emulator cannot use the real GPU for GLES; software rendering is unavoidable
+    #   on this hardware. Boot will be slower (~10-20 min) but will complete with WHPX.
     # -no-snapshot-save         — don't save state on shutdown (faster, cleaner)
     # -no-boot-anim             — skip boot animation (faster boot)
     # -no-audio                 — prevent audio device errors on ARM
     # -wipe-data                — start with clean userdata (fresh identity each run)
-    accel_args = ["-accel", "auto",
-                  "-gpu", "auto",
+    accel_args = ["-accel", "whpx",
+                  "-gpu", "swiftshader_indirect",
                   "-no-snapshot-save", "-no-boot-anim", "-no-audio", "-wipe-data"]
 
     # CREATE_NO_WINDOW hides the console window (no blank/flashing terminal).
@@ -3065,13 +3066,15 @@ class BootPage(PageBase):
                     continue
 
                 procs.append((avd, serial, proc, log_path))
-                self._log_write(f"  Waiting for {avd} to boot (GPU: auto, can take 3-8 min)...\n")
+                self._log_write(
+                    f"  Waiting for {avd} to boot...\n"
+                    f"  (SwiftShader GPU — expect 10-20 min on first boot)\n")
                 if log_path and Path(log_path).exists():
                     self._log_write(f"  Emulator log: {log_path}\n")
-                ok = wait_for_boot(serial, timeout=480, log_fn=self._log_write)
+                ok = wait_for_boot(serial, timeout=1200, log_fn=self._log_write)
                 if not ok:
-                    self._log_write(f"  ⚠ {avd} slow — waiting extra 5 min...\n")
-                    ok = wait_for_boot(serial, timeout=300, log_fn=self._log_write)
+                    self._log_write(f"  ⚠ {avd} slow — waiting extra 10 min...\n")
+                    ok = wait_for_boot(serial, timeout=600, log_fn=self._log_write)
                 if ok:
                     new_id = rotate_android_id(serial)
                     phones.append({"serial": serial, "name": avd})

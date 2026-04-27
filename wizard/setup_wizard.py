@@ -1686,10 +1686,12 @@ class PrerequisitesPage(PageBase):
             self._install_dir.set(d)
 
     def _log(self, text):
-        self._log_box.config(state="normal")
-        self._log_box.insert("end", text if text.endswith("\n") else text + "\n")
-        self._log_box.see("end")
-        self._log_box.config(state="disabled")
+        def _do():
+            self._log_box.config(state="normal")
+            self._log_box.insert("end", text if text.endswith("\n") else text + "\n")
+            self._log_box.see("end")
+            self._log_box.config(state="disabled")
+        self.after(0, _do)
 
     def _set_row(self, key, text, color=T2):
         lbl = self._rows.get(key)
@@ -2145,10 +2147,12 @@ class AndroidStudioPage(PageBase):
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def _log(self, text):
-        self._log_box.config(state="normal")
-        self._log_box.insert("end", text if text.endswith("\n") else text + "\n")
-        self._log_box.see("end")
-        self._log_box.config(state="disabled")
+        def _do():
+            self._log_box.config(state="normal")
+            self._log_box.insert("end", text if text.endswith("\n") else text + "\n")
+            self._log_box.see("end")
+            self._log_box.config(state="disabled")
+        self.after(0, _do)
 
     def _set_status(self, icon, text, detail="", color=T1):
         self._icon_lbl.config(text=icon)
@@ -2707,10 +2711,12 @@ class PhoneFarmPage(PageBase):
             self._done = True
 
     def _log_write(self, text):
-        self._log_box.config(state="normal")
-        self._log_box.insert("end", text)
-        self._log_box.see("end")
-        self._log_box.config(state="disabled")
+        def _do():
+            self._log_box.config(state="normal")
+            self._log_box.insert("end", text)
+            self._log_box.see("end")
+            self._log_box.config(state="disabled")
+        self.after(0, _do)
 
     def _delete_phones(self):
         all_avds = list_avds()
@@ -2743,9 +2749,9 @@ class PhoneFarmPage(PageBase):
                     self._log_write(f"  ⚠ {avd}: {e}\n")
             state["avds"] = []
             self._done = False
-            self._progress_lbl.config(
-                text=f"✅ Deleted {len(deleted)} phone(s)" if deleted else "❌ Nothing deleted",
-                fg=GREEN if deleted else RED)
+            msg = f"✅ Deleted {len(deleted)} phone(s)" if deleted else "❌ Nothing deleted"
+            clr = GREEN if deleted else RED
+            self.after(0, lambda m=msg, c=clr: self._progress_lbl.config(text=m, fg=c))
             self._log_write(f"Deleted {len(deleted)} phone(s). Ready to create fresh.\n")
         threading.Thread(target=go, daemon=True).start()
 
@@ -2759,8 +2765,8 @@ class PhoneFarmPage(PageBase):
             created = []
             for i in range(1, n + 1):
                 name = f"{prefix}_{i}"
-                self._progress_lbl.config(
-                    text=f"Creating {i}/{n}: {name}…", fg=YELLOW)
+                self.after(0, lambda t=f"Creating {i}/{n}: {name}…":
+                           self._progress_lbl.config(text=t, fg=YELLOW))
                 self._log_write(f"══ Phone {i} of {n}: {name} ══\n")
                 try:
                     ok, err = create_avd(name, log_fn=self._log_write)
@@ -2778,17 +2784,15 @@ class PhoneFarmPage(PageBase):
                 self._log_write(f"\n✅  Done! {total} phone(s) created.\n")
                 self._log_write("Click Next → to start the phones.\n")
                 self._done = True
-                self._progress_lbl.config(
-                    text=f"✅  {total} phone(s) ready!", fg=GREEN)
+                self.after(0, lambda t=f"✅  {total} phone(s) ready!":
+                           self._progress_lbl.config(text=t, fg=GREEN))
             else:
-                self._log_write("\n❌  No phones were created. "
-                                "Check errors above.\n")
-                self._progress_lbl.config(
-                    text="❌  Failed — check log", fg=RED)
+                self._log_write("\n❌  No phones were created. Check errors above.\n")
+                self.after(0, lambda: self._progress_lbl.config(
+                    text="❌  Failed — check log", fg=RED))
 
-            self._create_btn.config(
-                state="normal",
-                text="✅  Phones Created!" if created else "  ▶  Try Again  ")
+            btn_txt = "✅  Phones Created!" if created else "  ▶  Try Again  "
+            self.after(0, lambda t=btn_txt: self._create_btn.config(state="normal", text=t))
 
         threading.Thread(target=go, daemon=True).start()
 
@@ -3049,10 +3053,12 @@ class BootPage(PageBase):
             self._status_rows[avd] = lbl
 
     def _log_write(self, text):
-        self._log_box.config(state="normal")
-        self._log_box.insert("end", text)
-        self._log_box.see("end")
-        self._log_box.config(state="disabled")
+        def _do():
+            self._log_box.config(state="normal")
+            self._log_box.insert("end", text)
+            self._log_box.see("end")
+            self._log_box.config(state="disabled")
+        self.after(0, _do)
 
     def _save(self):
         d = state.get("cpharm_dir", "")
@@ -3115,6 +3121,30 @@ class BootPage(PageBase):
         if not avds:
             messagebox.showerror("No phones", "Go back and create phones first.")
             return
+
+        # ARM64 preflight: if emulator.exe is x64 on an ARM64 host, fail immediately
+        # instead of waiting 20+ minutes for a guaranteed boot timeout.
+        if IS_WIN and "arm64" in _machine_arch():
+            sdk = state.get("sdk_path") or find_sdk()
+            if sdk:
+                emu_exe = Path(sdk) / "emulator" / "emulator.exe"
+                if emu_exe.exists() and _pe_machine_type(str(emu_exe)) != 0xAA64:
+                    messagebox.showerror(
+                        "Wrong emulator binary",
+                        "The emulator installed is x64 but your CPU is ARM64 (Snapdragon).\n\n"
+                        "x64 emulator cannot run arm64-v8a phones — they will crash immediately.\n\n"
+                        "Fix:\n"
+                        "  1. Go back to Step 3 (Android SDK) and click Install/Reinstall.\n"
+                        "     The wizard will copy Android Studio's ARM64 emulator binary.\n"
+                        "  2. Then delete and re-create your phones (Step 4).\n"
+                        "  3. Come back here to boot.\n\n"
+                        "If Android Studio is not installed:\n"
+                        "  Install Android Studio → SDK Manager → SDK Tools → Android Emulator",
+                    )
+                    self._boot_btn.config(state="normal", text="▶  Start Phones")
+                    self._stop_btn.config(state="disabled")
+                    return
+
         self._boot_btn.config(state="disabled", text="Starting…")
         self._stop_btn.config(state="normal")
         self._log_write(f"Starting {len(avds)} phone(s)...\n")
@@ -3947,10 +3977,12 @@ class LaunchPage(PageBase):
         self._summary.config(state="disabled")
 
     def _log(self, text):
-        self._log_box.config(state="normal")
-        self._log_box.insert("end", text + "\n")
-        self._log_box.see("end")
-        self._log_box.config(state="disabled")
+        def _do():
+            self._log_box.config(state="normal")
+            self._log_box.insert("end", text + "\n")
+            self._log_box.see("end")
+            self._log_box.config(state="disabled")
+        self.after(0, _do)
 
     _log_write = lambda self, t: self._log(t)
 

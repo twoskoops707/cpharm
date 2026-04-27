@@ -3357,6 +3357,11 @@ class BootPage(PageBase):
                     phones = [{"serial": s, "name": name_map.get(s, f"MuMu-{i}")}
                               for i, s in enumerate(connected)]
                     state["phones"] = phones
+                    for p in phones:
+                        try:
+                            setup_chrome(p["serial"])
+                        except Exception:
+                            pass
                     self.after(0, lambda: (
                         self._overall_lbl.config(
                             text=f"✅  {len(phones)} MuMu phone(s) connected!", fg=GREEN),
@@ -3586,7 +3591,11 @@ class BootPage(PageBase):
                     if check.strip() == "ok":
                         new_id = rotate_android_id(serial)
                         phones.append({"serial": serial, "name": name})
-                        self._log_write(f"  ✅ {name}: {serial}  ID:{new_id[:8]}…\n")
+                        try:
+                            setup_chrome(serial)
+                            self._log_write(f"  ✅ {name}: {serial}  ID:{new_id[:8]}… Chrome ✓\n")
+                        except Exception:
+                            self._log_write(f"  ✅ {name}: {serial}  ID:{new_id[:8]}…\n")
                         row_lbl = self._status_rows.get(serial)
                         if row_lbl:
                             self.after(0, lambda lb=row_lbl: lb.config(text="✅ Running", fg=GREEN))

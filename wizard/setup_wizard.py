@@ -950,7 +950,7 @@ def _ensure_emulator_meta(sdk, log_fn=None):
             candidates = [search_root]
         for studio_root in candidates:
             candidate = studio_root / "emulator"
-            if (candidate / "meta" / "device-catalog.xml").exists():
+            if (candidate / "emulator.exe").exists():
                 studio_emulator = candidate
                 break
         if studio_emulator:
@@ -2373,6 +2373,11 @@ class AndroidStudioPage(PageBase):
 
         self._log_write("emulator        ✅")
         self._log_write("platform-tools  ✅")
+
+        if IS_WIN and "arm64" in _machine_arch():
+            self._log_write("ARM64 host — checking emulator binary…")
+            _ensure_emulator_meta(sdk, log_fn=self._log)
+
         self._finish_ok(sdk)
 
 

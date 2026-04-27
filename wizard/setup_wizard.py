@@ -598,7 +598,7 @@ def _mumu_get_instances(mgr_path):
     Uses MuMuManager.exe info --vmindex all
     JSON can be a single dict (one instance) or a dict-of-dicts keyed by index.
     """
-    ok, out = _mumu_run(mgr_path, "info", "--vmindex", "all", timeout=10)
+    ok, out = _mumu_run(mgr_path, "info", "-v", "all", timeout=10)
     if not ok or not out:
         return []
     try:
@@ -639,7 +639,7 @@ def _mumu_launch(mgr_path, index, log_fn=None):
     """Launch a MuMuPlayer instance by index."""
     if log_fn:
         log_fn(f"  Launching MuMu instance {index}…\n")
-    ok, out = _mumu_run(mgr_path, "control", "--vmindex", str(index), "launch", timeout=30)
+    ok, out = _mumu_run(mgr_path, "control", "-v", str(index), "launch", timeout=30)
     return ok
 
 
@@ -2972,20 +2972,26 @@ class PhoneFarmPage(PageBase):
         self._seq_lbl.pack(side="left")
 
     def _open_mumu(self):
-        mgr = _find_mumu_manager()
-        if mgr:
-            mumu_exe = mgr.parent.parent / "MuMuPlayer.exe"
-            if not mumu_exe.exists():
-                mumu_exe = mgr.parent.parent / "nx_main" / "MuMuPlayer.exe"
-            if mumu_exe.exists():
-                try:
-                    subprocess.Popen([str(mumu_exe)],
-                                     creationflags=subprocess.CREATE_NO_WINDOW if IS_WIN else 0)
-                    return
-                except Exception:
-                    pass
-        import webbrowser
-        webbrowser.open(MUMU_DOWNLOAD_URL)
+        root = _find_mumu_player()
+        if root:
+            for candidate in (
+                "MuMuPlayer.exe",
+                Path("nx_main") / "MuMuPlayer.exe",
+                Path("nx_main") / "MuMuNxMain.exe",
+            ):
+                exe = root / candidate
+                if exe.exists():
+                    try:
+                        subprocess.Popen([str(exe)],
+                                         creationflags=subprocess.CREATE_NO_WINDOW if IS_WIN else 0)
+                        return
+                    except Exception:
+                        pass
+        messagebox.showinfo(
+            "MuMuPlayer Not Found",
+            "Could not launch MuMuPlayer automatically.\n\n"
+            "Please open MuMuPlayer from your Start menu or taskbar."
+        )
 
     def _edit_sequence(self):
         dlg = PerPhoneSequenceEditor(
@@ -3339,6 +3345,34 @@ class BootPage(PageBase):
 
     def on_enter(self):
         self._rebuild_grid()
+
+        if state.get("use_mumu"):
+            self._overall_lbl.config(text="Connecting to MuMu instances…", fg=YELLOW)
+            def _mumu_scan():
+                connected = _connect_mumu_phones(log_fn=self._log_write)
+                if connected:
+                    mgr = _find_mumu_manager()
+                    instances = _mumu_get_instances(mgr) if mgr else []
+                    name_map = {inst["adb_serial"]: inst["name"] for inst in instances}
+                    phones = [{"serial": s, "name": name_map.get(s, f"MuMu-{i}")}
+                              for i, s in enumerate(connected)]
+                    state["phones"] = phones
+                    self.after(0, lambda: (
+                        self._overall_lbl.config(
+                            text=f"✅  {len(phones)} MuMu phone(s) connected!", fg=GREEN),
+                        self._rebuild_grid(),
+                    ))
+                    for s in connected:
+                        row_lbl = self._status_rows.get(s)
+                        if row_lbl:
+                            self.after(0, lambda lbl=row_lbl: lbl.config(text="✅  Running", fg=GREEN))
+                else:
+                    self.after(0, lambda: self._overall_lbl.config(
+                        text="No MuMu phones found — open MuMuPlayer and start your instances first",
+                        fg=YELLOW))
+            threading.Thread(target=_mumu_scan, daemon=True).start()
+            return
+
         devs = list_adb_devices()
 
         # Include physical USB phones and already-running emulators
@@ -3348,7 +3382,6 @@ class BootPage(PageBase):
             if s.startswith("emulator-") or ":" in s:
                 already.append(d)
             else:
-                # Physical USB device
                 already.append(d)
         if already:
             state["phones"] = already

@@ -897,9 +897,30 @@ def _ensure_emulator_meta(sdk, log_fn=None):
     """
     emu_dir = Path(sdk) / "emulator"
     catalog = emu_dir / "meta" / "device-catalog.xml"
+    host_is_arm64 = IS_WIN and "arm64" in _machine_arch()
 
-    # Already present — nothing to do
-    if catalog.exists():
+    # ── ARM64-specific binary check (runs even if catalog already exists) ──
+    # Step 2 (SDK install) can write an x64 emulator.exe + catalog.  The
+    # catalog check below would short-circuit before replacing the x64 binary,
+    # causing "CPU Architecture not supported" crashes at boot.  We handle this
+    # separately so catalog presence and binary architecture are independent.
+    needs_arm64_copy = False
+    if host_is_arm64:
+        emu_exe = emu_dir / "emulator.exe"
+        if emu_exe.exists():
+            machine = _pe_machine_type(str(emu_exe))
+            if machine == 0xAA64:
+                if log_fn:
+                    log_fn("  ARM64 emulator binary confirmed ✓\n")
+            else:
+                if log_fn:
+                    log_fn("  ⚠  emulator.exe is x64 — will replace with ARM64 build.\n")
+                needs_arm64_copy = True
+        else:
+            needs_arm64_copy = True  # no binary at all
+
+    # Already present and no ARM64 binary replacement needed — nothing to do
+    if catalog.exists() and not needs_arm64_copy:
         if log_fn:
             log_fn("  Emulator device metadata already present.\n")
         return
@@ -913,7 +934,6 @@ def _ensure_emulator_meta(sdk, log_fn=None):
     # Android Studio ships a complete copy of the emulator with device-catalog.xml.
     # On ARM64 Windows, Android Studio's emulator.exe IS the ARM64 native binary —
     # copy the entire emulator directory so arm64-v8a images boot natively.
-    host_is_arm64 = IS_WIN and "arm64" in _machine_arch()
     studio_emulator = None
     search_roots = [
         Path(os.environ.get("PROGRAMFILES", "")) / "Android",
@@ -1008,6 +1028,23 @@ def _ensure_emulator_meta(sdk, log_fn=None):
                    "    AVD creation will fail. Consider installing Android Studio\n"
                    "    to get the full emulator package with device definitions.\n")
 
+    # On ARM64 Windows, verify the final emulator binary is actually ARM64.
+    # Paths 2+3 above download x64 builds from Google's public repo — they
+    # cannot run arm64-v8a guests and crash immediately at boot.
+    if host_is_arm64:
+        emu_exe = emu_dir / "emulator.exe"
+        if emu_exe.exists() and _pe_machine_type(str(emu_exe)) != 0xAA64:
+            if log_fn:
+                log_fn(
+                    "  ❌  emulator.exe is STILL x64 after all install paths.\n"
+                    "     arm64-v8a phones CANNOT boot with this binary.\n"
+                    "  Fix:\n"
+                    "     1. Open Android Studio → SDK Manager → SDK Tools tab\n"
+                    "     2. Uncheck 'Android Emulator' → Apply → re-check → Apply\n"
+                    "        (forces ARM64 build download)\n"
+                    "     3. Re-run Step 2 of this wizard.\n"
+                )
+
 
 def create_avd(name, log_fn=None):
     sdk = state.get("sdk_path") or find_sdk()
@@ -1019,12 +1056,11 @@ def create_avd(name, log_fn=None):
     ext    = ".bat" if IS_WIN else ""
     avdmgr = str(Path(sdkmgr_path).parent / f"avdmanager{ext}")
     arch   = _machine_arch()
-    # On x64 Windows use x86_64 system images (WHPX-accelerated).
-    # On ARM64 Windows use arm64-v8a — the native ARM64 emulator binary runs
+    # On ARM64 Windows: arm64-v8a — the native ARM64 emulator binary runs
     # arm64-v8a guests directly without any hypervisor requirement, avoiding
     # the Intel/AMD CPU check that blocks x86_64 guests on Snapdragon.
-    if IS_WIN and arch == "x86_64":
-        arch = "x86_64"
+    # On x64 Windows: x86_64 system images (WHPX-accelerated).
+    # _machine_arch() already returns the correct ABI — no override needed.
     image  = f"system-images;android-34;google_apis;{arch}"
 
     java_home = _find_java_home()
@@ -2611,7 +2647,7 @@ class PhoneFarmPage(PageBase):
         tk.Label(explain, text="What clicking Create does:",
                  font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1, anchor="w").pack(fill="x")
         tk.Label(explain,
-                 text="  1.  Downloads Android 14 x86_64 system image (~1 GB) — only once\n"
+                 text=f"  1.  Downloads Android 14 {_machine_arch()} system image (~1 GB) — only once\n"
                       "  2.  Creates one Pixel 6 virtual phone per slot\n"
                       "  3.  Each phone gets a unique device ID and storage\n"
                       "  4.  Names them {prefix}_1, {prefix}_2, etc.",

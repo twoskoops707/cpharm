@@ -543,45 +543,139 @@ def _pe_machine_type(exe_path: str) -> int:
 
 MUMU_DOWNLOAD_URL = "https://www.mumuplayer.com/windows-arm.html"
 
-def _find_mumu_player():
-    """Return the MuMuPlayer install root (contains MuMuPlayer.exe), or None."""
+def _find_mumu_manager():
+    """Return path to MuMuManager.exe, or None.
+
+    MuMuPlayer 12 installs MuMuManager.exe inside the nx_main subfolder:
+      {install_root}\\nx_main\\MuMuManager.exe
+    """
     if not IS_WIN:
         return None
-    search = []
+    candidates = []
     for base_var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
         base = os.environ.get(base_var, "")
-        if base:
-            search += [
-                Path(base) / "Netease" / "MuMuPlayer-12.0",
-                Path(base) / "Netease" / "MuMuPlayer",
-                Path(base) / "MuMuPlayer-12.0",
-                Path(base) / "MuMuPlayer",
-            ]
-    for p in search:
-        if (p / "MuMuPlayer.exe").exists() or (p / "MuMuManager.exe").exists():
+        if not base:
+            continue
+        for folder in ("Netease\\MuMuPlayer-12.0", "Netease\\MuMuPlayer",
+                       "MuMuPlayer-12.0", "MuMuPlayer"):
+            root = Path(base) / folder
+            candidates.append(root / "nx_main" / "MuMuManager.exe")
+            candidates.append(root / "shell"   / "MuMuManager.exe")
+            candidates.append(root / "MuMuManager.exe")
+    for p in candidates:
+        if p.exists():
             return p
     return None
 
 
-def _connect_mumu_phones(count=5, log_fn=None):
-    """Connect to MuMuPlayer ADB instances and return list of connected serials.
+def _find_mumu_player():
+    """Return the MuMuPlayer install root (contains MuMuPlayer.exe), or None."""
+    mgr = _find_mumu_manager()
+    if mgr:
+        if mgr.parent.name in ("nx_main", "shell"):
+            return mgr.parent.parent
+        return mgr.parent
+    return None
 
-    MuMuPlayer 12 uses ports 16384, 16416, 16448, … (base + index*32).
-    We try `count` ports and collect whichever are live.
+
+def _mumu_run(mgr_path, *args, timeout=15):
+    """Run MuMuManager.exe with args, return (ok, stdout_str)."""
+    flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
+    try:
+        r = subprocess.run(
+            [str(mgr_path)] + list(args),
+            capture_output=True, text=True, timeout=timeout,
+            creationflags=flags,
+        )
+        return r.returncode == 0, r.stdout.strip()
+    except Exception as e:
+        return False, str(e)
+
+
+def _mumu_get_instances(mgr_path):
+    """Return list of dicts: {index, name, adb_serial, started}.
+
+    Uses MuMuManager.exe info --vmindex all
+    JSON can be a single dict (one instance) or a dict-of-dicts keyed by index.
     """
-    base_port = 16384
-    step = 32
+    ok, out = _mumu_run(mgr_path, "info", "--vmindex", "all", timeout=10)
+    if not ok or not out:
+        return []
+    try:
+        data = json.loads(out)
+    except Exception:
+        return []
+
+    instances = []
+
+    def _parse_one(d):
+        if not isinstance(d, dict):
+            return
+        ip   = d.get("adb_host_ip", "127.0.0.1")
+        port = d.get("adb_port")
+        if port is None:
+            return
+        instances.append({
+            "index":      d.get("index", 0),
+            "name":       d.get("name", f"MuMu-{d.get('index', 0)}"),
+            "adb_serial": f"{ip}:{port}",
+            "started":    bool(d.get("is_android_started")),
+        })
+
+    if isinstance(data, dict):
+        if "index" in data:
+            _parse_one(data)
+        else:
+            for v in data.values():
+                _parse_one(v)
+    elif isinstance(data, list):
+        for item in data:
+            _parse_one(item)
+
+    return sorted(instances, key=lambda x: x["index"])
+
+
+def _mumu_launch(mgr_path, index, log_fn=None):
+    """Launch a MuMuPlayer instance by index."""
+    if log_fn:
+        log_fn(f"  Launching MuMu instance {index}…\n")
+    ok, out = _mumu_run(mgr_path, "control", "--vmindex", str(index), "launch", timeout=30)
+    return ok
+
+
+def _connect_mumu_phones(count=5, log_fn=None):
+    """Connect to MuMuPlayer instances via MuMuManager API + adb connect.
+
+    Returns list of connected ADB serials.
+    Fallback: if MuMuManager not found, try standard ports 16384+32*i.
+    """
+    mgr = _find_mumu_manager()
     connected = []
+
+    if mgr:
+        instances = _mumu_get_instances(mgr)
+        for inst in instances:
+            serial = inst["adb_serial"]
+            out = adb("connect", serial, timeout=8)
+            if "connected" in out.lower() or "already" in out.lower():
+                check = adb("shell", "echo", "ok", serial=serial, timeout=6)
+                if check.strip() == "ok":
+                    connected.append(serial)
+                    if log_fn:
+                        log_fn(f"  ✅ {inst['name']}: {serial}\n")
+        return connected
+
+    # Fallback: try fixed ports
+    base_port = 16384
     for i in range(count):
-        port = base_port + i * step
-        serial = f"127.0.0.1:{port}"
+        serial = f"127.0.0.1:{base_port + i * 32}"
         out = adb("connect", serial, timeout=6)
         if "connected" in out.lower() or "already" in out.lower():
             check = adb("shell", "echo", "ok", serial=serial, timeout=6)
             if check.strip() == "ok":
                 connected.append(serial)
                 if log_fn:
-                    log_fn(f"  ✅ MuMu instance {i}: {serial}\n")
+                    log_fn(f"  ✅ MuMu fallback port: {serial}\n")
     return connected
 
 
@@ -2205,6 +2299,45 @@ class AndroidStudioPage(PageBase):
         self._log_box.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
 
+        # ── MuMuPlayer ARM64 alternative (shown on ARM64 host) ───────────────
+        if IS_WIN and "arm64" in _machine_arch():
+            mumu_sep = tk.Frame(self, bg=BORDER, height=1)
+            mumu_sep.pack(fill="x", pady=(8, 6))
+            mumu_card = tk.Frame(self, bg="#1a2a1a", padx=14, pady=12,
+                                 highlightthickness=1, highlightbackground=GREEN)
+            mumu_card.pack(fill="x", pady=(0, 8))
+            tk.Label(mumu_card,
+                     text="🎮  ARM64 Windows: Use MuMuPlayer instead of Android SDK",
+                     font=("Segoe UI", 11, "bold"), bg="#1a2a1a", fg=GREEN,
+                     anchor="w").pack(fill="x")
+            tk.Label(mumu_card,
+                     text="Google does NOT publish a Windows ARM64 emulator.\n"
+                          "MuMuPlayer ARM is the only solution — native ARM64, multi-instance, full ADB.\n"
+                          "Click below to skip the SDK entirely and use MuMuPlayer.",
+                     font=FS, bg="#1a2a1a", fg=T2,
+                     anchor="w", justify="left").pack(fill="x", pady=(4, 8))
+            mumu_btn_row = tk.Frame(mumu_card, bg="#1a2a1a")
+            mumu_btn_row.pack(fill="x")
+            self._mumu_mode_btn = tk.Button(
+                mumu_btn_row,
+                text="✅  Use MuMuPlayer ARM64  (skip SDK)",
+                font=("Segoe UI", 11, "bold"),
+                bg=GREEN, fg="#000000",
+                relief="flat", cursor="hand2",
+                padx=16, pady=8,
+                command=self._activate_mumu_mode,
+            )
+            self._mumu_mode_btn.pack(side="left", padx=(0, 10))
+            tk.Button(mumu_btn_row,
+                      text="Download MuMuPlayer ARM",
+                      font=FS, bg=BG3, fg=T1,
+                      relief="flat", cursor="hand2", padx=8, pady=6,
+                      command=lambda: __import__("webbrowser").open(MUMU_DOWNLOAD_URL),
+                      ).pack(side="left")
+            self._mumu_status_lbl = tk.Label(mumu_card, text="",
+                                             font=FS, bg="#1a2a1a", fg=GREEN)
+            self._mumu_status_lbl.pack(anchor="w", pady=(6, 0))
+
         # ── already installed / manual path ──────────────────────────────────
         sep = tk.Frame(self, bg=BORDER, height=1)
         sep.pack(fill="x", pady=(10, 6))
@@ -2666,13 +2799,35 @@ class AndroidStudioPage(PageBase):
         self._ready = False
         return False
 
+    def _activate_mumu_mode(self):
+        """Set MuMu mode — bypasses SDK requirement entirely."""
+        state["use_mumu"] = True
+        self._ready = True
+        mgr = _find_mumu_manager()
+        if mgr:
+            lbl = f"✅ MuMuPlayer found at {mgr.parent.parent}\n   Steps 2 and 3 will use MuMuPlayer — click Next →"
+        else:
+            lbl = ("✅ MuMu mode activated — click Next →\n"
+                   "   Install MuMuPlayer ARM first if you haven't already.")
+        if hasattr(self, "_mumu_status_lbl"):
+            self._mumu_status_lbl.config(text=lbl)
+        if hasattr(self, "_mumu_mode_btn"):
+            self._mumu_mode_btn.config(
+                text="✅  MuMuPlayer mode active",
+                state="disabled", bg=BG3, fg=GREEN)
+        self._set_status("✅", "MuMuPlayer ARM64 mode — SDK not needed",
+                         detail="Click Next → to continue.", color=GREEN)
+
     def can_advance(self):
+        if state.get("use_mumu"):
+            return True
         if self._ready:
             return True
         messagebox.showinfo(
             "Not ready yet",
             "Click 'Install Android SDK' and wait for it to finish first.\n\n"
-            "The wizard will download and set everything up automatically."
+            "The wizard will download and set everything up automatically.\n\n"
+            "On ARM64 Windows (Snapdragon)? Use the green MuMuPlayer button instead."
         )
         return False
 
@@ -2762,12 +2917,90 @@ class PhoneFarmPage(PageBase):
         # Log
         log_fr = tk.Frame(self, bg=BG2)
         log_fr.pack(fill="both", expand=True, pady=(4, 0))
-        self._log_box = tk.Text(log_fr, height=9, font=FM, bg=BG2, fg=T1,
+        self._log_box = tk.Text(log_fr, height=7, font=FM, bg=BG2, fg=T1,
                                 relief="flat", state="disabled", wrap="word")
         sb = tk.Scrollbar(log_fr, orient="vertical", command=self._log_box.yview)
         self._log_box.configure(yscrollcommand=sb.set)
         self._log_box.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
+
+        # MuMuPlayer info panel (hidden on non-MuMu machines at on_enter)
+        self._mumu_panel = tk.Frame(self, bg="#1a2a1a", padx=14, pady=12,
+                                    highlightthickness=1, highlightbackground=GREEN)
+        tk.Label(self._mumu_panel,
+                 text="🎮  MuMuPlayer ARM64 Mode",
+                 font=("Segoe UI", 12, "bold"), bg="#1a2a1a", fg=GREEN,
+                 anchor="w").pack(fill="x")
+        tk.Label(self._mumu_panel,
+                 text="MuMuPlayer handles phone creation through its own interface.\n\n"
+                      "How to create phones:\n"
+                      "  1. Open MuMuPlayer (it's in your Start menu or taskbar)\n"
+                      "  2. Click the multi-window icon (⧉) at the top-right\n"
+                      "  3. Click '+ New Instance' for each phone you want\n"
+                      "  4. Leave MuMuPlayer running\n"
+                      "  5. Click Next → below — the wizard connects automatically",
+                 font=FS, bg="#1a2a1a", fg=T2,
+                 anchor="w", justify="left").pack(fill="x", pady=(6, 10))
+        tk.Button(self._mumu_panel,
+                  text="Open MuMuPlayer Now",
+                  font=("Segoe UI", 10, "bold"),
+                  bg=GREEN, fg="#000000", relief="flat", cursor="hand2",
+                  padx=12, pady=6,
+                  command=self._open_mumu).pack(anchor="w")
+
+        # Sequence editor — per-phone automation steps
+        seq_sep = tk.Frame(self, bg=BORDER, height=1)
+        seq_sep.pack(fill="x", pady=(10, 6))
+        seq_hdr = tk.Frame(self, bg=BG)
+        seq_hdr.pack(fill="x")
+        tk.Label(seq_hdr, text="Automation Sequence  (optional)",
+                 font=("Segoe UI", 10, "bold"), bg=BG, fg=ACCENT,
+                 anchor="w").pack(side="left")
+        tk.Label(seq_hdr,
+                 text="Define what each phone does automatically. Set steps, then assign to groups.",
+                 font=FS, bg=BG, fg=T2).pack(side="left", padx=(8, 0))
+        seq_row = tk.Frame(self, bg=BG)
+        seq_row.pack(fill="x", pady=(4, 0))
+        self._seq_steps = []
+        tk.Button(seq_row, text="+ Edit Default Sequence",
+                  font=("Segoe UI", 10, "bold"),
+                  bg=BG3, fg=T1, relief="flat", cursor="hand2",
+                  padx=10, pady=6,
+                  command=self._edit_sequence).pack(side="left", padx=(0, 8))
+        self._seq_lbl = tk.Label(seq_row, text="No steps defined",
+                                 font=FS, bg=BG, fg=T3)
+        self._seq_lbl.pack(side="left")
+
+    def _open_mumu(self):
+        mgr = _find_mumu_manager()
+        if mgr:
+            mumu_exe = mgr.parent.parent / "MuMuPlayer.exe"
+            if not mumu_exe.exists():
+                mumu_exe = mgr.parent.parent / "nx_main" / "MuMuPlayer.exe"
+            if mumu_exe.exists():
+                try:
+                    subprocess.Popen([str(mumu_exe)],
+                                     creationflags=subprocess.CREATE_NO_WINDOW if IS_WIN else 0)
+                    return
+                except Exception:
+                    pass
+        import webbrowser
+        webbrowser.open(MUMU_DOWNLOAD_URL)
+
+    def _edit_sequence(self):
+        dlg = PerPhoneSequenceEditor(
+            self,
+            serial="default",
+            phone_name="Default Sequence (applied to all phones)",
+            steps_list=self._seq_steps,
+        )
+        self.wait_window(dlg)
+        n = len(self._seq_steps)
+        self._seq_lbl.config(
+            text=f"{n} step{'s' if n != 1 else ''} defined" if n else "No steps defined",
+            fg=T1 if n else T3,
+        )
+        state["default_steps"] = list(self._seq_steps)
 
     def _pick_count(self, n):
         state["num_phones"] = n
@@ -2781,6 +3014,15 @@ class PhoneFarmPage(PageBase):
                  f"(~{ram} GB RAM, ~{disk} GB disk needed)")
 
     def on_enter(self):
+        if state.get("use_mumu"):
+            self._mumu_panel.pack(fill="x", pady=(6, 0))
+            self._log_write("MuMuPlayer ARM64 mode — no AVD creation needed.\n"
+                            "Open MuMuPlayer, create instances, then click Next →\n")
+            return
+        else:
+            if self._mumu_panel.winfo_manager():
+                self._mumu_panel.pack_forget()
+
         self._pick_count(state.get("num_phones", 3))
         prefix = state.get("phone_prefix", "CPharm_Phone")
         existing = [a for a in list_avds() if a.startswith(prefix + "_")]
@@ -2882,6 +3124,8 @@ class PhoneFarmPage(PageBase):
         threading.Thread(target=go, daemon=True).start()
 
     def can_advance(self):
+        if state.get("use_mumu"):
+            return True
         avds = state.get("avds", [])
         if avds:
             return True
@@ -3096,23 +3340,34 @@ class BootPage(PageBase):
     def on_enter(self):
         self._rebuild_grid()
         devs = list_adb_devices()
-        running = [d for d in devs if d["serial"].startswith("emulator-")]
-        if running:
-            state["phones"] = running
+
+        # Include physical USB phones and already-running emulators
+        already = []
+        for d in devs:
+            s = d["serial"]
+            if s.startswith("emulator-") or ":" in s:
+                already.append(d)
+            else:
+                # Physical USB device
+                already.append(d)
+        if already:
+            state["phones"] = already
+            n = len(already)
             self._overall_lbl.config(
-                text=f"✅  {len(running)} phone(s) already running!",
+                text=f"✅  {n} phone(s) already connected!",
                 fg=GREEN)
             avds = state.get("avds", [])
-            for d in running:
-                # Status rows are keyed by AVD name, not ADB device model name.
-                # Derive AVD index from the emulator serial (emulator-5554 → idx 0, etc.)
-                try:
-                    port = int(d["serial"].split("-")[1])
-                    idx  = (port - 5554) // 2
-                    avd_name = avds[idx] if idx < len(avds) else None
-                except (IndexError, ValueError):
-                    avd_name = None
-                row_lbl = self._status_rows.get(avd_name) if avd_name else None
+            for d in already:
+                serial = d["serial"]
+                avd_name = None
+                if serial.startswith("emulator-"):
+                    try:
+                        port = int(serial.split("-")[1])
+                        idx  = (port - 5554) // 2
+                        avd_name = avds[idx] if idx < len(avds) else None
+                    except (IndexError, ValueError):
+                        pass
+                row_lbl = self._status_rows.get(avd_name or serial)
                 if row_lbl:
                     row_lbl.config(text="✅  Running", fg=GREEN)
 
@@ -3120,6 +3375,28 @@ class BootPage(PageBase):
         for w in self._status_frame.winfo_children():
             w.destroy()
         self._status_rows.clear()
+
+        if state.get("use_mumu"):
+            mgr = _find_mumu_manager()
+            if mgr:
+                instances = _mumu_get_instances(mgr)
+                for inst in instances:
+                    key = inst["adb_serial"]
+                    row = tk.Frame(self._status_frame, bg=BG2, padx=12, pady=7,
+                                   highlightthickness=1, highlightbackground=BORDER)
+                    row.pack(fill="x", pady=2)
+                    tk.Label(row, text="🎮", font=("Segoe UI", 14),
+                             bg=BG2).pack(side="left")
+                    tk.Label(row, text=inst["name"], font=FB, bg=BG2, fg=T1,
+                             width=26, anchor="w").pack(side="left")
+                    tk.Label(row, text=f"ADB: {key}", font=FM, bg=BG2,
+                             fg=T3, width=22, anchor="w").pack(side="left")
+                    lbl = tk.Label(row, text="Not started", font=FS, bg=BG2, fg=T3)
+                    lbl.pack(side="left", padx=6)
+                    self._status_rows[key] = lbl
+            return
+
+        # AVD emulator rows
         for i, avd in enumerate(state.get("avds", [])):
             port   = 5554 + i * 2
             serial = f"emulator-{port}"
@@ -3136,6 +3413,24 @@ class BootPage(PageBase):
                            bg=BG2, fg=T3)
             lbl.pack(side="left", padx=6)
             self._status_rows[avd] = lbl
+
+        # Physical USB phones
+        for d in list_adb_devices():
+            s = d["serial"]
+            if s.startswith("emulator-") or ":" in s:
+                continue
+            row = tk.Frame(self._status_frame, bg=BG2, padx=12, pady=7,
+                           highlightthickness=1, highlightbackground=BORDER)
+            row.pack(fill="x", pady=2)
+            tk.Label(row, text="📲", font=("Segoe UI", 14),
+                     bg=BG2).pack(side="left")
+            tk.Label(row, text=d["name"], font=FB, bg=BG2, fg=T1,
+                     width=26, anchor="w").pack(side="left")
+            tk.Label(row, text=f"USB: {s}", font=FM, bg=BG2,
+                     fg=T3, width=20, anchor="w").pack(side="left")
+            lbl = tk.Label(row, text="✅  Connected", font=FS, bg=BG2, fg=GREEN)
+            lbl.pack(side="left", padx=6)
+            self._status_rows[s] = lbl
 
     def _log_write(self, text):
         def _do():
@@ -3202,13 +3497,104 @@ class BootPage(PageBase):
             messagebox.showerror("Failed", str(e))
 
     def _boot_all(self):
-        avds = state.get("avds", [])
-        if not avds:
-            messagebox.showerror("No phones", "Go back and create phones first.")
+        # ── MuMuPlayer mode ────────────────────────���──────────────────────────
+        if state.get("use_mumu"):
+            self._boot_btn.config(state="disabled", text="Connecting…")
+            self._log_write("MuMuPlayer mode — launching and connecting instances…\n")
+            def go_mumu():
+                mgr = _find_mumu_manager()
+                if not mgr:
+                    self._log_write(
+                        "❌ MuMuManager.exe not found.\n"
+                        f"   Install MuMuPlayer ARM from: {MUMU_DOWNLOAD_URL}\n"
+                    )
+                    self.after(0, lambda: (
+                        self._boot_btn.config(state="normal", text="▶  Start All Phones"),
+                        self._overall_lbl.config(text="❌ MuMuPlayer not installed", fg=RED),
+                    ))
+                    return
+
+                instances = _mumu_get_instances(mgr)
+                if not instances:
+                    self._log_write(
+                        "❌ No MuMuPlayer instances found.\n"
+                        "   Open MuMuPlayer → click ⧉ (multi-window icon) → '+ New Instance'\n"
+                        "   Create your phones there, then click Start again.\n"
+                    )
+                    self.after(0, lambda: (
+                        self._boot_btn.config(state="normal", text="▶  Start All Phones"),
+                        self._overall_lbl.config(text="❌ No MuMu instances", fg=RED),
+                    ))
+                    return
+
+                phones = []
+                for inst in instances:
+                    idx  = inst["index"]
+                    name = inst["name"]
+                    serial = inst["adb_serial"]
+                    self._log_write(f"  Launching {name} (instance {idx})…\n")
+                    _mumu_launch(mgr, idx, log_fn=None)
+
+                    # Wait up to 3 min for Android to boot
+                    deadline = time.time() + 180
+                    booted   = inst.get("started", False)
+                    while not booted and time.time() < deadline:
+                        time.sleep(4)
+                        fresh = _mumu_get_instances(mgr)
+                        match = next((x for x in fresh if x["index"] == idx), None)
+                        if match and match["started"]:
+                            booted = True
+
+                    if not booted:
+                        self._log_write(f"  ⚠ {name} slow — trying ADB connect anyway…\n")
+
+                    adb("connect", serial, timeout=10)
+                    check = adb("shell", "echo", "ok", serial=serial, timeout=8)
+                    if check.strip() == "ok":
+                        new_id = rotate_android_id(serial)
+                        phones.append({"serial": serial, "name": name})
+                        self._log_write(f"  ✅ {name}: {serial}  ID:{new_id[:8]}…\n")
+                        row_lbl = self._status_rows.get(serial)
+                        if row_lbl:
+                            self.after(0, lambda lb=row_lbl: lb.config(text="✅ Running", fg=GREEN))
+                    else:
+                        self._log_write(f"  ❌ {name}: ADB not responding on {serial}\n")
+
+                state["phones"]      = phones
+                state["_emu_procs"]  = []
+                n = len(phones)
+                self.after(0, lambda: (
+                    self._boot_btn.config(state="normal", text="▶  Start All Phones"),
+                    self._stop_btn.config(state="disabled" if not phones else "normal"),
+                    self._overall_lbl.config(
+                        text=f"✅ {n} MuMuPlayer phone(s) ready" if phones else "❌ No phones connected",
+                        fg=GREEN if phones else RED),
+                ))
+                self._log_write(f"\n{n} MuMuPlayer phone(s) ready.\n")
+            threading.Thread(target=go_mumu, daemon=True).start()
             return
 
-        # ARM64 preflight: if emulator.exe is x64 on an ARM64 host, switch to
-        # MuMuPlayer ARM instead of attempting a guaranteed-fail AVD boot.
+        # ── AVD emulator mode ─────────────────────��───────────────────────────
+        avds = state.get("avds", [])
+
+        # Also include any physical USB phones already attached
+        usb_phones = [d for d in list_adb_devices()
+                      if not d["serial"].startswith("emulator-") and ":" not in d["serial"]]
+        if usb_phones and not avds:
+            state["phones"] = usb_phones
+            n = len(usb_phones)
+            self._overall_lbl.config(text=f"✅ {n} USB phone(s) connected", fg=GREEN)
+            self._log_write(f"✅ {n} physical USB phone(s) already connected.\n")
+            return
+
+        if not avds:
+            messagebox.showerror("No phones",
+                                 "Go back to Step 2 and create phones first.\n\n"
+                                 "Or connect a physical Android phone via USB — "
+                                 "the wizard will detect it automatically.")
+            return
+
+        # ARM64 preflight: if emulator.exe is x64 on an ARM64 host, fail immediately
         if IS_WIN and "arm64" in _machine_arch():
             sdk = state.get("sdk_path") or find_sdk()
             emu_ok = False
@@ -3217,53 +3603,14 @@ class BootPage(PageBase):
                 if emu_exe.exists() and _pe_machine_type(str(emu_exe)) == 0xAA64:
                     emu_ok = True
             if not emu_ok:
-                self._log_write(
-                    "ARM64 host detected — no native ARM64 emulator available from Google.\n"
-                    "Checking for MuMuPlayer ARM instances...\n"
+                messagebox.showerror(
+                    "MuMuPlayer required",
+                    "ARM64 (Snapdragon) detected — Google has no Windows ARM64 emulator.\n\n"
+                    "Go back to Step 1 and click  ✅ Use MuMuPlayer ARM64  to switch modes.\n\n"
+                    f"Download MuMuPlayer ARM:  {MUMU_DOWNLOAD_URL}",
                 )
-                mumu_root = _find_mumu_player()
-                phones = _connect_mumu_phones(
-                    count=max(len(avds), 8),
-                    log_fn=self._log_write,
-                )
-                if phones:
-                    state["phones"] = [{"serial": s, "name": f"MuMu-{i}"}
-                                       for i, s in enumerate(phones)]
-                    state["_emu_procs"] = []
-                    n = len(phones)
-                    self.after(0, lambda: (
-                        self._boot_btn.config(state="normal", text="▶  Start All Phones"),
-                        self._stop_btn.config(state="disabled"),
-                        self._overall_lbl.config(
-                            text=f"✅ {n} MuMuPlayer phone(s) connected", fg=GREEN),
-                    ))
-                    self._log_write(f"\n✅ {n} MuMuPlayer ARM phone(s) connected and ready.\n")
-                    return
-                else:
-                    msg = (
-                        "Your CPU is ARM64 (Snapdragon).\n\n"
-                        "Google does NOT publish a Windows ARM64 Android Emulator —\n"
-                        "even Android Studio ARM64 only downloads an x64 emulator.\n\n"
-                        "Use MuMuPlayer for Windows ARM instead:\n"
-                        "  • Free, native ARM64, multi-instance, full ADB access.\n\n"
-                        "How to fix:\n"
-                        f"  1. Download MuMuPlayer ARM:\n"
-                        f"     {MUMU_DOWNLOAD_URL}\n"
-                        "  2. Install MuMuPlayer and open it.\n"
-                        "  3. Create your phone instances in MuMuPlayer's\n"
-                        "     Multi-Instance Manager (top menu).\n"
-                        "  4. Keep MuMuPlayer running, then click Start again —\n"
-                        "     this wizard will connect automatically."
-                    )
-                    if mumu_root:
-                        msg += (
-                            f"\n\nMuMuPlayer found at: {mumu_root}\n"
-                            "Make sure to OPEN MuMuPlayer and start your instances first."
-                        )
-                    messagebox.showerror("MuMuPlayer ARM required", msg)
-                    self._boot_btn.config(state="normal", text="▶  Start All Phones")
-                    self._stop_btn.config(state="disabled")
-                    return
+                self._boot_btn.config(state="normal", text="▶  Start All Phones")
+                return
 
         self._boot_btn.config(state="disabled", text="Starting…")
         self._stop_btn.config(state="normal")
@@ -3355,7 +3702,7 @@ class BootPage(PageBase):
             state["_emu_procs"] = [p for _, _, p, _ in procs]
             n = len(phones)
             self.after(0, lambda: (
-                self._boot_btn.config(state="normal", text="Starting…"),
+                self._boot_btn.config(state="normal", text="▶  Start All Phones"),
                 self._stop_btn.config(
                     state="disabled" if not phones else "normal"),
                 self._overall_lbl.config(
@@ -3381,7 +3728,7 @@ class BootPage(PageBase):
                 pass
         state["_emu_procs"] = []
         state["phones"] = []
-        self._boot_btn.config(state="normal", text="Starting…")
+        self._boot_btn.config(state="normal", text="▶  Start All Phones")
         self._stop_btn.config(state="disabled")
         self._overall_lbl.config(text="All phones stopped.", fg=T2)
         self._log_write("All phones stopped.\n")

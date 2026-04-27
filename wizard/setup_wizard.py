@@ -579,6 +579,7 @@ def _direct_download_emulator(sdk_path, log_fn=None):
         return False
 
     x64_url = None
+    arm64_url = None
     try:
         root = ET.fromstring(xml_data)
         for pkg in root.iter():
@@ -587,41 +588,62 @@ def _direct_download_emulator(sdk_path, log_fn=None):
                     tag = archive.tag.split("}")[-1] if "}" in archive.tag else archive.tag
                     if tag == "url":
                         val = (archive.text or "").strip()
-                        if "windows" in val and val.endswith(".zip"):
-                            x64_url = BASE_URL + val
-                            break
-                if x64_url:
+                        if val.endswith(".zip"):
+                            if ("aarch64" in val or ("arm64" in val and "windows" in val)):
+                                arm64_url = BASE_URL + val
+                            elif "windows" in val and "x64" in val:
+                                x64_url = BASE_URL + val
+                            elif "windows" in val and not x64_url:
+                                x64_url = BASE_URL + val
+                if x64_url or arm64_url:
                     break
     except ET.ParseError:
         pass
 
-    if not x64_url:
-        matches = re.findall(r"emulator-windows[^\"<\s]+\.zip", xml_data)
-        if matches:
-            x64_url = BASE_URL + matches[-1]
+    if not x64_url and not arm64_url:
+        all_win = re.findall(r"emulator-windows[^\"<\s]+\.zip", xml_data)
+        for m in all_win:
+            if "aarch64" in m or "arm64" in m:
+                arm64_url = BASE_URL + m
+            elif "x64" in m and not x64_url:
+                x64_url = BASE_URL + m
+        if not x64_url and not arm64_url and all_win:
+            x64_url = BASE_URL + all_win[-1]
 
-    if not x64_url:
-        if log_fn:
-            log_fn("  ❌  Emulator URL not found in repository XML.\n")
-        return False
-
-    # On ARM64 Windows, try the aarch64 build first (same build ID, different arch suffix).
-    # Google doesn't list it in the repository XML but the file exists on the CDN.
-    emulator_url = x64_url
-    if host_is_arm64:
-        arm64_url = re.sub(r"emulator-windows_x64-", "emulator-windows_aarch64-", x64_url)
-        if arm64_url != x64_url:
+    # On ARM64 Windows: try substituting aarch64 into x64 URL if no ARM64 found in XML.
+    # Google sometimes publishes ARM64 builds at the same build number under a different filename.
+    if host_is_arm64 and not arm64_url and x64_url:
+        candidate = re.sub(r"emulator-windows_x64-", "emulator-windows_aarch64-", x64_url)
+        if candidate != x64_url:
             try:
-                req = urllib.request.Request(arm64_url, method="HEAD")
+                req = urllib.request.Request(candidate, method="HEAD")
                 with urllib.request.urlopen(req, timeout=10):
-                    emulator_url = arm64_url
+                    arm64_url = candidate
                     if log_fn:
-                        log_fn(f"  ARM64 emulator build found: {arm64_url}\n")
+                        log_fn(f"  ARM64 emulator build found on CDN: {arm64_url}\n")
             except Exception:
-                if log_fn:
-                    log_fn("  ARM64 emulator build not on CDN; using x64 build.\n"
-                           "  ⚠  arm64-v8a guests will not work with the x64 emulator.\n"
-                           "     Install Android Studio to get the ARM64 emulator binary.\n")
+                pass
+
+    if host_is_arm64:
+        if not arm64_url:
+            if log_fn:
+                log_fn(
+                    "  ❌  No ARM64 Windows emulator build found on Google's CDN.\n"
+                    "     arm64-v8a phones cannot boot with the x64 emulator.\n"
+                    "  To fix without Android Studio:\n"
+                    "     Download Android Studio portable ZIP for Windows ARM64,\n"
+                    "     extract it anywhere, and re-run the wizard — it will\n"
+                    "     automatically copy the ARM64 emulator (no setup needed).\n"
+                    "  Android Studio ZIP: https://developer.android.com/studio\n"
+                )
+            return False
+        emulator_url = arm64_url
+    else:
+        if not x64_url:
+            if log_fn:
+                log_fn("  ❌  Emulator URL not found in repository XML.\n")
+            return False
+        emulator_url = x64_url
 
     if log_fn:
         log_fn(f"  Emulator URL: {emulator_url}\n")
@@ -996,8 +1018,11 @@ def _ensure_emulator_meta(sdk, log_fn=None):
             if log_fn:
                 log_fn(f"  Could not copy from Android Studio: {e}\n")
 
-    # ── Path 2: sdkmanager "emulator" (authoritative) ──────────────────
-    if not installed:
+    # ── Path 2: sdkmanager "emulator" (x64 hosts only) ──────────────────
+    # On ARM64 Windows, sdkmanager always downloads the x64 emulator binary which
+    # cannot run arm64-v8a guests and crashes immediately at boot.  Skip straight
+    # to the direct-download path which parses the repo XML for the aarch64 build.
+    if not installed and not (host_is_arm64 and needs_arm64_copy):
         if log_fn:
             log_fn("  Trying sdkmanager 'emulator' install (authoritative)…\n")
 
@@ -1011,7 +1036,9 @@ def _ensure_emulator_meta(sdk, log_fn=None):
                 log_fn(f"  sdkmanager 'emulator' did not produce device-catalog.xml.\n"
                        f"  Output preview: {out[:300]}\n")
 
-    # ── Path 3: Direct Python download (sdkmanager failed or network blocked) ──
+    # ── Path 3: Direct Python download ──────────────────────────────────
+    # Primary path on ARM64 Windows (skips x64-only sdkmanager above).
+    # _direct_download_emulator parses the repo XML for aarch64 builds first.
     if not installed:
         if log_fn:
             log_fn("  Falling back to direct Python download of emulator.\n"
@@ -1029,20 +1056,17 @@ def _ensure_emulator_meta(sdk, log_fn=None):
                    "    to get the full emulator package with device definitions.\n")
 
     # On ARM64 Windows, verify the final emulator binary is actually ARM64.
-    # Paths 2+3 above download x64 builds from Google's public repo — they
-    # cannot run arm64-v8a guests and crash immediately at boot.
     if host_is_arm64:
         emu_exe = emu_dir / "emulator.exe"
         if emu_exe.exists() and _pe_machine_type(str(emu_exe)) != 0xAA64:
             if log_fn:
                 log_fn(
-                    "  ❌  emulator.exe is STILL x64 after all install paths.\n"
-                    "     arm64-v8a phones CANNOT boot with this binary.\n"
-                    "  Fix:\n"
-                    "     1. Open Android Studio → SDK Manager → SDK Tools tab\n"
-                    "     2. Uncheck 'Android Emulator' → Apply → re-check → Apply\n"
-                    "        (forces ARM64 build download)\n"
-                    "     3. Re-run Step 2 of this wizard.\n"
+                    "  ❌  emulator.exe is still x64 after all install attempts.\n"
+                    "     arm64-v8a phones cannot boot with this binary.\n"
+                    "  To fix: download Android Studio portable ZIP for Windows ARM64,\n"
+                    "  extract it anywhere, then re-run the wizard — it will detect\n"
+                    "  and copy the ARM64 emulator automatically.\n"
+                    "  https://developer.android.com/studio\n"
                 )
 
 

@@ -588,12 +588,12 @@ def _direct_download_emulator(sdk_path, log_fn=None):
                     tag = archive.tag.split("}")[-1] if "}" in archive.tag else archive.tag
                     if tag == "url":
                         val = (archive.text or "").strip()
-                        if val.endswith(".zip"):
-                            if ("aarch64" in val or ("arm64" in val and "windows" in val)):
+                        if val.endswith(".zip") and "windows" in val:
+                            if "aarch64" in val or "arm64" in val:
                                 arm64_url = BASE_URL + val
-                            elif "windows" in val and "x64" in val:
+                            elif "x64" in val:
                                 x64_url = BASE_URL + val
-                            elif "windows" in val and not x64_url:
+                            elif not x64_url:
                                 x64_url = BASE_URL + val
                 if x64_url or arm64_url:
                     break
@@ -687,7 +687,7 @@ def _write_local_package_xml(path: Path, *, path_id, major, minor, micro,
     generic = 'xmlns:ns5="http://schemas.android.com/repository/android/generic/01"'
     repo2   = 'xmlns:ns6="http://schemas.android.com/repository/android/repository2/01"'
     xsi     = 'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
-    all_ns  = f"{base_ns} {addon2} {sysimg} {generic} {repo2} {xsi} {extra_ns}"
+    all_ns  = f"{base_ns} {addon2} {sysimg} {generic} {repo2} {xsi}"
 
     path.write_text(
         f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
@@ -958,10 +958,13 @@ def _ensure_emulator_meta(sdk, log_fn=None):
     # copy the entire emulator directory so arm64-v8a images boot natively.
     studio_emulator = None
     search_roots = [
-        Path(os.environ.get("PROGRAMFILES", "")) / "Android",
-        Path(os.environ.get("LOCALAPPDATA",  "")) / "Programs" / "Android",
-        Path(os.environ.get("PROGRAMFILES",  "")) / "Android Studio",
-        Path(os.environ.get("LOCALAPPDATA",  "")) / "Programs" / "Android Studio",
+        Path(os.environ.get("PROGRAMFILES",      "")) / "Android",
+        Path(os.environ.get("LOCALAPPDATA",      "")) / "Programs" / "Android",
+        Path(os.environ.get("PROGRAMFILES",      "")) / "Android Studio",
+        Path(os.environ.get("LOCALAPPDATA",      "")) / "Programs" / "Android Studio",
+        Path(os.environ.get("LOCALAPPDATA",      "")) / "Google",
+        Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Android",
+        Path(os.environ.get("LOCALAPPDATA",      "")) / "Android",
     ]
     for search_root in search_roots:
         if not search_root.exists():

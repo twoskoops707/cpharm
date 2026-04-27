@@ -187,9 +187,19 @@ def get_local_ip() -> str:
 
 
 def _phone_idx_from_serial(serial: str) -> int:
-    """Derive phone index from AVD serial (emulator-5554 -> 0, etc.)."""
+    """Derive phone index from serial.
+    AVD:  emulator-5554 -> 0, emulator-5556 -> 1, ...
+    MuMu: 127.0.0.1:16384 -> 0, 127.0.0.1:16416 -> 1, ...
+    USB/other: 0
+    """
     try:
-        return (int(serial.split("-")[1]) - 5554) // 2
+        if serial.startswith("emulator-"):
+            return max(0, (int(serial.split("-")[1]) - 5554) // 2)
+        if ":" in serial:
+            port = int(serial.rsplit(":", 1)[1])
+            if 16384 <= port <= 16896:
+                return (port - 16384) // 32
+        return 0
     except (IndexError, ValueError):
         return 0
 

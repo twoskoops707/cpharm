@@ -1478,8 +1478,15 @@ def rotate_android_id(serial):
 
 
 def _serial_to_idx(serial: str) -> int:
+    """AVD: emulator-5554->0. MuMu TCP: 127.0.0.1:16384->0, :16416->1, ..."""
     try:
-        return (int(serial.split("-")[1]) - 5554) // 2
+        if serial.startswith("emulator-"):
+            return max(0, (int(serial.split("-")[1]) - 5554) // 2)
+        if ":" in serial:
+            port = int(serial.rsplit(":", 1)[1])
+            if 16384 <= port <= 16896:
+                return (port - 16384) // 32
+        return 0
     except (IndexError, ValueError):
         return 0
 
@@ -4010,27 +4017,29 @@ class GroupsPage(PageBase):
         self._cards: list[tk.Frame] = []
 
     def on_enter(self):
+        default_steps = state.get("default_steps", [])
         if state["phones"] and state["groups"]:
             for g in state["groups"]:
                 phones_field = g["phones"]
-                # Migrate old list format → per-phone dict format
                 if isinstance(phones_field, list):
-                    phones_field = {p: {"steps": list(g.get("steps", []))}
+                    phones_field = {p: {"steps": list(default_steps)}
                                     for p in phones_field}
                     g["phones"] = phones_field
                 elif not isinstance(phones_field, dict):
                     g["phones"] = {}
-                # Auto-assign phones if group has no phones
                 if not phones_field and state["phones"]:
                     for p in state["phones"]:
-                        g["phones"][p["serial"]] = {"steps": list(g.get("steps", []))}
+                        g["phones"][p["serial"]] = {"steps": list(default_steps)}
         self._rebuild()
 
     def _add_group(self):
         n = len(state["groups"]) + 1
+        default_steps = state.get("default_steps", [])
+        phones_map = {p["serial"]: {"steps": list(default_steps)}
+                      for p in state.get("phones", [])}
         state["groups"].append({
             "name":           f"Group {n}",
-            "phones":         {},
+            "phones":         phones_map,
             "stagger_secs":   30,
             "repeat":         1,
             "repeat_forever": False,

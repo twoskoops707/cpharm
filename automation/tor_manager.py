@@ -187,7 +187,7 @@ def randomize_android_id_adb(serial: str) -> str:
     Generate and set a new random Android ID.
     Android ID is stored at settings/secure/android_id.
     """
-    new_id = format(hash(serial + str(time.time())) & 0xFFFFFFFFFFFFFFFF, "016x")
+    new_id = os.urandom(8).hex()
     try:
         subprocess.run(
             ["adb", "-s", serial, "shell", "settings", "put", "secure",

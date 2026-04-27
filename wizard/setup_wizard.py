@@ -628,13 +628,17 @@ def _direct_download_emulator(sdk_path, log_fn=None):
         if not arm64_url:
             if log_fn:
                 log_fn(
-                    "  ❌  No ARM64 Windows emulator build found on Google's CDN.\n"
-                    "     arm64-v8a phones cannot boot with the x64 emulator.\n"
-                    "  To fix without Android Studio:\n"
-                    "     Download Android Studio portable ZIP for Windows ARM64,\n"
-                    "     extract it anywhere, and re-run the wizard — it will\n"
-                    "     automatically copy the ARM64 emulator (no setup needed).\n"
-                    "  Android Studio ZIP: https://developer.android.com/studio\n"
+                    "  ❌  Google does not publish a standalone Windows ARM64 emulator.\n"
+                    "     The ARM64 emulator is only available bundled with Android Studio\n"
+                    "     for Windows on ARM — it cannot be downloaded separately.\n\n"
+                    "  How to fix (wizard handles everything automatically after this):\n"
+                    "     1. Download Android Studio for Windows — make sure to pick\n"
+                    "        the 'Windows (ARM64)' version, NOT the standard x64 version.\n"
+                    "        https://developer.android.com/studio\n"
+                    "     2. Install it (or extract the ZIP anywhere).\n"
+                    "     3. Re-run Step 3 of this wizard — it will detect Android Studio\n"
+                    "        and copy the ARM64 emulator automatically. No steps needed\n"
+                    "        inside Android Studio.\n"
                 )
             return False
         emulator_url = arm64_url
@@ -1065,11 +1069,14 @@ def _ensure_emulator_meta(sdk, log_fn=None):
             if log_fn:
                 log_fn(
                     "  ❌  emulator.exe is still x64 after all install attempts.\n"
-                    "     arm64-v8a phones cannot boot with this binary.\n"
-                    "  To fix: download Android Studio portable ZIP for Windows ARM64,\n"
-                    "  extract it anywhere, then re-run the wizard — it will detect\n"
-                    "  and copy the ARM64 emulator automatically.\n"
-                    "  https://developer.android.com/studio\n"
+                    "     Google does not publish a standalone Windows ARM64 emulator —\n"
+                    "     it is only available bundled inside Android Studio for Windows ARM64.\n\n"
+                    "  How to fix:\n"
+                    "     1. Download Android Studio — select the 'Windows (ARM64)' version.\n"
+                    "        https://developer.android.com/studio\n"
+                    "     2. Install it (installer or ZIP — either works).\n"
+                    "     3. Re-run Step 3 of this wizard. It will find and copy the ARM64\n"
+                    "        emulator automatically. No steps needed inside Android Studio.\n"
                 )
 
 
@@ -3162,16 +3169,19 @@ class BootPage(PageBase):
                 emu_exe = Path(sdk) / "emulator" / "emulator.exe"
                 if emu_exe.exists() and _pe_machine_type(str(emu_exe)) != 0xAA64:
                     messagebox.showerror(
-                        "Wrong emulator binary",
-                        "The emulator installed is x64 but your CPU is ARM64 (Snapdragon).\n\n"
-                        "x64 emulator cannot run arm64-v8a phones — they will crash immediately.\n\n"
-                        "Fix:\n"
-                        "  1. Go back to Step 3 (Android SDK) and click Install/Reinstall.\n"
-                        "     The wizard will copy Android Studio's ARM64 emulator binary.\n"
-                        "  2. Then delete and re-create your phones (Step 4).\n"
-                        "  3. Come back here to boot.\n\n"
-                        "If Android Studio is not installed:\n"
-                        "  Install Android Studio → SDK Manager → SDK Tools → Android Emulator",
+                        "Wrong emulator binary — ARM64 required",
+                        "Your CPU is ARM64 (Snapdragon) but the emulator installed is x64.\n"
+                        "x64 emulator cannot run arm64-v8a phones and will crash immediately.\n\n"
+                        "Google does NOT publish a standalone Windows ARM64 emulator.\n"
+                        "The ARM64 emulator only comes bundled with Android Studio for Windows ARM64.\n\n"
+                        "How to fix (wizard handles everything automatically after this):\n"
+                        "  1. Download Android Studio — choose the 'Windows (ARM64)' version:\n"
+                        "     https://developer.android.com/studio\n"
+                        "  2. Install it (installer or ZIP — either works).\n"
+                        "  3. Go back to Step 3 (Android SDK) and click Install/Reinstall.\n"
+                        "     The wizard will detect Android Studio and copy the ARM64\n"
+                        "     emulator automatically. No steps needed inside Android Studio.\n"
+                        "  4. Re-create phones (Step 4), then come back here to boot.",
                     )
                     self._boot_btn.config(state="normal", text="▶  Start Phones")
                     self._stop_btn.config(state="disabled")

@@ -317,26 +317,25 @@ def _find_java_home() -> str:
     if existing and Path(existing, "bin", "java.exe").exists():
         return existing
 
-    # 2. Android Studio bundles a JetBrains Runtime (jbr/) — check there first.
-    #    Correct path is "Android Studio" NOT "Android Studio3" (typo in earlier version).
-    jbr_candidates = [
-        os.path.join(os.environ.get("PROGRAMFILES",  r"C:\Program Files"),
-                     "Android", "Android Studio", "jbr"),
-        os.path.join(os.environ.get("LOCALAPPDATA",  ""),
-                     "Programs", "Android Studio", "jbr"),
-        os.path.join(os.environ.get("PROGRAMFILES",  r"C:\Program Files"),
-                     "Android Studio", "jbr"),
-        r"C:\Program Files\Android\Android Studio\jbr",
-        r"C:\Android\android-studio\jbr",
-        # Legacy typo variant that may exist on some installs
-        os.path.join(os.environ.get("PROGRAMFILES",  r"C:\Program Files"),
-                     "Android", "Android Studio3", "jbr"),
-        os.path.join(os.environ.get("LOCALAPPDATA",  ""),
-                     "Programs", "Android Studio3", "jbr"),
+    # 2. Android Studio bundles a JetBrains Runtime (jbr/) — glob for any version.
+    #    AS installs as "Android Studio", "Android Studio3", "Android Studio Panda", etc.
+    #    Sort descending so the newest install is tried first.
+    as_search_roots = [
+        os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Android"),
+        os.path.join(os.environ.get("LOCALAPPDATA",  ""), "Programs", "Android"),
+        os.path.join(os.environ.get("LOCALAPPDATA",  ""), "Programs"),
+        os.path.join(os.environ.get("LOCALAPPDATA",  ""), "Google"),
+        os.path.join(os.environ.get("LOCALAPPDATA",  ""), "Android"),
+        os.environ.get("PROGRAMFILES", r"C:\Program Files"),
+        r"C:\Android",
     ]
-    for jbr in jbr_candidates:
-        if jbr and Path(jbr, "bin", "java.exe").exists():
-            return jbr
+    for as_root in as_search_roots:
+        if not as_root or not Path(as_root).exists():
+            continue
+        for studio_dir in sorted(Path(as_root).glob("Android Studio*"), reverse=True):
+            jbr = studio_dir / "jbr"
+            if (jbr / "bin" / "java.exe").exists():
+                return str(jbr)
 
     # 3. Standard JDK/JRE install locations
     search_roots = [

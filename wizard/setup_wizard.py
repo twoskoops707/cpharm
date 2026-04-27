@@ -541,6 +541,50 @@ def _pe_machine_type(exe_path: str) -> int:
         return 0
 
 
+MUMU_DOWNLOAD_URL = "https://www.mumuplayer.com/windows-arm.html"
+
+def _find_mumu_player():
+    """Return the MuMuPlayer install root (contains MuMuPlayer.exe), or None."""
+    if not IS_WIN:
+        return None
+    search = []
+    for base_var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        base = os.environ.get(base_var, "")
+        if base:
+            search += [
+                Path(base) / "Netease" / "MuMuPlayer-12.0",
+                Path(base) / "Netease" / "MuMuPlayer",
+                Path(base) / "MuMuPlayer-12.0",
+                Path(base) / "MuMuPlayer",
+            ]
+    for p in search:
+        if (p / "MuMuPlayer.exe").exists() or (p / "MuMuManager.exe").exists():
+            return p
+    return None
+
+
+def _connect_mumu_phones(count=5, log_fn=None):
+    """Connect to MuMuPlayer ADB instances and return list of connected serials.
+
+    MuMuPlayer 12 uses ports 16384, 16416, 16448, … (base + index*32).
+    We try `count` ports and collect whichever are live.
+    """
+    base_port = 16384
+    step = 32
+    connected = []
+    for i in range(count):
+        port = base_port + i * step
+        serial = f"127.0.0.1:{port}"
+        out = adb("connect", serial, timeout=6)
+        if "connected" in out.lower() or "already" in out.lower():
+            check = adb("shell", "echo", "ok", serial=serial, timeout=6)
+            if check.strip() == "ok":
+                connected.append(serial)
+                if log_fn:
+                    log_fn(f"  ✅ MuMu instance {i}: {serial}\n")
+    return connected
+
+
 def _direct_download_emulator(sdk_path, log_fn=None):
     """
     Download emulator directly via Python urllib, bypassing Java/sdkmanager.
@@ -627,17 +671,20 @@ def _direct_download_emulator(sdk_path, log_fn=None):
         if not arm64_url:
             if log_fn:
                 log_fn(
-                    "  ❌  Google does not publish a standalone Windows ARM64 emulator.\n"
-                    "     The ARM64 emulator is only available bundled with Android Studio\n"
-                    "     for Windows on ARM — it cannot be downloaded separately.\n\n"
-                    "  How to fix (wizard handles everything automatically after this):\n"
-                    "     1. Download Android Studio for Windows — make sure to pick\n"
-                    "        the 'Windows (ARM64)' version, NOT the standard x64 version.\n"
-                    "        https://developer.android.com/studio\n"
-                    "     2. Install it (or extract the ZIP anywhere).\n"
-                    "     3. Re-run Step 3 of this wizard — it will detect Android Studio\n"
-                    "        and copy the ARM64 emulator automatically. No steps needed\n"
-                    "        inside Android Studio.\n"
+                    "  ❌  Google does not publish a Windows ARM64 Android Emulator.\n"
+                    "     Even Android Studio for Windows ARM64 downloads only the x64\n"
+                    "     emulator — there is no ARM64 emulator binary available from Google.\n\n"
+                    "  ✅  Use MuMuPlayer for Windows ARM instead:\n"
+                    "     MuMuPlayer is a free Android emulator with native ARM64 Windows\n"
+                    "     support, multi-instance, and full ADB access — exactly what\n"
+                    "     CPharm needs.\n\n"
+                    "  How to set up (wizard handles connection automatically):\n"
+                    "     1. Download MuMuPlayer for Windows ARM:\n"
+                    f"        {MUMU_DOWNLOAD_URL}\n"
+                    "     2. Install MuMuPlayer ARM and open it.\n"
+                    "     3. Use MuMuPlayer's multi-instance manager to create your phones.\n"
+                    "     4. Keep MuMuPlayer running, then go to Step 5 in this wizard.\n"
+                    "        The wizard will detect and connect to all running MuMu instances.\n"
                 )
             return False
         emulator_url = arm64_url
@@ -1068,14 +1115,14 @@ def _ensure_emulator_meta(sdk, log_fn=None):
             if log_fn:
                 log_fn(
                     "  ❌  emulator.exe is still x64 after all install attempts.\n"
-                    "     Google does not publish a standalone Windows ARM64 emulator —\n"
-                    "     it is only available bundled inside Android Studio for Windows ARM64.\n\n"
-                    "  How to fix:\n"
-                    "     1. Download Android Studio — select the 'Windows (ARM64)' version.\n"
-                    "        https://developer.android.com/studio\n"
-                    "     2. Install it (installer or ZIP — either works).\n"
-                    "     3. Re-run Step 3 of this wizard. It will find and copy the ARM64\n"
-                    "        emulator automatically. No steps needed inside Android Studio.\n"
+                    "     Google does not publish a Windows ARM64 Android Emulator —\n"
+                    "     even Android Studio ARM64 only downloads the x64 emulator via\n"
+                    "     its SDK Manager. There is no ARM64 AVD emulator from Google.\n\n"
+                    "  ✅  Use MuMuPlayer for Windows ARM instead:\n"
+                    "     Free, native ARM64, multi-instance, full ADB — skip AVD entirely.\n"
+                    f"     Download: {MUMU_DOWNLOAD_URL}\n"
+                    "     After installing, open MuMuPlayer, create instances, then go\n"
+                    "     directly to Step 5 — the wizard connects automatically.\n"
                 )
 
 
@@ -3160,29 +3207,61 @@ class BootPage(PageBase):
             messagebox.showerror("No phones", "Go back and create phones first.")
             return
 
-        # ARM64 preflight: if emulator.exe is x64 on an ARM64 host, fail immediately
-        # instead of waiting 20+ minutes for a guaranteed boot timeout.
+        # ARM64 preflight: if emulator.exe is x64 on an ARM64 host, switch to
+        # MuMuPlayer ARM instead of attempting a guaranteed-fail AVD boot.
         if IS_WIN and "arm64" in _machine_arch():
             sdk = state.get("sdk_path") or find_sdk()
+            emu_ok = False
             if sdk:
                 emu_exe = Path(sdk) / "emulator" / "emulator.exe"
-                if emu_exe.exists() and _pe_machine_type(str(emu_exe)) != 0xAA64:
-                    messagebox.showerror(
-                        "Wrong emulator binary — ARM64 required",
-                        "Your CPU is ARM64 (Snapdragon) but the emulator installed is x64.\n"
-                        "x64 emulator cannot run arm64-v8a phones and will crash immediately.\n\n"
-                        "Google does NOT publish a standalone Windows ARM64 emulator.\n"
-                        "The ARM64 emulator only comes bundled with Android Studio for Windows ARM64.\n\n"
-                        "How to fix (wizard handles everything automatically after this):\n"
-                        "  1. Download Android Studio — choose the 'Windows (ARM64)' version:\n"
-                        "     https://developer.android.com/studio\n"
-                        "  2. Install it (installer or ZIP — either works).\n"
-                        "  3. Go back to Step 3 (Android SDK) and click Install/Reinstall.\n"
-                        "     The wizard will detect Android Studio and copy the ARM64\n"
-                        "     emulator automatically. No steps needed inside Android Studio.\n"
-                        "  4. Re-create phones (Step 4), then come back here to boot.",
+                if emu_exe.exists() and _pe_machine_type(str(emu_exe)) == 0xAA64:
+                    emu_ok = True
+            if not emu_ok:
+                self._log_write(
+                    "ARM64 host detected — no native ARM64 emulator available from Google.\n"
+                    "Checking for MuMuPlayer ARM instances...\n"
+                )
+                mumu_root = _find_mumu_player()
+                phones = _connect_mumu_phones(
+                    count=max(len(avds), 8),
+                    log_fn=self._log_write,
+                )
+                if phones:
+                    state["phones"] = [{"serial": s, "name": f"MuMu-{i}"}
+                                       for i, s in enumerate(phones)]
+                    state["_emu_procs"] = []
+                    n = len(phones)
+                    self.after(0, lambda: (
+                        self._boot_btn.config(state="normal", text="▶  Start All Phones"),
+                        self._stop_btn.config(state="disabled"),
+                        self._overall_lbl.config(
+                            text=f"✅ {n} MuMuPlayer phone(s) connected", fg=GREEN),
+                    ))
+                    self._log_write(f"\n✅ {n} MuMuPlayer ARM phone(s) connected and ready.\n")
+                    return
+                else:
+                    msg = (
+                        "Your CPU is ARM64 (Snapdragon).\n\n"
+                        "Google does NOT publish a Windows ARM64 Android Emulator —\n"
+                        "even Android Studio ARM64 only downloads an x64 emulator.\n\n"
+                        "Use MuMuPlayer for Windows ARM instead:\n"
+                        "  • Free, native ARM64, multi-instance, full ADB access.\n\n"
+                        "How to fix:\n"
+                        f"  1. Download MuMuPlayer ARM:\n"
+                        f"     {MUMU_DOWNLOAD_URL}\n"
+                        "  2. Install MuMuPlayer and open it.\n"
+                        "  3. Create your phone instances in MuMuPlayer's\n"
+                        "     Multi-Instance Manager (top menu).\n"
+                        "  4. Keep MuMuPlayer running, then click Start again —\n"
+                        "     this wizard will connect automatically."
                     )
-                    self._boot_btn.config(state="normal", text="▶  Start Phones")
+                    if mumu_root:
+                        msg += (
+                            f"\n\nMuMuPlayer found at: {mumu_root}\n"
+                            "Make sure to OPEN MuMuPlayer and start your instances first."
+                        )
+                    messagebox.showerror("MuMuPlayer ARM required", msg)
+                    self._boot_btn.config(state="normal", text="▶  Start All Phones")
                     self._stop_btn.config(state="disabled")
                     return
 

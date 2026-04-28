@@ -628,17 +628,21 @@ def _find_mumu_manager():
         if not base:
             continue
         for folder in (
+            "Netease\\MuMuPlayerARM",
             "Netease\\MuMuPlayer-12.0",
             "Netease\\MuMuPlayerGlobal-12.0",
             "Netease\\MuMuPlayer",
+            "MuMuPlayerARM",
             "MuMuPlayer-12.0",
             "MuMuPlayer",
         ):
             root = Path(base) / folder
-            for sub_dir in ("shell", "nx_main", ""):
-                exe = root / sub_dir / "MuMuManager.exe" if sub_dir \
-                      else root / "MuMuManager.exe"
-                candidates.append(exe)
+            for sub_dir in ("shell", "nx_main", "manager", ""):
+                if sub_dir:
+                    for exe_name in ("MuMuManager.exe", "nemux-shell-winui.Manager.exe"):
+                        candidates.append(root / sub_dir / exe_name)
+                else:
+                    candidates.append(root / "MuMuManager.exe")
 
     for p in candidates:
         if p.exists():
@@ -670,18 +674,22 @@ def _mumu_run(mgr_path, *args, timeout=15):
         return False, str(e)
 
 
-def _mumu_get_instances(mgr_path):
+def _mumu_get_instances(mgr_path, log_fn=None):
     """Return list of dicts: {index, name, adb_serial, started}.
 
-    Uses MuMuManager.exe info --vmindex all
+    Uses MuMuManager.exe info -v all
     JSON can be a single dict (one instance) or a dict-of-dicts keyed by index.
     """
     ok, out = _mumu_run(mgr_path, "info", "-v", "all", timeout=10)
+    if log_fn:
+        log_fn(f"  Manager CLI ({Path(mgr_path).name}) rc={ok} out={repr(out[:200]) if out else '(empty)'}\n")
     if not ok or not out:
         return []
     try:
         data = json.loads(out)
     except Exception:
+        if log_fn:
+            log_fn(f"  Manager returned non-JSON: {repr(out[:200])}\n")
         return []
 
     instances = []
@@ -3644,11 +3652,17 @@ class BootPage(PageBase):
     def _browse_mumu_mgr(self):
         from tkinter import filedialog
         path = filedialog.askopenfilename(
-            title="Select MuMuManager.exe",
-            filetypes=[("Executable", "MuMuManager.exe"), ("All files", "*.*")],
+            title="Select MuMuManager.exe  (CLI tool — usually in shell\\MuMuManager.exe)",
+            filetypes=[("MuMuManager CLI", "MuMuManager.exe"), ("All executables", "*.exe"), ("All files", "*.*")],
             initialdir=os.environ.get("PROGRAMFILES", "C:\\"),
         )
         if path:
+            if "MuMuManager" not in Path(path).name:
+                self._log_write(
+                    f"⚠ Selected file is '{Path(path).name}' — expected MuMuManager.exe.\n"
+                    "  Look in the 'shell' subfolder of your MuMuPlayer install dir.\n"
+                    f"  e.g. C:\\Program Files\\Netease\\MuMuPlayerARM\\shell\\MuMuManager.exe\n"
+                )
             state["mumu_mgr_path"] = path
             self._mumu_path_var.set(path)
             self._log_write(f"MuMuManager set: {path}\n")
@@ -3787,12 +3801,28 @@ class BootPage(PageBase):
                     ))
                     return
 
-                instances = _mumu_get_instances(mgr)
+                instances = _mumu_get_instances(mgr, log_fn=self._log_write)
                 if not instances:
                     self._log_write(
-                        "❌ No MuMuPlayer instances found.\n"
+                        "  Manager CLI returned no instances — trying ADB port scan fallback…\n"
+                    )
+                    connected = _connect_mumu_phones(count=12, log_fn=self._log_write)
+                    if connected:
+                        phones_from_scan = [{"serial": s, "name": f"MuMu-{i}"} for i, s in enumerate(connected)]
+                        state["phones"] = phones_from_scan
+                        state["_emu_procs"] = []
+                        n = len(phones_from_scan)
+                        self.after(0, lambda: (
+                            self._boot_btn.config(state="normal", text="▶  Start All Phones"),
+                            self._stop_btn.config(state="normal"),
+                            self._overall_lbl.config(text=f"✅ {n} MuMu phone(s) ready (port scan)", fg=GREEN),
+                        ))
+                        self._log_write(f"\n{n} phone(s) found via port scan.\n")
+                        return
+                    self._log_write(
+                        "❌ No MuMuPlayer instances found via CLI or port scan.\n"
+                        "   Make sure MuMuPlayer is open and instances are running.\n"
                         "   Open MuMuPlayer → click ⧉ (multi-window icon) → '+ New Instance'\n"
-                        "   Create your phones there, then click Start again.\n"
                     )
                     self.after(0, lambda: (
                         self._boot_btn.config(state="normal", text="▶  Start All Phones"),

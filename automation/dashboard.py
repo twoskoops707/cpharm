@@ -3,6 +3,13 @@ CPharm Dashboard — ADB-native backend.
 Works with any Android device: AVD emulators, BlueStacks, Genymotion, MEmu, NOX, real phones.
 """
 
+import sys, io
+try:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+except Exception:
+    pass
+
 import datetime
 import asyncio
 import base64

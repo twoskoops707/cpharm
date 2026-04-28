@@ -3287,6 +3287,20 @@ class BootPage(PageBase):
                                      font=FS, bg=BG3, fg=T2)
         self._overall_lbl.pack(side="left", padx=10)
 
+        self._mumu_cfg_row = tk.Frame(phone_ctrl, bg=BG3)
+        tk.Label(self._mumu_cfg_row, text="MuMuManager.exe:",
+                 font=FS, bg=BG3, fg=T2).pack(side="left")
+        self._mumu_path_var = tk.StringVar(value="")
+        self._mumu_path_entry = tk.Entry(
+            self._mumu_cfg_row, textvariable=self._mumu_path_var,
+            font=FM, bg=BG2, fg=T1, insertbackground=T1,
+            relief="flat", width=40,
+        )
+        self._mumu_path_entry.pack(side="left", padx=6)
+        tk.Button(self._mumu_cfg_row, text="Browse…",
+                  font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
+                  command=self._browse_mumu_mgr).pack(side="left")
+
         # Chrome setup + URL test
         chrome_box = tk.Frame(self, bg=BG3, padx=14, pady=10)
         chrome_box.pack(fill="x", pady=(0, 8))
@@ -3447,6 +3461,14 @@ class BootPage(PageBase):
         self._rebuild_grid()
 
         if state.get("use_mumu"):
+            detected = str(_find_mumu_manager() or "")
+            if detected and not self._mumu_path_var.get():
+                self._mumu_path_var.set(detected)
+            self._mumu_cfg_row.pack(fill="x", pady=(0, 4))
+        else:
+            self._mumu_cfg_row.pack_forget()
+
+        if state.get("use_mumu"):
             self._overall_lbl.config(text="Connecting to MuMu instances…", fg=YELLOW)
             def _mumu_scan():
                 connected = _connect_mumu_phones(log_fn=self._log_write)
@@ -3569,6 +3591,18 @@ class BootPage(PageBase):
             lbl = tk.Label(row, text="✅  Connected", font=FS, bg=BG2, fg=GREEN)
             lbl.pack(side="left", padx=6)
             self._status_rows[s] = lbl
+
+    def _browse_mumu_mgr(self):
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(
+            title="Select MuMuManager.exe",
+            filetypes=[("Executable", "MuMuManager.exe"), ("All files", "*.*")],
+            initialdir=os.environ.get("PROGRAMFILES", "C:\\"),
+        )
+        if path:
+            state["mumu_mgr_path"] = path
+            self._mumu_path_var.set(path)
+            self._log_write(f"MuMuManager set: {path}\n")
 
     def _log_write(self, text):
         def _do():

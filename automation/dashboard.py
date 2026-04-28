@@ -3,28 +3,35 @@ CPharm Dashboard — ADB-native backend.
 Works with any Android device: AVD emulators, BlueStacks, Genymotion, MEmu, NOX, real phones.
 """
 
+import sys, io
+try:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+except Exception:
+    pass
+
+import datetime
 import asyncio
 import base64
+import concurrent.futures
 import json
 import logging
 import mimetypes
-import os
 import re
 import socket
 import subprocess
-import sys
 import time
+import random
 import threading
 import urllib.parse
 from pathlib import Path
 
-import websockets
 from websockets.server import serve
 
 import tor_manager
 import teach as teach_mod
 import playstore as ps_mod
-from config import PORT, WS_PORT, APK_DIR, EMULATOR_PORTS
+from config import PORT, WS_PORT, APK_DIR, REC_DIR, EMULATOR_PORTS
 
 logging.basicConfig(level=logging.INFO, format="  %(message)s")
 log = logging.getLogger("cpharm")
@@ -47,6 +54,7 @@ _running_groups: dict[str, bool] = {}
 _app_cache:      dict[str, dict]  = {}
 _app_cache_time: dict[str, float] = {}
 APP_CACHE_TTL = 30.0
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=32)
 
 SCRIPT_DIR     = Path(__file__).parent
 HTML_FILE      = SCRIPT_DIR / "dashboard.html"
@@ -140,7 +148,7 @@ def _get_installed_app(serial: str) -> dict:
     result = {"package": "", "version": ""}
     try:
         raw  = _adb(serial, "shell", "pm", "list", "packages", "-3")
-        pkgs = [l.strip().replace("package:", "") for l in raw.splitlines() if l.strip()]
+        pkgs = [line.strip().replace("package:", "") for line in raw.splitlines() if line.strip()]
         if pkgs:
             pkg     = pkgs[0]
             ver_raw = _adb(serial, "shell", "dumpsys", "package", pkg)
@@ -183,6 +191,25 @@ def get_local_ip() -> str:
         return "unknown"
 
 
+
+
+def _phone_idx_from_serial(serial: str) -> int:
+    """Derive phone index from serial.
+    AVD:  emulator-5554 -> 0, emulator-5556 -> 1, ...
+    MuMu: 127.0.0.1:16384 -> 0, 127.0.0.1:16416 -> 1, ...
+    USB/other: 0
+    """
+    try:
+        if serial.startswith("emulator-"):
+            return max(0, (int(serial.split("-")[1]) - 5554) // 2)
+        if ":" in serial:
+            port = int(serial.rsplit(":", 1)[1])
+            if 16384 <= port <= 16896:
+                return (port - 16384) // 32
+        return 0
+    except (IndexError, ValueError):
+        return 0
+
 def _get_resources() -> dict:
     try:
         import psutil
@@ -209,7 +236,8 @@ async def broadcast(msg: dict):
     if not _ws_clients:
         return
     data = json.dumps(msg)
-    await asyncio.gather(*[ws.send(data) for ws in _ws_clients], return_exceptions=True)
+    clients = set(_ws_clients)
+    await asyncio.gather(*[ws.send(data) for ws in clients], return_exceptions=True)
 
 
 async def push_phones():
@@ -285,9 +313,15 @@ async def handle_http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
         content_length = 0
         for line in lines[1:]:
             if line.lower().startswith("content-length:"):
-                content_length = int(line.split(":", 1)[1].strip())
+                try:
+                    content_length = int(line.split(":", 1)[1].strip())
+                except (ValueError, IndexError):
+                    pass
                 break
 
+        if content_length > 50_000_000:
+            writer.close()
+            return
         body_bytes = body_start
         remaining  = content_length - len(body_start)
         while remaining > 0:
@@ -298,7 +332,10 @@ async def handle_http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
             remaining  -= len(chunk)
 
         if method == "GET":
-            response = await handle_get(path)
+            if path.startswith("/api/scheduler"):
+                response = await handle_scheduler(path, body_bytes)
+            else:
+                response = await handle_get(path)
         elif method == "POST":
             response = await handle_post(path, body_bytes)
         elif method == "OPTIONS":
@@ -313,6 +350,10 @@ async def handle_http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
         log.warning("HTTP handler error: %s", e)
     finally:
         writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
 
 
 async def handle_get(path: str) -> bytes:
@@ -389,11 +430,16 @@ async def handle_post(path: str, body: bytes) -> bytes:
         if not filename or not file_b64:
             return json_err("missing name or data")
         safe_name = Path(filename).name
-        if not safe_name.lower().endswith(".apk"):
-            return json_err("only .apk files allowed")
+        if not re.match(r'^[A-Za-z0-9_\-. ]+\.apk$', safe_name) or not safe_name:
+            return json_err("only .apk files with safe names allowed")
+        if len(file_b64) > 200_000_000:
+            return json_err("file too large")
         APK_DIR.mkdir(exist_ok=True)
         dest = APK_DIR / safe_name
-        dest.write_bytes(base64.b64decode(file_b64))
+        try:
+            dest.write_bytes(base64.b64decode(file_b64))
+        except Exception:
+            return json_err("invalid base64 data")
         return json_ok({"ok": True, "name": safe_name})
 
     # ── APK install ──
@@ -409,13 +455,17 @@ async def handle_post(path: str, body: bytes) -> bytes:
         phones = [p for p in list_phones() if p["running"]]
 
         async def install_all():
+            loop = asyncio.get_running_loop()
             for p in phones:
                 serial = p["serial"]
                 await broadcast({"type": "install_progress",
                                  "serial": serial, "status": "installing"})
-                subprocess.run(
-                    ["adb", "-s", serial, "install", "-r", str(apk_path)],
-                    capture_output=True, timeout=120
+                await loop.run_in_executor(
+                    None,
+                    lambda s=serial, ap=str(apk_path): subprocess.run(
+                        ["adb", "-s", s, "install", "-r", ap],
+                        capture_output=True, timeout=120,
+                    )
                 )
                 invalidate_cache(serial)
                 await broadcast({"type": "install_progress",
@@ -430,8 +480,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
         serial = data.get("serial", "").strip()
         if not serial:
             return json_err("no serial")
-        loop = asyncio.get_event_loop()
-        threading.Thread(target=lambda: _stop_device(serial), daemon=True).start()
+        _executor.submit(_stop_device, serial)
         await asyncio.sleep(1)
         await push_phones()
         return json_ok({"ok": True})
@@ -439,11 +488,10 @@ async def handle_post(path: str, body: bytes) -> bytes:
     # ── Stop all running devices ──
     if path == "/api/stop_all":
         phones = [p for p in list_phones() if p["running"]]
-        loop = asyncio.get_event_loop()
         def stop_all():
             for p in phones:
                 _stop_device(p["serial"])
-        threading.Thread(target=stop_all, daemon=True).start()
+        _executor.submit(stop_all)
         await asyncio.sleep(1.5)
         await push_phones()
         return json_ok({"ok": True})
@@ -456,14 +504,21 @@ async def handle_post(path: str, body: bytes) -> bytes:
 
     # ── URL launcher ──
     if path == "/api/open_url":
-        url          = data.get("url", "").strip()
-        stagger      = int(data.get("stagger_secs", 0))
-        auto_rotate  = bool(data.get("auto_rotate", False))
-        dwell_secs   = int(data.get("dwell_secs", 30))
-        if not url.startswith(("http://", "https://")):
-            return json_err("URL must start with http:// or https://")
+        url         = data.get("url", "").strip()
+        auto_rotate = bool(data.get("auto_rotate", False))
+        try:
+            stagger    = min(int(data.get("stagger_secs", 0)), 3600)
+            dwell_secs = min(int(data.get("dwell_secs", 30)), 3600)
+        except (TypeError, ValueError):
+            return json_err("stagger_secs and dwell_secs must be integers")
+        try:
+            _parsed = urllib.parse.urlparse(url)
+            if _parsed.scheme not in ("http", "https") or not _parsed.netloc or " " in url:
+                raise ValueError
+        except Exception:
+            return json_err("URL must be a valid http:// or https:// URL")
         phones = [p for p in list_phones() if p["running"]]
-        loop   = asyncio.get_event_loop()
+        loop   = asyncio.get_running_loop()
 
         def _rotate_after(p: dict, idx: int, delay: int):
             time.sleep(delay)
@@ -515,15 +570,24 @@ async def handle_post(path: str, body: bytes) -> bytes:
         return json_ok({"ok": True})
 
     if path == "/api/teach/play":
-        rec   = data.get("file") or _teach_state.get("file")
-        delay = int(data.get("delay_secs", 60))
+        rec = data.get("file") or _teach_state.get("file")
+        try:
+            delay = min(int(data.get("delay_secs", 60)), 3600)
+        except (TypeError, ValueError):
+            delay = 60
         if not rec:
             return json_err("no recording found")
+        try:
+            rec_resolved = Path(rec).resolve()
+            if not str(rec_resolved).startswith(str(REC_DIR.resolve())):
+                return json_err("invalid recording path")
+        except Exception:
+            return json_err("invalid recording path")
         source_serial = _teach_state.get("serial", "")
         phones = [p for p in list_phones() if p["running"] and p["serial"] != source_serial]
         _teach_state["state"] = "playing"
         await broadcast({"type": "teach_status", **_teach_state})
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def on_done():
             _teach_state["state"] = "idle"
@@ -536,7 +600,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
     # ── Tor / identity ──
     if path == "/api/proxy/setup":
         phones = [p for p in list_phones() if p["running"]]
-        loop   = asyncio.get_event_loop()
+        loop   = asyncio.get_running_loop()
 
         def setup():
             for i, p in enumerate(phones):
@@ -549,12 +613,12 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 broadcast({"type": "log", "msg": "All phones now look different!"}), loop
             )
 
-        threading.Thread(target=setup, daemon=True).start()
+        _executor.submit(setup)
         return json_ok({"ok": True})
 
     if path == "/api/proxy/rotate":
         phones = [p for p in list_phones() if p["running"]]
-        loop   = asyncio.get_event_loop()
+        loop   = asyncio.get_running_loop()
 
         def rotate_all():
             for i, p in enumerate(phones):
@@ -566,7 +630,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 broadcast({"type": "log", "msg": "All phones have new identities!"}), loop
             )
 
-        threading.Thread(target=rotate_all, daemon=True).start()
+        _executor.submit(rotate_all)
         return json_ok({"ok": True})
 
     if path == "/api/proxy/teardown":
@@ -575,71 +639,159 @@ async def handle_post(path: str, body: bytes) -> bytes:
         return json_ok({"ok": True})
 
     # ── Groups: run different sequences on different phone sets in parallel ──
+
+    # ── Full identity reset (new IP + new Android ID + new MAC) ──
+    if path == "/api/identity/reset":
+        serial = data.get("serial", "").strip()
+        if not serial:
+            return json_err("no serial")
+        idx = _phone_idx_from_serial(serial)
+        loop = asyncio.get_running_loop()
+        def do_reset():
+            result = tor_manager.full_identity_reset(serial, idx)
+            asyncio.run_coroutine_threadsafe(
+                broadcast({"type": "log", "msg": f"{serial}: reset — tor={result['tor_circuit_rotated']} android_id={result['new_android_id'][:8]}… mac={result['new_mac']}"}), loop)
+        _executor.submit(do_reset)
+        return json_ok({"ok": True})
+
+    # ── Reset all running phones ──
+    if path == "/api/identity/reset_all":
+        phones = [p for p in list_phones() if p["running"]]
+        loop = asyncio.get_running_loop()
+        def do_reset_all():
+            for p in phones:
+                idx = _phone_idx_from_serial(p["serial"])
+                result = tor_manager.full_identity_reset(p["serial"], idx)
+                asyncio.run_coroutine_threadsafe(
+                    broadcast({"type": "log", "msg": f"{p['name']}: reset ✓ tor={result['tor_circuit_rotated']} android_id={result['new_android_id'][:8]}…"}), loop)
+        _executor.submit(do_reset_all)
+        return json_ok({"ok": True})
+
     if path == "/api/groups/run":
         raw_groups = data.get("groups")
         if not raw_groups:
             cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
             if cfg_path.exists():
-                raw_groups = json.loads(cfg_path.read_text()).get("groups", [])
+                try:
+                    raw_groups = json.loads(cfg_path.read_text()).get("groups", [])
+                except (json.JSONDecodeError, OSError):
+                    return json_err("corrupt groups_config.json")
         if not raw_groups:
             return json_err("no groups provided and no saved groups_config.json found")
 
         all_phones = {p["serial"]: p for p in list_phones() if p["running"]}
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         _running_groups.clear()
+
+        _ALLOWED_STEP_TYPES = frozenset({
+            "open_url", "tap", "wait", "swipe", "keyevent",
+            "close_app", "clear_cookies", "type_text",
+            "rotate_identity", "full_reset",
+        })
+        _PKG_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9_.]*$')
+        _KEY_RE = re.compile(r'^[A-Z0-9_]+$')
 
         def _run_steps_adb(steps: list, serial: str, group_name: str):
             for step in steps:
                 if not _running_groups.get(group_name, True):
                     break
                 t = step.get("type", "")
+                if t not in _ALLOWED_STEP_TYPES:
+                    continue
                 if t == "open_url":
+                    url = str(step.get("url", ""))
+                    try:
+                        _p = urllib.parse.urlparse(url)
+                        if _p.scheme not in ("http", "https") or not _p.netloc or " " in url:
+                            continue
+                    except Exception:
+                        continue
                     _adb(serial, "shell", "am", "start",
-                         "-a", "android.intent.action.VIEW", "-d", step.get("url", ""))
+                         "-a", "android.intent.action.VIEW", "-d", url)
                 elif t == "tap":
                     _adb(serial, "shell", "input", "tap",
-                         str(step.get("x", 0)), str(step.get("y", 0)))
+                         str(int(step.get("x", 0))), str(int(step.get("y", 0))))
                 elif t == "wait":
-                    deadline = time.time() + int(step.get("seconds", 1))
+                    secs = min(float(step.get("seconds", 1)), 300)
+                    deadline = time.time() + secs
                     while time.time() < deadline:
                         if not _running_groups.get(group_name, True):
                             break
                         time.sleep(0.25)
                 elif t == "swipe":
                     _adb(serial, "shell", "input", "swipe",
-                         str(step.get("x1", 0)), str(step.get("y1", 0)),
-                         str(step.get("x2", 0)), str(step.get("y2", 0)),
-                         str(step.get("ms", 400)))
+                         str(int(step.get("x1", 0))), str(int(step.get("y1", 0))),
+                         str(int(step.get("x2", 0))), str(int(step.get("y2", 0))),
+                         str(min(int(step.get("ms", 400)), 5000)))
                 elif t == "keyevent":
-                    _adb(serial, "shell", "input", "keyevent", step.get("key", "BACK"))
+                    key = str(step.get("key", "BACK"))
+                    if not _KEY_RE.match(key):
+                        continue
+                    _adb(serial, "shell", "input", "keyevent", key)
                 elif t == "close_app":
-                    _adb(serial, "shell", "am", "force-stop",
-                         step.get("package", "com.android.chrome"))
+                    pkg = str(step.get("package", "com.android.chrome"))
+                    if not _PKG_RE.match(pkg):
+                        continue
+                    _adb(serial, "shell", "am", "force-stop", pkg)
                 elif t == "clear_cookies":
-                    _adb(serial, "shell", "pm", "clear", "com.android.chrome")
+                    pkg = str(step.get("package", "com.android.chrome"))
+                    if not _PKG_RE.match(pkg):
+                        continue
+                    _adb(serial, "shell", "pm", "clear", pkg)
                 elif t == "type_text":
-                    text = step.get("text", "").replace(" ", "%s").replace("'", "")
+                    raw_text = step.get("text", "")
+                    text = urllib.parse.quote(raw_text, safe="").replace("%20", "%s")
                     _adb(serial, "shell", "input", "text", text)
                 elif t == "rotate_identity":
-                    idx = list(all_phones.keys()).index(serial) if serial in all_phones else 0
+                    idx = _phone_idx_from_serial(serial)
                     tor_manager.rotate_identity_adb(serial, idx)
+                elif t == "full_reset":
+                    idx = _phone_idx_from_serial(serial)
+                    result = tor_manager.full_identity_reset(serial, idx)
+                    log.info("full_reset %s: tor=%s android_id=%s mac=%s",
+                             serial, result["tor_circuit_rotated"],
+                             result["new_android_id"], result["new_mac"])
                 time.sleep(0.3)
 
         def _run_group(group: dict):
             name    = group.get("name", "Group")
-            steps   = group.get("steps", [])
-            serials = [s for s in group.get("phones", []) if s in all_phones]
-            stagger = int(group.get("stagger_secs", 0))
-            repeat  = int(group.get("repeat", 1))
-            forever = bool(group.get("repeat_forever", False))
+            phone_map = group.get("phones", {})   # {serial: {steps:[...]}}
+            serials = [s for s in phone_map.keys() if s in all_phones]
+            try:
+                stagger = int(group.get("stagger_secs", 0))
+                repeat  = int(group.get("repeat", 1))
+            except (TypeError, ValueError):
+                stagger, repeat = 0, 1
+            rv      = group.get("repeat_forever", False)
+            forever = rv if isinstance(rv, bool) else str(rv).lower() == "true"
 
             _running_groups[name] = True
             asyncio.run_coroutine_threadsafe(
                 broadcast({"type": "log", "msg": f"[{name}] Starting on {len(serials)} phone(s)"}),
                 loop)
 
+            def _run_one_phone(serial, iteration):
+                if not _running_groups.get(name):
+                    return
+                phone_name = all_phones[serial]["name"]
+                phone_steps = (phone_map.get(serial, {}) or {}).get("steps", [])
+                asyncio.run_coroutine_threadsafe(
+                    broadcast({"type": "log",
+                               "msg": f"[{name}] Running [{iteration+1}] on {phone_name}"}), loop)
+                _run_steps_adb(phone_steps, serial, name)
+                if phone_steps:
+                    idx = _phone_idx_from_serial(serial)
+                    asyncio.run_coroutine_threadsafe(
+                        broadcast({"type": "log",
+                                   "msg": f"[{name}] Resetting identity on {phone_name}…"}), loop)
+                    tor_manager.full_identity_reset(serial, idx)
+                    asyncio.run_coroutine_threadsafe(
+                        broadcast({"type": "log",
+                                   "msg": f"[{name}] {phone_name} identity reset ✓"}), loop)
+
             iteration = 0
             while _running_groups.get(name) and (forever or iteration < repeat):
+                threads = []
                 for i, serial in enumerate(serials):
                     if not _running_groups.get(name):
                         break
@@ -649,11 +801,12 @@ async def handle_post(path: str, body: bytes) -> bytes:
                             if not _running_groups.get(name):
                                 break
                             time.sleep(0.5)
-                    phone_name = all_phones[serial]["name"]
-                    asyncio.run_coroutine_threadsafe(
-                        broadcast({"type": "log",
-                                   "msg": f"[{name}] Running on {phone_name}"}), loop)
-                    _run_steps_adb(steps, serial, name)
+                    t = threading.Thread(
+                        target=_run_one_phone, args=(serial, iteration), daemon=True)
+                    t.start()
+                    threads.append(t)
+                for t in threads:
+                    t.join(timeout=300)
                 iteration += 1
 
             asyncio.run_coroutine_threadsafe(
@@ -665,7 +818,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 broadcast({"type": "groups_status", "running": list(_running_groups.keys())}), loop)
 
         for group in raw_groups:
-            threading.Thread(target=_run_group, args=(group,), daemon=True).start()
+            _executor.submit(_run_group, group)
 
         await broadcast({"type": "groups_status", "running": [g.get("name") for g in raw_groups]})
         return json_ok({"ok": True, "groups": len(raw_groups)})
@@ -681,10 +834,82 @@ async def handle_post(path: str, body: bytes) -> bytes:
             await broadcast({"type": "log", "msg": "Stopping all groups…"})
         return json_ok({"ok": True})
 
+
+    # ── Clone master steps to all phones in a group ──
+    if path == "/api/groups/clone":
+        group_name = data.get("name", "").strip()
+        source_serial = data.get("source_serial", "").strip()
+        cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
+        if not cfg_path.exists():
+            return json_err("no saved groups_config.json found")
+        try:
+            cfg = json.loads(cfg_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return json_err("corrupt groups_config.json")
+        groups = cfg.get("groups", [])
+        target = None
+        for g in groups:
+            if g.get("name") == group_name:
+                target = g
+                break
+        if not target:
+            return json_err(f"group '{group_name}' not found")
+        source_steps = []
+        phone_map = target.get("phones", {})
+        if source_serial and source_serial in phone_map:
+            source_steps = (phone_map[source_serial] or {}).get("steps", [])
+        elif isinstance(target.get("steps"), list) and target["steps"]:
+            # Legacy: shared steps (backwards compat)
+            source_steps = target["steps"]
+        if not source_steps:
+            return json_err("no source steps found to clone")
+        # Clone to all phones in the group
+        for serial in phone_map:
+            if isinstance(phone_map[serial], dict):
+                phone_map[serial]["steps"] = list(source_steps)
+            else:
+                phone_map[serial] = {"steps": list(source_steps)}
+        cfg_path.write_text(json.dumps(cfg, indent=2))
+        return json_ok({"ok": True, "cloned": len(phone_map), "steps_count": len(source_steps)})
+
+    # ── Get/Update per-phone steps ──
+    if path == "/api/groups/phone_steps":
+        group_name = data.get("name", "").strip()
+        serial = data.get("serial", "").strip()
+        new_steps = data.get("steps")
+        cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
+        if not cfg_path.exists():
+            return json_err("no saved groups_config.json found")
+        try:
+            cfg = json.loads(cfg_path.read_text())
+        except Exception:
+            return json_err("corrupt groups_config.json")
+        for g in cfg.get("groups", []):
+            if g.get("name") == group_name:
+                phone_map = g.get("phones", {})
+                if new_steps is not None:
+                    # Update steps for this phone
+                    if serial not in phone_map:
+                        phone_map[serial] = {}
+                    if isinstance(phone_map[serial], dict):
+                        phone_map[serial]["steps"] = new_steps
+                    else:
+                        phone_map[serial] = {"steps": new_steps}
+                    cfg_path.write_text(json.dumps(cfg, indent=2))
+                    return json_ok({"ok": True, "serial": serial, "steps": new_steps})
+                else:
+                    # Return current steps for this phone
+                    steps = (phone_map.get(serial) or {}).get("steps", []) if isinstance(phone_map.get(serial), dict) else []
+                    return json_ok({"serial": serial, "steps": steps})
+        return json_err("group not found")
+
     if path == "/api/groups/load":
         cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
         if cfg_path.exists():
-            cfg = json.loads(cfg_path.read_text())
+            try:
+                cfg = json.loads(cfg_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                return json_err("corrupt groups_config.json")
             return json_ok(cfg)
         return json_err("no groups_config.json found — run the Setup Wizard first")
 
@@ -692,14 +917,17 @@ async def handle_post(path: str, body: bytes) -> bytes:
     if path == "/api/launch_app":
         package = data.get("package", "").strip()
         target  = data.get("target", "all")
-        stagger = int(data.get("stagger_secs", 0))
+        try:
+            stagger = min(int(data.get("stagger_secs", 0)), 3600)
+        except (TypeError, ValueError):
+            stagger = 0
         if not package:
             return json_err("no package specified")
         if not re.match(r'^[a-zA-Z][a-zA-Z0-9_.]*$', package):
             return json_err("invalid package name")
         phones  = list_phones()
         targets = [p for p in phones if p["running"] and (target == "all" or p["serial"] == target)]
-        loop    = asyncio.get_event_loop()
+        loop    = asyncio.get_running_loop()
 
         def do_launch():
             for i, p in enumerate(targets):
@@ -711,17 +939,17 @@ async def handle_post(path: str, body: bytes) -> bytes:
                     broadcast({"type": "log", "msg": f"{p['name']}: launched {package}"}), loop
                 )
 
-        threading.Thread(target=do_launch, daemon=True).start()
+        _executor.submit(do_launch)
         return json_ok({"ok": True})
 
     # ── App tester: type text ──
     if path == "/api/input_text":
         text   = data.get("text", "")
         target = data.get("target", "all")
-        safe   = text.replace(" ", "%s").replace("'", "").replace('"', "")
+        safe   = urllib.parse.quote(text, safe="").replace("%20", "%s")
         phones  = list_phones()
         targets = [p for p in phones if p["running"] and (target == "all" or p["serial"] == target)]
-        loop    = asyncio.get_event_loop()
+        loop    = asyncio.get_running_loop()
 
         def do_type():
             for p in targets:
@@ -730,7 +958,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 broadcast({"type": "log", "msg": f"Typed on {len(targets)} phone(s)"}), loop
             )
 
-        threading.Thread(target=do_type, daemon=True).start()
+        _executor.submit(do_type)
         return json_ok({"ok": True})
 
     # ── App tester: key event ──
@@ -756,7 +984,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
             return json_err("unknown action")
         phones  = list_phones()
         targets = [p for p in phones if p["running"] and (target == "all" or p["serial"] == target)]
-        loop    = asyncio.get_event_loop()
+        loop    = asyncio.get_running_loop()
 
         def do_action():
             cmd = _QUICK_ACTIONS.get(action)
@@ -772,20 +1000,25 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 for p in targets:
                     _adb(p["serial"], *cmd)
 
-        threading.Thread(target=do_action, daemon=True).start()
+        _executor.submit(do_action)
         return json_ok({"ok": True})
 
     # ── Playstore run ──
     if path == "/api/playstore/run":
         package = data.get("package", "").strip()
         query   = data.get("query", "").strip()
-        stars   = int(data.get("stars", 0))
         review  = data.get("review", "").strip()
-        delay   = int(data.get("delay_secs", 60))
+        try:
+            stars = int(data.get("stars", 0))
+            delay = min(int(data.get("delay_secs", 60)), 3600)
+        except (TypeError, ValueError):
+            return json_err("stars and delay_secs must be integers")
+        if stars and not (1 <= stars <= 5):
+            return json_err("stars must be between 1 and 5")
         if package and not re.match(r'^[a-zA-Z][a-zA-Z0-9_.]*$', package):
             return json_err("invalid package name")
         phones = list_phones()
-        loop   = asyncio.get_event_loop()
+        loop   = asyncio.get_running_loop()
 
         def on_log(msg):
             asyncio.run_coroutine_threadsafe(broadcast({"type": "log", "msg": msg}), loop)
@@ -803,7 +1036,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
         if not package or not re.match(r'^[a-zA-Z][a-zA-Z0-9_.]*$', package):
             return json_err("invalid package name")
         phones = [p for p in list_phones() if p["running"]]
-        loop   = asyncio.get_event_loop()
+        loop   = asyncio.get_running_loop()
 
         def _open():
             for p in phones:
@@ -812,7 +1045,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                     broadcast({"type": "log", "msg": f"{p['name']}: opened {package}"}), loop
                 )
 
-        threading.Thread(target=_open, daemon=True).start()
+        _executor.submit(_open)
         return json_ok({"ok": True})
 
     return _http(404, "text/plain", b"Not Found")
@@ -820,7 +1053,14 @@ async def handle_post(path: str, body: bytes) -> bytes:
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 
+async def handle_scheduler(path, body_bytes):
+    from scheduler import handle_scheduler as _hs
+    return await _hs(path, body_bytes=body_bytes)
+
 async def ws_handler(websocket):
+    if len(_ws_clients) >= 20:
+        await websocket.close(1008, "Too many clients")
+        return
     _ws_clients.add(websocket)
     try:
         await push_phones()
@@ -851,16 +1091,16 @@ async def main():
     log.info("Scanning for connected devices…")
     threading.Thread(target=auto_connect_emulators, daemon=True).start()
 
-    http_server = await asyncio.start_server(handle_http, "0.0.0.0", PORT)
-    ws_server   = await serve(ws_handler, "0.0.0.0", WS_PORT)
+    http_server = await asyncio.start_server(handle_http, "127.0.0.1", PORT)
+    ws_server   = await serve(ws_handler, "127.0.0.1", WS_PORT)
 
-    print(f"\n  ╔══════════════════════════════════════════╗")
-    print(f"  ║   CPharm  •  ready                       ║")
-    print(f"  ║                                          ║")
+    print("\n  ╔══════════════════════════════════════════╗")
+    print("  ║   CPharm  •  ready                       ║")
+    print("  ║                                          ║")
     print(f"  ║   On this PC:  http://localhost:{PORT}    ║")
     print(f"  ║   On phone:    http://{ip}:{PORT}   ║")
-    print(f"  ║                                          ║")
-    print(f"  ║   Press Ctrl+C to stop                   ║")
+    print("  ║                                          ║")
+    print("  ║   Press Ctrl+C to stop                   ║")
     print(f"  ╚══════════════════════════════════════════╝\n")
 
     async with http_server, ws_server:

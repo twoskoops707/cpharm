@@ -1,19 +1,22 @@
 """
-Teach Mode — record taps on the first phone, replay on all others staggered.
-Uses ADB device serials — works with any connected Android device.
+Teach Mode - record taps on the first phone, replay on all others staggered.
+Uses ADB device serials - works with any connected Android device.
 """
-
 import json
+import re
+import random
 import subprocess
 import threading
 import time
 from pathlib import Path
 from typing import Callable
 
+_DEVICE_RE = re.compile(r'^/dev/input/event\d+$')
+_HEX_DEC_RE = re.compile(r'^[0-9A-Fa-f]+$')
+
 from config import REC_DIR
 
 REC_DIR.mkdir(exist_ok=True)
-
 _recording_active = False
 _recording_thread: threading.Thread | None = None
 _current_file: Path | None = None
@@ -28,6 +31,7 @@ def _adb(serial: str, *args) -> str:
         return r.stdout.strip()
     except Exception:
         return ""
+
 
 
 def start_recording(serial: str) -> str:
@@ -49,11 +53,29 @@ def start_recording(serial: str) -> str:
                 if not _recording_active:
                     break
                 line = line.strip()
-                if line:
-                    events.append({"t": round(time.time() - start_time, 3), "e": line})
+                if not line:
+                    continue
+                parts = line.split()
+                if len(parts) < 4:
+                    continue
+                device = parts[0].rstrip(":")
+                event_type  = parts[1]
+                event_code  = parts[2]
+                event_value = parts[3]
+                events.append({
+                    "t":     round(time.time() - start_time, 3),
+                    "d":     device,
+                    "type":  event_type,
+                    "code":  event_code,
+                    "value": event_value,
+                })
         finally:
             proc.terminate()
-            _current_file.write_text(json.dumps(events, indent=2))
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+            _current_file.write_text(json.dumps(events))
 
     _recording_thread = threading.Thread(target=record, daemon=True)
     _recording_thread.start()
@@ -61,7 +83,7 @@ def start_recording(serial: str) -> str:
 
 
 def stop_recording() -> str | None:
-    global _recording_active
+    global _recording_active, _recording_thread, _current_file
     _recording_active = False
     if _recording_thread:
         _recording_thread.join(timeout=3)
@@ -69,20 +91,35 @@ def stop_recording() -> str | None:
 
 
 def replay_on_phone(serial: str, recording_path: str):
-    data   = json.loads(Path(recording_path).read_text())
-    prev_t = 0.0
+    """Replay a recording on a specific phone using sendevent.
+
+    Works without root on AVD emulators. Each event is sent with a 3-second
+    timeout so a dead device never hangs the replay.
+    """
+    try:
+        data = json.loads(Path(recording_path).read_text())
+    except (ValueError, OSError):
+        return
+
     for entry in data:
-        delay = entry["t"] - prev_t
-        if delay > 0:
-            time.sleep(delay)
-        prev_t = entry["t"]
-        parts  = entry["e"].split()
-        if len(parts) >= 4:
-            dev, etype, ecode, evalue = parts[0].rstrip(":"), parts[1], parts[2], parts[3]
+        d     = entry.get("d", "")
+        etype = entry.get("type", "")
+        code  = entry.get("code", "")
+        value = entry.get("value", "")
+        if (not _DEVICE_RE.match(d)
+                or not _HEX_DEC_RE.match(str(etype))
+                or not _HEX_DEC_RE.match(str(code))
+                or not _HEX_DEC_RE.match(str(value))):
+            continue
+        try:
             subprocess.run(
-                ["adb", "-s", serial, "shell", "sendevent", dev, etype, ecode, evalue],
-                capture_output=True, timeout=5
+                ["adb", "-s", serial, "shell", "sendevent", d, etype, code, value],
+                capture_output=True, timeout=3
             )
+        except subprocess.TimeoutExpired:
+            break  # Device went offline - stop replaying
+        except Exception:
+            pass
 
 
 def replay_all(
@@ -94,11 +131,11 @@ def replay_all(
     def run():
         for i, phone in enumerate(phones):
             if i > 0:
-                time.sleep(delay_secs)
+                actual = max(0.1, delay_secs + random.uniform(-delay_secs * 0.3, delay_secs * 0.3))
+                time.sleep(actual)
             replay_on_phone(phone["serial"], recording_path)
         if on_complete:
             on_complete()
-
     t = threading.Thread(target=run, daemon=True)
     t.start()
     return t

@@ -3692,70 +3692,79 @@ class BootPage(PageBase):
         self._log_write("Checking/installing websockets + psutil…\n")
 
         def _launch():
-            py = state.get("python_cmd", "python")
-            cf = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
-
-            pip = subprocess.run(
-                [py, "-m", "pip", "install", "--quiet",
-                 "websockets>=12.0", "psutil>=5.9.0"],
-                capture_output=True, text=True, timeout=120,
-                creationflags=cf,
-            )
-            if pip.returncode != 0:
-                err = pip.stderr.strip() or pip.stdout.strip() or "pip failed"
-                self.after(0, lambda: (
-                    self._srv_lbl.config(text="❌ pip failed", fg=RED),
-                    self._btn_srv_start.config(state="normal"),
-                    self._log_write(f"pip error:\n{err}\n"),
-                ))
-                return
-
-            self.after(0, lambda: (
-                self._srv_lbl.config(text="⏳ Starting…", fg=YELLOW),
-                self._log_write("Packages OK — launching server…\n"),
-            ))
-
-            err_file = tempfile.NamedTemporaryFile(
-                mode="w", suffix=".log", delete=False, dir=str(dashboard.parent)
-            )
-            err_path = err_file.name
-            err_file.close()
-
             try:
-                flags = subprocess.CREATE_NEW_CONSOLE if IS_WIN else 0
-                proc = subprocess.Popen(
-                    [py, str(dashboard)],
-                    cwd=str(dashboard.parent),
-                    stderr=open(err_path, "w"),
-                    creationflags=flags,
+                py = state.get("python_cmd", "python")
+                if not py:
+                    py = "python"
+                cf = _NO_WIN
+
+                self.after(0, lambda: self._log_write(f"Using Python: {py}\n"))
+
+                pip = subprocess.run(
+                    [py, "-m", "pip", "install", "--quiet",
+                     "websockets>=12.0", "psutil>=5.9.0"],
+                    capture_output=True, text=True, timeout=120,
+                    creationflags=cf,
                 )
+                if pip.returncode != 0:
+                    err = pip.stderr.strip() or pip.stdout.strip() or "pip failed"
+                    self.after(0, lambda: (
+                        self._srv_lbl.config(text="❌ pip failed", fg=RED),
+                        self._btn_srv_start.config(state="normal"),
+                        self._log_write(f"pip error:\n{err}\n"),
+                    ))
+                    return
+
+                self.after(0, lambda: (
+                    self._srv_lbl.config(text="⏳ Starting…", fg=YELLOW),
+                    self._log_write("Packages OK — launching server…\n"),
+                ))
+
+                import tempfile as _tmp
+                err_file = _tmp.NamedTemporaryFile(
+                    mode="w", suffix=".log", delete=False
+                )
+                err_path = err_file.name
+                err_file.close()
+
+                log_fh = open(err_path, "w")
+                try:
+                    proc = subprocess.Popen(
+                        [py, str(dashboard)],
+                        cwd=str(dashboard.parent),
+                        stdout=log_fh,
+                        stderr=log_fh,
+                        creationflags=cf,
+                    )
+                finally:
+                    log_fh.close()
+
                 self._server_proc = proc
                 self.after(0, lambda: self._btn_srv_stop.config(state="normal"))
-            except Exception as exc:
-                self.after(0, lambda: (
-                    self._srv_lbl.config(text="❌ Launch failed", fg=RED),
-                    self._btn_srv_start.config(state="normal"),
-                    self._log_write(f"Launch error: {exc}\n"),
-                ))
-                return
 
-            time.sleep(3)
-            if proc.poll() is None:
-                self.after(0, lambda: (
-                    self._srv_lbl.config(text="✅ Server running", fg=GREEN),
-                    self._btn_run.config(state="normal"),
-                    self._log_write("Server is up! Click Run All Groups to start.\n"),
-                ))
-            else:
-                try:
-                    errtxt = Path(err_path).read_text().strip()[-800:]
-                except Exception:
-                    errtxt = "(no stderr captured)"
-                self.after(0, lambda et=errtxt: (
-                    self._srv_lbl.config(text="❌ Server crashed", fg=RED),
+                time.sleep(3)
+                if proc.poll() is None:
+                    self.after(0, lambda: (
+                        self._srv_lbl.config(text="✅ Server running", fg=GREEN),
+                        self._btn_run.config(state="normal"),
+                        self._log_write("Server is up! Click Run All Groups to start.\n"),
+                    ))
+                else:
+                    try:
+                        errtxt = Path(err_path).read_text(errors="replace").strip()[-1200:]
+                    except Exception:
+                        errtxt = "(no output captured)"
+                    self.after(0, lambda et=errtxt: (
+                        self._srv_lbl.config(text="❌ Server crashed", fg=RED),
+                        self._btn_srv_start.config(state="normal"),
+                        self._btn_srv_stop.config(state="disabled"),
+                        self._log_write(f"Server crashed:\n{et}\n"),
+                    ))
+            except Exception as exc:
+                self.after(0, lambda e=exc: (
+                    self._srv_lbl.config(text="❌ Launch error", fg=RED),
                     self._btn_srv_start.config(state="normal"),
-                    self._btn_srv_stop.config(state="disabled"),
-                    self._log_write(f"Server crashed:\n{et}\n"),
+                    self._log_write(f"Launch error: {e}\n"),
                 ))
 
         threading.Thread(target=_launch, daemon=True).start()
@@ -3871,6 +3880,11 @@ class BootPage(PageBase):
                 if emu_exe.exists() and _pe_machine_type(str(emu_exe)) == 0xAA64:
                     emu_ok = True
             if not emu_ok:
+                self._log_write(
+                    "❌ ARM64 (Snapdragon) detected — Google has no Windows ARM64 emulator.\n"
+                    "   Go back to Step 1 and enable  ✅ Use MuMuPlayer ARM64.\n"
+                    f"   Download: {MUMU_DOWNLOAD_URL}\n"
+                )
                 messagebox.showerror(
                     "MuMuPlayer required",
                     "ARM64 (Snapdragon) detected — Google has no Windows ARM64 emulator.\n\n"
@@ -4754,70 +4768,79 @@ class LaunchPage(PageBase):
         self._log("Checking/installing websockets + psutil…")
 
         def _launch():
-            py = state.get("python_cmd", "python")
-            cf = _NO_WIN
-
-            pip = subprocess.run(
-                [py, "-m", "pip", "install", "--quiet",
-                 "websockets>=12.0", "psutil>=5.9.0"],
-                capture_output=True, text=True, timeout=120,
-                creationflags=cf,
-            )
-            if pip.returncode != 0:
-                err = pip.stderr.strip() or pip.stdout.strip() or "pip failed"
-                self.after(0, lambda: (
-                    self._srv_lbl.config(text="❌ pip failed", fg=RED),
-                    self._btn_srv_start.config(state="normal"),
-                    self._log(f"pip error:\n{err}"),
-                ))
-                return
-
-            self.after(0, lambda: (
-                self._srv_lbl.config(text="⏳ Starting…", fg=YELLOW),
-                self._log("Packages OK — launching server…"),
-            ))
-
-            err_file = tempfile.NamedTemporaryFile(
-                mode="w", suffix=".log", delete=False, dir=str(dashboard.parent)
-            )
-            err_path = err_file.name
-            err_file.close()
-
             try:
-                flags = subprocess.CREATE_NEW_CONSOLE if IS_WIN else 0
-                proc = subprocess.Popen(
-                    [py, str(dashboard)],
-                    cwd=str(dashboard.parent),
-                    stderr=open(err_path, "w"),
-                    creationflags=flags,
+                py = state.get("python_cmd", "python")
+                if not py:
+                    py = "python"
+                cf = _NO_WIN
+
+                self.after(0, lambda: self._log(f"Using Python: {py}"))
+
+                pip = subprocess.run(
+                    [py, "-m", "pip", "install", "--quiet",
+                     "websockets>=12.0", "psutil>=5.9.0"],
+                    capture_output=True, text=True, timeout=120,
+                    creationflags=cf,
                 )
+                if pip.returncode != 0:
+                    err = pip.stderr.strip() or pip.stdout.strip() or "pip failed"
+                    self.after(0, lambda: (
+                        self._srv_lbl.config(text="❌ pip failed", fg=RED),
+                        self._btn_srv_start.config(state="normal"),
+                        self._log(f"pip error:\n{err}"),
+                    ))
+                    return
+
+                self.after(0, lambda: (
+                    self._srv_lbl.config(text="⏳ Starting…", fg=YELLOW),
+                    self._log("Packages OK — launching server…"),
+                ))
+
+                import tempfile as _tmp
+                err_file = _tmp.NamedTemporaryFile(
+                    mode="w", suffix=".log", delete=False
+                )
+                err_path = err_file.name
+                err_file.close()
+
+                log_fh = open(err_path, "w")
+                try:
+                    proc = subprocess.Popen(
+                        [py, str(dashboard)],
+                        cwd=str(dashboard.parent),
+                        stdout=log_fh,
+                        stderr=log_fh,
+                        creationflags=cf,
+                    )
+                finally:
+                    log_fh.close()
+
                 self._server_proc = proc
                 self.after(0, lambda: self._btn_srv_stop.config(state="normal"))
-            except Exception as exc:
-                self.after(0, lambda: (
-                    self._srv_lbl.config(text="❌ Launch failed", fg=RED),
-                    self._btn_srv_start.config(state="normal"),
-                    self._log(f"Launch error: {exc}"),
-                ))
-                return
 
-            time.sleep(3)
-            if proc.poll() is None:
-                self.after(0, lambda: (
-                    self._srv_lbl.config(text="✅ Server running", fg=GREEN),
-                    self._btn_run.config(state="normal"),
-                    self._log("Server is up! Click Run All Groups to start."),
-                ))
-            else:
-                try:
-                    errtxt = Path(err_path).read_text().strip()[-800:]
-                except Exception:
-                    errtxt = "(no stderr captured)"
-                self.after(0, lambda et=errtxt: (
-                    self._srv_lbl.config(text="❌ Server crashed", fg=RED),
+                time.sleep(3)
+                if proc.poll() is None:
+                    self.after(0, lambda: (
+                        self._srv_lbl.config(text="✅ Server running", fg=GREEN),
+                        self._btn_run.config(state="normal"),
+                        self._log("Server is up! Click Run All Groups to start."),
+                    ))
+                else:
+                    try:
+                        errtxt = Path(err_path).read_text(errors="replace").strip()[-1200:]
+                    except Exception:
+                        errtxt = "(no output captured)"
+                    self.after(0, lambda et=errtxt: (
+                        self._srv_lbl.config(text="❌ Server crashed", fg=RED),
+                        self._btn_srv_start.config(state="normal"),
+                        self._btn_srv_stop.config(state="disabled"),
+                        self._log(f"Server crashed:\n{et}"),
+                    ))
+            except Exception as exc:
+                self.after(0, lambda e=exc: (
+                    self._srv_lbl.config(text="❌ Launch error", fg=RED),
                     self._btn_srv_start.config(state="normal"),
-                    self._btn_srv_stop.config(state="disabled"),
-                    self._log(f"Server crashed:\n{et}"),
+                    self._log(f"Launch error: {e}"),
                 ))
 
         threading.Thread(target=_launch, daemon=True).start()

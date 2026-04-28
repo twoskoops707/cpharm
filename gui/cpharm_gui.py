@@ -1,3 +1,6 @@
+# DEPRECATED — This file is the old LDPlayer-based GUI (v1).
+# CPharm now uses wizard/setup_wizard.py. Do not launch this file directly.
+# Kept for reference only.
 """
 CPharm GUI — Windows desktop app for managing the LDPlayer phone farm.
 

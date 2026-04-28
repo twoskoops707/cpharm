@@ -637,12 +637,11 @@ def _find_mumu_manager():
             "MuMuPlayer",
         ):
             root = Path(base) / folder
-            for sub_dir in ("shell", "nx_main", "manager", ""):
-                if sub_dir:
-                    for exe_name in ("MuMuManager.exe", "nemux-shell-winui.Manager.exe"):
-                        candidates.append(root / sub_dir / exe_name)
-                else:
-                    candidates.append(root / "MuMuManager.exe")
+            for sub_dir in ("shell", "nx_main", ""):
+                candidates.append(
+                    root / sub_dir / "MuMuManager.exe" if sub_dir
+                    else root / "MuMuManager.exe"
+                )
 
     for p in candidates:
         if p.exists():
@@ -3345,7 +3344,7 @@ class BootPage(PageBase):
         self._overall_lbl.pack(side="left", padx=10)
 
         self._mumu_cfg_row = tk.Frame(phone_ctrl, bg=BG3)
-        tk.Label(self._mumu_cfg_row, text="MuMuManager.exe:",
+        tk.Label(self._mumu_cfg_row, text="MuMuManager.exe  (shell\\ folder):",
                  font=FS, bg=BG3, fg=T2).pack(side="left")
         self._mumu_path_var = tk.StringVar(value="")
         self._mumu_path_entry = tk.Entry(
@@ -3357,6 +3356,9 @@ class BootPage(PageBase):
         tk.Button(self._mumu_cfg_row, text="Browse…",
                   font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
                   command=self._browse_mumu_mgr).pack(side="left")
+        self._mumu_hint = tk.Label(phone_ctrl,
+                 text="Hint: C:\\Program Files\\Netease\\MuMuPlayerARM\\shell\\MuMuManager.exe",
+                 font=("Segoe UI", 9), bg=BG3, fg=T3, anchor="w")
 
         # Chrome setup + URL test
         chrome_box = tk.Frame(self, bg=BG3, padx=14, pady=10)
@@ -3521,9 +3523,11 @@ class BootPage(PageBase):
             detected = str(_find_mumu_manager() or "")
             if detected and not self._mumu_path_var.get():
                 self._mumu_path_var.set(detected)
-            self._mumu_cfg_row.pack(fill="x", pady=(0, 4))
+            self._mumu_cfg_row.pack(fill="x", pady=(0, 2))
+            self._mumu_hint.pack(fill="x", pady=(0, 4))
         else:
             self._mumu_cfg_row.pack_forget()
+            self._mumu_hint.pack_forget()
 
         if state.get("use_mumu"):
             self._overall_lbl.config(text="Connecting to MuMu instances…", fg=YELLOW)
@@ -3651,17 +3655,22 @@ class BootPage(PageBase):
 
     def _browse_mumu_mgr(self):
         from tkinter import filedialog
+        default_dir = str(
+            Path(os.environ.get("PROGRAMFILES", "C:\\")) / "Netease"
+        )
         path = filedialog.askopenfilename(
-            title="Select MuMuManager.exe  (CLI tool — usually in shell\\MuMuManager.exe)",
+            title="Select MuMuManager.exe — look in the 'shell' subfolder of your MuMuPlayerARM install",
             filetypes=[("MuMuManager CLI", "MuMuManager.exe"), ("All executables", "*.exe"), ("All files", "*.*")],
-            initialdir=os.environ.get("PROGRAMFILES", "C:\\"),
+            initialdir=default_dir,
         )
         if path:
-            if "MuMuManager" not in Path(path).name:
+            name = Path(path).name
+            if name.lower() != "mumumanager.exe":
                 self._log_write(
-                    f"⚠ Selected file is '{Path(path).name}' — expected MuMuManager.exe.\n"
-                    "  Look in the 'shell' subfolder of your MuMuPlayer install dir.\n"
-                    f"  e.g. C:\\Program Files\\Netease\\MuMuPlayerARM\\shell\\MuMuManager.exe\n"
+                    f"⚠ '{name}' is not MuMuManager.exe.\n"
+                    "  The CLI tool is MuMuManager.exe in the 'shell' folder:\n"
+                    "  C:\\Program Files\\Netease\\MuMuPlayerARM\\shell\\MuMuManager.exe\n"
+                    "  (not nemux-shell-winui.Manager.exe — that is the GUI app)\n"
                 )
             state["mumu_mgr_path"] = path
             self._mumu_path_var.set(path)

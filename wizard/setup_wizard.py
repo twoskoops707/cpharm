@@ -546,22 +546,100 @@ MUMU_DOWNLOAD_URL = "https://www.mumuplayer.com/windows-arm.html"
 def _find_mumu_manager():
     """Return path to MuMuManager.exe, or None.
 
-    MuMuPlayer 12 installs MuMuManager.exe inside the nx_main subfolder:
-      {install_root}\\nx_main\\MuMuManager.exe
+    Search order:
+      1. User-browsed path stored in state["mumu_mgr_path"]
+      2. 'where MuMuManager' (finds it if install dir is in PATH)
+      3. Windows registry Uninstall entries for any "MuMu" product
+      4. Standard filesystem candidates under PROGRAMFILES / LOCALAPPDATA
     """
     if not IS_WIN:
         return None
+
+    # 1. User manually selected path
+    cached = state.get("mumu_mgr_path", "")
+    if cached:
+        p = Path(cached)
+        if p.exists():
+            return p
+
     candidates = []
-    for base_var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+
+    # 2. 'where' command — works if MuMu install dir is on PATH
+    try:
+        r = subprocess.run(
+            ["where", "MuMuManager"],
+            capture_output=True, text=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if r.returncode == 0:
+            for line in r.stdout.strip().splitlines():
+                p = Path(line.strip())
+                if p.exists():
+                    candidates.insert(0, p)
+    except Exception:
+        pass
+
+    # 3. Registry Uninstall entries
+    try:
+        import winreg
+        reg_roots = [
+            (winreg.HKEY_LOCAL_MACHINE,
+             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_LOCAL_MACHINE,
+             r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_CURRENT_USER,
+             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        ]
+        for hive, reg_path in reg_roots:
+            try:
+                key = winreg.OpenKey(hive, reg_path)
+                i = 0
+                while True:
+                    try:
+                        sub_name = winreg.EnumKey(key, i)
+                        i += 1
+                        sub = winreg.OpenKey(key, sub_name)
+                        try:
+                            name_val = winreg.QueryValueEx(sub, "DisplayName")[0]
+                            if "mumu" in name_val.lower():
+                                for val_name in ("InstallLocation", "InstallDir"):
+                                    try:
+                                        loc = Path(winreg.QueryValueEx(sub, val_name)[0])
+                                        for sub_dir in ("shell", "nx_main", ""):
+                                            exe = loc / sub_dir / "MuMuManager.exe" if sub_dir \
+                                                  else loc / "MuMuManager.exe"
+                                            candidates.append(exe)
+                                    except OSError:
+                                        pass
+                        except OSError:
+                            pass
+                        winreg.CloseKey(sub)
+                    except OSError:
+                        break
+                winreg.CloseKey(key)
+            except OSError:
+                pass
+    except ImportError:
+        pass
+
+    # 4. Filesystem candidates
+    for base_var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA", "PROGRAMW6432"):
         base = os.environ.get(base_var, "")
         if not base:
             continue
-        for folder in ("Netease\\MuMuPlayer-12.0", "Netease\\MuMuPlayer",
-                       "MuMuPlayer-12.0", "MuMuPlayer"):
+        for folder in (
+            "Netease\\MuMuPlayer-12.0",
+            "Netease\\MuMuPlayerGlobal-12.0",
+            "Netease\\MuMuPlayer",
+            "MuMuPlayer-12.0",
+            "MuMuPlayer",
+        ):
             root = Path(base) / folder
-            candidates.append(root / "nx_main" / "MuMuManager.exe")
-            candidates.append(root / "shell"   / "MuMuManager.exe")
-            candidates.append(root / "MuMuManager.exe")
+            for sub_dir in ("shell", "nx_main", ""):
+                exe = root / sub_dir / "MuMuManager.exe" if sub_dir \
+                      else root / "MuMuManager.exe"
+                candidates.append(exe)
+
     for p in candidates:
         if p.exists():
             return p
@@ -643,39 +721,54 @@ def _mumu_launch(mgr_path, index, log_fn=None):
     return ok
 
 
-def _connect_mumu_phones(count=5, log_fn=None):
+def _connect_mumu_phones(count=8, log_fn=None):
     """Connect to MuMuPlayer instances via MuMuManager API + adb connect.
 
+    Always tries both MuMuManager (for names/exact ports) AND the port
+    fallback scan — so phones are found even if MuMuManager lookup fails.
     Returns list of connected ADB serials.
-    Fallback: if MuMuManager not found, try standard ports 16384+32*i.
     """
     mgr = _find_mumu_manager()
     connected = []
+    tried_serials = set()
 
     if mgr:
+        if log_fn:
+            log_fn(f"  MuMuManager found: {mgr}\n")
         instances = _mumu_get_instances(mgr)
+        if log_fn:
+            log_fn(f"  Instances from MuMuManager: {len(instances)}\n")
         for inst in instances:
             serial = inst["adb_serial"]
+            tried_serials.add(serial)
             out = adb("connect", serial, timeout=8)
+            if log_fn:
+                log_fn(f"  adb connect {serial}: {out or '(no output)'}\n")
             if "connected" in out.lower() or "already" in out.lower():
                 check = adb("shell", "echo", "ok", serial=serial, timeout=6)
                 if check.strip() == "ok":
                     connected.append(serial)
                     if log_fn:
                         log_fn(f"  ✅ {inst['name']}: {serial}\n")
-        return connected
+    else:
+        if log_fn:
+            log_fn("  MuMuManager.exe not found — using port scan fallback\n")
 
-    # Fallback: try fixed ports
+    # Always also scan standard ports — catches running instances even when
+    # MuMuManager returns nothing or wasn't found
     base_port = 16384
     for i in range(count):
         serial = f"127.0.0.1:{base_port + i * 32}"
-        out = adb("connect", serial, timeout=6)
+        if serial in tried_serials:
+            continue
+        out = adb("connect", serial, timeout=5)
         if "connected" in out.lower() or "already" in out.lower():
-            check = adb("shell", "echo", "ok", serial=serial, timeout=6)
+            check = adb("shell", "echo", "ok", serial=serial, timeout=5)
             if check.strip() == "ok":
                 connected.append(serial)
                 if log_fn:
-                    log_fn(f"  ✅ MuMu fallback port: {serial}\n")
+                    log_fn(f"  ✅ port scan: {serial}\n")
+
     return connected
 
 

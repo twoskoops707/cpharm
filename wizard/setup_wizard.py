@@ -3067,6 +3067,14 @@ class PhoneFarmPage(PageBase):
                   bg=BG3, fg=T1, relief="flat", cursor="hand2",
                   padx=10, pady=6,
                   command=self._edit_sequence).pack(side="left", padx=(0, 8))
+        tk.Button(seq_row, text="💾 Save Sequence",
+                  font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
+                  padx=8, pady=6,
+                  command=self._save_sequence).pack(side="left", padx=(0, 4))
+        tk.Button(seq_row, text="📂 Load Sequence",
+                  font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
+                  padx=8, pady=6,
+                  command=self._load_sequence).pack(side="left", padx=(0, 8))
         self._seq_lbl = tk.Label(seq_row, text="No steps defined",
                                  font=FS, bg=BG, fg=T3)
         self._seq_lbl.pack(side="left")
@@ -3107,6 +3115,47 @@ class PhoneFarmPage(PageBase):
             fg=T1 if n else T3,
         )
         state["default_steps"] = list(self._seq_steps)
+
+    def _save_sequence(self):
+        from tkinter import filedialog
+        if not self._seq_steps:
+            messagebox.showinfo("Nothing to save", "Add steps first via 'Edit Default Sequence'.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Save Sequence",
+            defaultextension=".json",
+            filetypes=[("JSON sequence", "*.json"), ("All files", "*.*")],
+            initialfile="default_sequence.json",
+        )
+        if not path:
+            return
+        Path(path).write_text(json.dumps(self._seq_steps, indent=2))
+        messagebox.showinfo("Saved", f"Sequence saved to:\n{path}")
+
+    def _load_sequence(self):
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(
+            title="Load Sequence",
+            filetypes=[("JSON sequence", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            data = json.loads(Path(path).read_text())
+        except Exception as exc:
+            messagebox.showerror("Load failed", str(exc))
+            return
+        if not isinstance(data, list):
+            messagebox.showerror("Invalid file", "File must contain a JSON array of steps.")
+            return
+        self._seq_steps.clear()
+        self._seq_steps.extend(data)
+        state["default_steps"] = list(self._seq_steps)
+        n = len(self._seq_steps)
+        self._seq_lbl.config(
+            text=f"{n} step{'s' if n != 1 else ''} loaded" if n else "No steps defined",
+            fg=T1 if n else T3,
+        )
 
     def _pick_count(self, n):
         state["num_phones"] = n

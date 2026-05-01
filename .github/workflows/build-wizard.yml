@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - 'wizard/**'
+      - 'automation/**'
+      - '.github/workflows/build-wizard.yml'
   workflow_dispatch:
 
 permissions:

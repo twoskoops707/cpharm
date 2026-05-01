@@ -105,6 +105,7 @@ state = {
         "repeat":         1,
         "repeat_forever": False,
     }],
+    "use_mumu": False,
 }
 
 
@@ -209,6 +210,47 @@ class PerPhoneSequenceEditor(tk.Toplevel):
 _NO_WIN = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
 
 
+def adb_executable() -> str:
+    """Prefer SDK platform-tools adb so TCP connects work even when PATH is wrong."""
+    sdk = state.get("sdk_path") or find_sdk()
+    if sdk:
+        p = Path(sdk) / "platform-tools" / ("adb.exe" if IS_WIN else "adb")
+        if p.exists():
+            return str(p)
+    guess = Path(SDK_DEFAULT_PATH) / "platform-tools" / ("adb.exe" if IS_WIN else "adb")
+    if guess.exists():
+        return str(guess)
+    import shutil
+    w = shutil.which("adb")
+    if w:
+        return w
+    return "adb"
+
+
+def _ensure_minimal_platform_tools(log_fn=None) -> bool:
+    """
+    MuMu-only users often skip the full SDK; still need adb for TCP.
+    Drop Google's platform-tools into %LOCALAPPDATA%\\Android\\Sdk if missing.
+    """
+    sdk_root = Path(SDK_DEFAULT_PATH)
+    pt = sdk_root / "platform-tools" / ("adb.exe" if IS_WIN else "adb")
+    if pt.exists():
+        if not state.get("sdk_path"):
+            state["sdk_path"] = str(sdk_root)
+        return True
+    try:
+        sdk_root.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    if log_fn:
+        log_fn("  Downloading Android platform-tools (adb only, ~6 MB)…\n")
+    ok = _direct_download_platform_tools(str(sdk_root), log_fn=log_fn)
+    if ok and pt.exists():
+        state["sdk_path"] = str(sdk_root)
+        return True
+    return False
+
+
 def run_cmd(cmd, cwd=None, timeout=120):
     try:
         r = subprocess.run(
@@ -223,14 +265,15 @@ def run_cmd(cmd, cwd=None, timeout=120):
 
 
 def adb(*args, serial=None, timeout=20):
-    cmd = ["adb"]
+    exe = adb_executable()
+    cmd = [exe]
     if serial:
         cmd += ["-s", serial]
     cmd += list(args)
     try:
         r = subprocess.run(cmd, capture_output=True, text=True,
                            timeout=timeout, creationflags=_NO_WIN)
-        return r.stdout.strip()
+        return (r.stdout + r.stderr).strip()
     except Exception:
         return ""
 
@@ -543,14 +586,57 @@ def _pe_machine_type(exe_path: str) -> int:
 
 MUMU_DOWNLOAD_URL = "https://www.mumuplayer.com/windows-arm.html"
 
+
+def _mumu_install_root(mgr_path) -> Path:
+    """Directory that contains MuMuPlayer.exe (parent of shell/nx_main)."""
+    p = Path(mgr_path)
+    if p.parent.name.lower() in ("shell", "nx_main"):
+        return p.parent.parent
+    return p.parent
+
+
+def _glob_mumu_manager(max_dirs=80):
+    """Shallow search for MuMuManager.exe under Netease / MuMu install trees."""
+    roots = []
+    for base_var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA", "PROGRAMW6432"):
+        base = os.environ.get(base_var, "")
+        if not base:
+            continue
+        base_path = Path(base)
+        for child in ("Netease", "MuMuPlayer", "MuMuPlayerARM"):
+            d = base_path / child
+            if d.is_dir():
+                roots.append(d)
+        try:
+            for d in base_path.glob("MuMu*"):
+                if d.is_dir():
+                    roots.append(d)
+        except Exception:
+            pass
+    seen = set()
+    for root in roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        try:
+            for i, p in enumerate(root.rglob("MuMuManager.exe")):
+                if i >= max_dirs:
+                    break
+                if p.is_file():
+                    yield p
+        except Exception:
+            pass
+
+
 def _find_mumu_manager():
     """Return path to MuMuManager.exe, or None.
 
     Search order:
       1. User-browsed path stored in state["mumu_mgr_path"]
-      2. 'where MuMuManager' (finds it if install dir is in PATH)
+      2. 'where' MuMuManager / MuMuManager.exe (PATH)
       3. Windows registry Uninstall entries for any "MuMu" product
       4. Standard filesystem candidates under PROGRAMFILES / LOCALAPPDATA
+      5. Shallow glob under Netease / MuMu* folders
     """
     if not IS_WIN:
         return None
@@ -565,19 +651,23 @@ def _find_mumu_manager():
     candidates = []
 
     # 2. 'where' command — works if MuMu install dir is on PATH
-    try:
-        r = subprocess.run(
-            ["where", "MuMuManager"],
-            capture_output=True, text=True, timeout=5,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        if r.returncode == 0:
-            for line in r.stdout.strip().splitlines():
-                p = Path(line.strip())
-                if p.exists():
-                    candidates.insert(0, p)
-    except Exception:
-        pass
+    for query in ("MuMuManager.exe", "MuMuManager"):
+        try:
+            r = subprocess.run(
+                ["where", query],
+                capture_output=True, text=True, timeout=8,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            if r.returncode == 0:
+                for line in (r.stdout + r.stderr).strip().splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    p = Path(line)
+                    if p.exists() and p.name.lower() == "mumumanager.exe":
+                        candidates.insert(0, p)
+        except Exception:
+            pass
 
     # 3. Registry Uninstall entries
     try:
@@ -646,6 +736,13 @@ def _find_mumu_manager():
     for p in candidates:
         if p.exists():
             return p
+
+    # 5. Discovery search (new install paths / renamed folders)
+    try:
+        for p in _glob_mumu_manager():
+            return p
+    except Exception:
+        pass
     return None
 
 
@@ -653,22 +750,60 @@ def _find_mumu_player():
     """Return the MuMuPlayer install root (contains MuMuPlayer.exe), or None."""
     mgr = _find_mumu_manager()
     if mgr:
-        if mgr.parent.name in ("nx_main", "shell"):
-            return mgr.parent.parent
-        return mgr.parent
+        return _mumu_install_root(mgr)
+    return None
+
+
+def _mumu_parse_json_output(out: str):
+    """MuMuManager sometimes prints banners; extract the JSON object or array."""
+    s = (out or "").strip()
+    if not s:
+        return None
+    if s.startswith("{") or s.startswith("["):
+        try:
+            return json.loads(s)
+        except Exception:
+            pass
+    for open_ch, close_ch in (("{", "}"), ("[", "]")):
+        i = s.find(open_ch)
+        j = s.rfind(close_ch)
+        if i >= 0 and j > i:
+            try:
+                return json.loads(s[i : j + 1])
+            except Exception:
+                continue
+    return None
+
+
+def _mumu_adb_port(d: dict):
+    for k in ("adb_port", "adb_host_port", "port", "AdbPort", "adbPort"):
+        v = d.get(k)
+        if v is None:
+            continue
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            continue
     return None
 
 
 def _mumu_run(mgr_path, *args, timeout=15):
-    """Run MuMuManager.exe with args, return (ok, stdout_str)."""
+    """Run MuMuManager.exe with args, return (ok, combined_stdout_stderr).
+
+    Uses cwd = folder containing the exe (required by several MuMu builds).
+    """
+    mgr_path = Path(mgr_path)
+    cwd = str(mgr_path.parent)
     flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
     try:
         r = subprocess.run(
             [str(mgr_path)] + list(args),
             capture_output=True, text=True, timeout=timeout,
             creationflags=flags,
+            cwd=cwd,
         )
-        return r.returncode == 0, r.stdout.strip()
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        return r.returncode == 0, out
     except Exception as e:
         return False, str(e)
 
@@ -679,16 +814,15 @@ def _mumu_get_instances(mgr_path, log_fn=None):
     Uses MuMuManager.exe info -v all
     JSON can be a single dict (one instance) or a dict-of-dicts keyed by index.
     """
-    ok, out = _mumu_run(mgr_path, "info", "-v", "all", timeout=10)
+    ok, out = _mumu_run(mgr_path, "info", "-v", "all", timeout=15)
     if log_fn:
-        log_fn(f"  Manager CLI ({Path(mgr_path).name}) rc={ok} out={repr(out[:200]) if out else '(empty)'}\n")
-    if not ok or not out:
-        return []
-    try:
-        data = json.loads(out)
-    except Exception:
-        if log_fn:
-            log_fn(f"  Manager returned non-JSON: {repr(out[:200])}\n")
+        log_fn(
+            f"  Manager CLI ({Path(mgr_path).name}) rc={ok} out={repr(out[:280]) if out else '(empty)'}\n"
+        )
+    data = _mumu_parse_json_output(out)
+    if data is None:
+        if out and log_fn:
+            log_fn(f"  Could not parse JSON from manager output.\n")
         return []
 
     instances = []
@@ -696,19 +830,19 @@ def _mumu_get_instances(mgr_path, log_fn=None):
     def _parse_one(d):
         if not isinstance(d, dict):
             return
-        ip   = d.get("adb_host_ip", "127.0.0.1")
-        port = d.get("adb_port")
+        ip = d.get("adb_host_ip") or d.get("ip") or "127.0.0.1"
+        port = _mumu_adb_port(d)
         if port is None:
             return
         instances.append({
             "index":      d.get("index", 0),
-            "name":       d.get("name", f"MuMu-{d.get('index', 0)}"),
+            "name":       d.get("name") or d.get("vm_name") or f"MuMu-{d.get('index', 0)}",
             "adb_serial": f"{ip}:{port}",
-            "started":    bool(d.get("is_android_started")),
+            "started":    bool(d.get("is_android_started") or d.get("started")),
         })
 
     if isinstance(data, dict):
-        if "index" in data:
+        if "index" in data or "adb_port" in data or _mumu_adb_port(data) is not None:
             _parse_one(data)
         else:
             for v in data.values():
@@ -728,13 +862,23 @@ def _mumu_launch(mgr_path, index, log_fn=None):
     return ok
 
 
-def _connect_mumu_phones(count=8, log_fn=None):
+def _connect_mumu_phones(count=16, log_fn=None):
     """Connect to MuMuPlayer instances via MuMuManager API + adb connect.
 
     Always tries both MuMuManager (for names/exact ports) AND the port
     fallback scan — so phones are found even if MuMuManager lookup fails.
     Returns list of connected ADB serials.
     """
+    exe = adb_executable()
+    if not Path(exe).exists() and exe == "adb":
+        if log_fn:
+            log_fn("  adb not found — downloading minimal platform-tools…\n")
+        _ensure_minimal_platform_tools(log_fn=log_fn)
+
+    # Fresh adb server avoids stale TCP state after emulator updates.
+    adb("kill-server", timeout=5)
+    adb("start-server", timeout=12)
+
     mgr = _find_mumu_manager()
     connected = []
     tried_serials = set()
@@ -742,7 +886,7 @@ def _connect_mumu_phones(count=8, log_fn=None):
     if mgr:
         if log_fn:
             log_fn(f"  MuMuManager found: {mgr}\n")
-        instances = _mumu_get_instances(mgr)
+        instances = _mumu_get_instances(mgr, log_fn=log_fn)
         if log_fn:
             log_fn(f"  Instances from MuMuManager: {len(instances)}\n")
         for inst in instances:
@@ -761,20 +905,24 @@ def _connect_mumu_phones(count=8, log_fn=None):
         if log_fn:
             log_fn("  MuMuManager.exe not found — using port scan fallback\n")
 
-    # Always also scan standard ports — catches running instances even when
-    # MuMuManager returns nothing or wasn't found
-    base_port = 16384
-    for i in range(count):
-        serial = f"127.0.0.1:{base_port + i * 32}"
-        if serial in tried_serials:
-            continue
-        out = adb("connect", serial, timeout=5)
-        if "connected" in out.lower() or "already" in out.lower():
-            check = adb("shell", "echo", "ok", serial=serial, timeout=5)
-            if check.strip() == "ok":
-                connected.append(serial)
-                if log_fn:
-                    log_fn(f"  ✅ port scan: {serial}\n")
+    # Port scan: MuMu 12 uses 16384 + n*32; some builds use other bases.
+    def _scan_ports(base_port, stride, n_iter):
+        for i in range(n_iter):
+            serial = f"127.0.0.1:{base_port + i * stride}"
+            if serial in tried_serials:
+                continue
+            out = adb("connect", serial, timeout=4)
+            low = out.lower()
+            if "connected" in low or "already" in low:
+                check = adb("shell", "echo", "ok", serial=serial, timeout=5)
+                if check.strip() == "ok":
+                    connected.append(serial)
+                    tried_serials.add(serial)
+                    if log_fn:
+                        log_fn(f"  ✅ port scan: {serial}\n")
+
+    for base_port, stride in ((16384, 32), (7555, 2)):
+        _scan_ports(base_port, stride, count)
 
     return connected
 
@@ -1745,12 +1893,21 @@ class WelcomePage(PageBase):
     def __init__(self, parent):
         super().__init__(parent)
 
-        tk.Label(self, text="CPharm Phone Farm", font=("Segoe UI", 26, "bold"),
-                 bg=BG, fg=T1).pack(pady=(20, 4))
-        tk.Label(self,
-                 text="Virtual Android phones on your Snapdragon Windows laptop.\n"
-                      "The wizard sets everything up automatically — just click Next on each screen.",
-                 font=("Segoe UI", 12), bg=BG, fg=T2, justify="center").pack(pady=(0, 16))
+        tk.Label(self, text="CPharm", font=("Segoe UI", 28, "bold"),
+                 bg=BG, fg=T1).pack(pady=(18, 2))
+        tk.Label(self, text="Virtual phone farm for Windows",
+                 font=("Segoe UI", 13), bg=BG, fg=T2).pack(pady=(0, 14))
+
+        steps = tk.Frame(self, bg=BG2, padx=20, pady=16,
+                         highlightthickness=1, highlightbackground=BORDER)
+        steps.pack(fill="x", pady=(0, 14))
+        tk.Label(steps, text="Three simple steps",
+                 font=("Segoe UI", 11, "bold"), bg=BG2, fg=T1, anchor="w").pack(fill="x")
+        tk.Label(steps,
+                 text="1. Install tools   →   2. Add phones   →   3. Start the dashboard\n\n"
+                      "Tap Next each time. Big green buttons do the real work.\n"
+                      "Snapdragon / ARM64 PCs use MuMu Player instead of Google emulators.",
+                 font=FS, bg=BG2, fg=T2, justify="left", anchor="w").pack(fill="x", pady=(8, 0))
 
         # Architecture diagram — canvas only; static content is packed below, NOT inside the callback
         c = tk.Canvas(self, bg=BG2, height=140,
@@ -2441,6 +2598,13 @@ class AndroidStudioPage(PageBase):
                       relief="flat", cursor="hand2", padx=8, pady=6,
                       command=lambda: __import__("webbrowser").open(MUMU_DOWNLOAD_URL),
                       ).pack(side="left")
+            tk.Button(
+                mumu_btn_row,
+                text="Locate MuMuManager.exe…",
+                font=FS, bg=BG3, fg=T1,
+                relief="flat", cursor="hand2", padx=8, pady=6,
+                command=self._browse_mumu_early,
+            ).pack(side="left", padx=(6, 0))
             self._mumu_status_lbl = tk.Label(mumu_card, text="",
                                              font=FS, bg="#1a2a1a", fg=GREEN)
             self._mumu_status_lbl.pack(anchor="w", pady=(6, 0))
@@ -2912,7 +3076,8 @@ class AndroidStudioPage(PageBase):
         self._ready = True
         mgr = _find_mumu_manager()
         if mgr:
-            lbl = f"✅ MuMuPlayer found at {mgr.parent.parent}\n   Steps 2 and 3 will use MuMuPlayer — click Next →"
+            lbl = (f"✅ MuMuPlayer found at {_mumu_install_root(mgr)}\n"
+                   "   Steps 2 and 3 will use MuMuPlayer — click Next →")
         else:
             lbl = ("✅ MuMu mode activated — click Next →\n"
                    "   Install MuMuPlayer ARM first if you haven't already.")
@@ -2924,6 +3089,32 @@ class AndroidStudioPage(PageBase):
                 state="disabled", bg=BG3, fg=GREEN)
         self._set_status("✅", "MuMuPlayer ARM64 mode — SDK not needed",
                          detail="Click Next → to continue.", color=GREEN)
+
+    def _browse_mumu_early(self):
+        path = filedialog.askopenfilename(
+            title="Select MuMuManager.exe (often in the shell folder)",
+            filetypes=[
+                ("MuMuManager", "MuMuManager.exe"),
+                ("Executables", "*.exe"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        if Path(path).name.lower() != "mumumanager.exe":
+            messagebox.showwarning(
+                "Wrong file",
+                "Please select MuMuManager.exe.\n\n"
+                "Typical path:\n"
+                "C:\\Program Files\\Netease\\MuMuPlayerARM\\shell\\MuMuManager.exe",
+            )
+            return
+        state["mumu_mgr_path"] = path
+        if hasattr(self, "_mumu_status_lbl"):
+            self._mumu_status_lbl.config(
+                text=f"✅ Saved this path — now click “Use MuMuPlayer ARM64” above.",
+                fg=GREEN,
+            )
 
     def can_advance(self):
         if state.get("use_mumu"):
@@ -3180,6 +3371,12 @@ class PhoneFarmPage(PageBase):
             self._mumu_panel.pack(fill="x", pady=(6, 0))
             self._log_write("MuMuPlayer ARM64 mode — no AVD creation needed.\n"
                             "Open MuMuPlayer, create instances, then click Next →\n")
+
+            def _prep_adb():
+                _ensure_minimal_platform_tools(log_fn=self._log_write)
+                self._log_write(f"Using adb: {adb_executable()}\n")
+
+            threading.Thread(target=_prep_adb, daemon=True).start()
             return
         else:
             if self._mumu_panel.winfo_manager():
@@ -5049,9 +5246,13 @@ class CPharmWizard(tk.Tk):
         hdr = tk.Frame(self, bg=BG2, height=58)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
-        tk.Label(hdr, text="CPharm Phone Farm",
-                 font=("Segoe UI", 13, "bold"),
-                 bg=BG2, fg=ACCENT).pack(side="left", padx=16, pady=10)
+        title_fr = tk.Frame(hdr, bg=BG2)
+        title_fr.pack(side="left", padx=16, pady=6)
+        tk.Label(title_fr, text="CPharm",
+                 font=("Segoe UI", 14, "bold"),
+                 bg=BG2, fg=T1).pack(anchor="w")
+        tk.Label(title_fr, text="Setup — follow the steps",
+                 font=("Segoe UI", 9), bg=BG2, fg=T3).pack(anchor="w")
         dot_row = tk.Frame(hdr, bg=BG2)
         dot_row.pack(side="right", padx=16)
         self._dots = []

@@ -12,7 +12,10 @@ import tempfile
 import time
 from pathlib import Path
 
-from config import TOR_DIR
+try:
+    from .config import TOR_DIR
+except ImportError:
+    from config import TOR_DIR
 
 BASE_PORT = 9050
 _tor_procs: dict[int, subprocess.Popen] = {}

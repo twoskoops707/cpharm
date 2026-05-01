@@ -14,7 +14,10 @@ from typing import Callable
 _DEVICE_RE = re.compile(r'^/dev/input/event\d+$')
 _HEX_DEC_RE = re.compile(r'^[0-9A-Fa-f]+$')
 
-from config import REC_DIR
+try:
+    from .config import REC_DIR
+except ImportError:
+    from config import REC_DIR
 
 REC_DIR.mkdir(exist_ok=True)
 _recording_active = False

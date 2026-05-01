@@ -28,7 +28,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 try:
-    from PIL import Image, ImageTk
+    from PIL import Image, ImageTk  # pyright: ignore[reportMissingImports]
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
@@ -3635,21 +3635,34 @@ class BootPage(PageBase):
             lbl.pack(side="left", padx=6)
             self._status_rows[avd] = lbl
 
-        # Physical USB phones
+        # Physical USB phones + MuMu TCP phones
         for d in list_adb_devices():
             s = d["serial"]
-            if s.startswith("emulator-") or ":" in s:
+            if s.startswith("emulator-"):
                 continue
+
+            label_prefix = "USB"
+            if ":" in s:
+                # MuMu ADB serial pattern is typically: 127.0.0.1:<base + i*step>
+                # Wizard uses base=16384 and step=32 in _connect_mumu_phones().
+                try:
+                    port = int(s.rsplit(":", 1)[1])
+                    if port < 16384 or (port - 16384) % 32 != 0:
+                        continue
+                except ValueError:
+                    continue
+                label_prefix = "MuMu"
+
             row = tk.Frame(self._status_frame, bg=BG2, padx=12, pady=7,
                            highlightthickness=1, highlightbackground=BORDER)
             row.pack(fill="x", pady=2)
-            tk.Label(row, text="📲", font=("Segoe UI", 14),
+            tk.Label(row, text="ðŸ“²", font=("Segoe UI", 14),
                      bg=BG2).pack(side="left")
             tk.Label(row, text=d["name"], font=FB, bg=BG2, fg=T1,
                      width=26, anchor="w").pack(side="left")
-            tk.Label(row, text=f"USB: {s}", font=FM, bg=BG2,
+            tk.Label(row, text=f"{label_prefix}: {s}", font=FM, bg=BG2,
                      fg=T3, width=20, anchor="w").pack(side="left")
-            lbl = tk.Label(row, text="✅  Connected", font=FS, bg=BG2, fg=GREEN)
+            lbl = tk.Label(row, text="âœ…  Connected", font=FS, bg=BG2, fg=GREEN)
             lbl.pack(side="left", padx=6)
             self._status_rows[s] = lbl
 

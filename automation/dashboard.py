@@ -28,10 +28,19 @@ from pathlib import Path
 
 from websockets.server import serve
 
-import tor_manager
-import teach as teach_mod
-import playstore as ps_mod
-from config import PORT, WS_PORT, APK_DIR, REC_DIR, EMULATOR_PORTS
+# Support both:
+#  - `python automation/dashboard.py` (cwd on automation/)
+#  - `import automation.dashboard` (package/namespace style)
+try:
+    from . import tor_manager
+    from . import teach as teach_mod
+    from . import playstore as ps_mod
+    from .config import PORT, WS_PORT, APK_DIR, REC_DIR, EMULATOR_PORTS
+except ImportError:
+    import tor_manager
+    import teach as teach_mod
+    import playstore as ps_mod
+    from config import PORT, WS_PORT, APK_DIR, REC_DIR, EMULATOR_PORTS
 
 logging.basicConfig(level=logging.INFO, format="  %(message)s")
 log = logging.getLogger("cpharm")

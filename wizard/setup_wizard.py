@@ -4066,7 +4066,9 @@ class PhoneFarmPage(PageBase):
                       "  4. In each instance open Settings (≡ or gear) and turn ON ADB / "
                       "debugging — otherwise this PC cannot connect\n"
                       "  5. Leave MuMuPlayer running\n"
-                      "  6. Click Next below — the wizard connects automatically",
+                      "  6. Click Next below — the wizard connects automatically\n\n"
+                      "Note: MuMu often reports “Google Pixel 8” with model GC3VE — that is the\n"
+                      "  default image and is expected; it is not a mismatch with CPharm.",
                  font=FS, bg="#1a2a1a", fg=T2,
                  anchor="w", justify="left").pack(fill="x", pady=(6, 10))
         tk.Button(self._mumu_panel,

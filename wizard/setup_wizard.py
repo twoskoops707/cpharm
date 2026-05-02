@@ -1,12 +1,23 @@
 """
-CPharm Setup Wizard
-Virtual phone farm using Android AVD emulators.
-Works on Snapdragon ARM Windows.
-The wizard auto-downloads and installs the Android SDK — no Android Studio needed.
+CPharm Setup Wizard — guided onboarding for a virtual Android phone farm on Windows.
 
-Build:
+Intended journey (high level):
+  1. Welcome — what you get (farm, Tor, Play closed testing, groups, scheduler).
+  2. Install tools — Java/Python/Tor/CPharm tree into a chosen folder (merge-safe same-dir).
+  3. Choose runtime — full Android SDK + emulators, or MuMu/nemux ARM on Snapdragon hosts.
+  4. Create devices — Pixel AVDs via sdkmanager/avdmanager, or MuMu instances you spawn yourself.
+  5. Connect & verify — ADB, boot emulators or MuMu phones, Chrome smoke checks; logs stay here.
+  6. Automation — default step sequence (URLs, taps, Tor rotate); seeds Groups assignments.
+  7. Groups — stagger/repeat, per-phone overrides, clone-from-master (unchanged behavior).
+  8. Play Console — closed-testing checklist when you ship builds to testers.
+  9. Launch — start dashboard server, run groups, daily scheduler, open local dashboard URL.
+
+State keys `state[...]` hold install path, `use_mumu`, `sdk_path`, `avds`, `phones`, `groups`,
+`default_steps`, and merge install uses `_install_targets_live_tree` + `_merge_dir_into`.
+
+Build (one-file):
     pip install pyinstaller pillow
-    pyinstaller --onefile --windowed --name CPharmSetup setup_wizard.py
+    pyinstaller --onefile --windowed --name CPharmSetup --hidden-import wizard_theme setup_wizard.py
 """
 
 import json
@@ -26,6 +37,29 @@ import zipfile
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+
+from wizard_theme import (
+    ACCENT,
+    BG,
+    BG2,
+    BG3,
+    BORDER,
+    CPharm_TSCROLL,
+    FB,
+    FH,
+    FM,
+    FS,
+    GREEN,
+    PURPLE,
+    RED,
+    SP,
+    T1,
+    T2,
+    T3,
+    YELLOW,
+    _attach_readonly_log_text,
+    _style_scrollbars,
+)
 
 try:
     from PIL import Image, ImageTk
@@ -101,91 +135,6 @@ def _is_mumu_gui_path(path: Path | str) -> bool:
     if _is_mumu_manager_cli_path(path):
         return False
     return n in ("mumuplayer.exe", "mumunxmain.exe")
-
-
-BG     = "#0d1117"
-BG2    = "#161b22"
-BG3    = "#21262d"
-BORDER = "#30363d"
-ACCENT = "#58a6ff"
-GREEN  = "#3fb950"
-RED    = "#f85149"
-YELLOW = "#d29922"
-PURPLE = "#bc8cff"
-T1     = "#e6edf3"
-T2     = "#8b949e"
-T3     = "#6e7681"
-
-FH = ("Segoe UI", 20, "bold")
-FS = ("Segoe UI", 10)
-FB = ("Segoe UI", 11)
-FG = ("Segoe UI", 13)
-FM = ("Consolas", 10)
-
-# Themed ttk scrollbars — style name used after `_style_scrollbars(root)` runs.
-CPharm_TSCROLL = "CPharm.Vertical.TScrollbar"
-
-
-def _style_scrollbars(root: tk.Misc) -> None:
-    """Configure ttk vertical scrollbars to match BG2 / BORDER / ACCENT. Idempotent."""
-    try:
-        style = ttk.Style(root)
-    except tk.TclError:
-        return
-    style.configure(
-        CPharm_TSCROLL,
-        background=BG2,
-        troughcolor=BG3,
-        bordercolor=BORDER,
-        arrowcolor=T2,
-        borderwidth=0,
-        relief="flat",
-        width=10,
-    )
-    style.map(
-        CPharm_TSCROLL,
-        background=[("active", BG3), ("pressed", BORDER)],
-        arrowcolor=[("active", ACCENT), ("pressed", ACCENT)],
-        troughcolor=[("active", BG3)],
-    )
-
-
-def _readonly_log_key(event: tk.Event) -> str | None:
-    """Block typing/edits; allow Ctrl+A/C, navigation, and selection."""
-    ks = event.keysym
-    if ks in (
-        "Shift_L", "Shift_R", "Control_L", "Control_R",
-        "Alt_L", "Alt_R", "Meta_L", "Meta_R", "Caps_Lock", "Num_Lock",
-    ):
-        return
-    # Ctrl shortcuts: select all, copy
-    if event.state & 0x0004:
-        kl = ks.lower()
-        if kl in ("a", "c"):
-            return
-        return "break"
-    if ks in (
-        "Left", "Right", "Up", "Down", "Home", "End",
-        "Prior", "Next", "Tab",
-    ):
-        return
-    if ks.startswith("KP_") and ks in (
-        "KP_Left", "KP_Right", "KP_Up", "KP_Down",
-        "KP_Prior", "KP_Next", "KP_Home", "KP_End",
-    ):
-        return
-    return "break"
-
-
-def _attach_readonly_log_text(w: tk.Text) -> None:
-    """Read-only log/status Text: selectable and Ctrl+A/C work; no typing or paste."""
-    w.configure(state="normal", cursor="arrow")
-    w.bind("<Key>", _readonly_log_key)
-    w.bind("<<Paste>>", lambda e: "break")
-    w.bind("<Control-v>", lambda e: "break")
-    w.bind("<Control-V>", lambda e: "break")
-    w.bind("<Control-x>", lambda e: "break")
-    w.bind("<Control-X>", lambda e: "break")
 
 
 STEP_ICONS = {
@@ -1163,7 +1112,7 @@ def _direct_download_emulator(sdk_path, log_fn=None):
                     f"        {MUMU_DOWNLOAD_URL}\n"
                     "     2. Install MuMuPlayer ARM and open it.\n"
                     "     3. Use MuMuPlayer's multi-instance manager to create your phones.\n"
-                    "     4. Keep MuMuPlayer running, then go to Step 5 in this wizard.\n"
+                    "     4. Keep MuMuPlayer running, then open Connect & boot in this wizard.\n"
                     "        The wizard will detect and connect to all running MuMu instances.\n"
                 )
             return False
@@ -1602,7 +1551,7 @@ def _ensure_emulator_meta(sdk, log_fn=None):
                     "     Free, native ARM64, multi-instance, full ADB — skip AVD entirely.\n"
                     f"     Download: {MUMU_DOWNLOAD_URL}\n"
                     "     After installing, open MuMuPlayer, create instances, then go\n"
-                    "     directly to Step 5 — the wizard connects automatically.\n"
+                    "     directly to Connect & boot — the wizard attaches over ADB.\n"
                 )
 
 
@@ -1635,7 +1584,7 @@ def create_avd(name, log_fn=None):
     if not java_home:
         return False, (
             "Java not found.\n\n"
-            "Go back to Step 1 (Install Tools) and make sure Java installed successfully,\n"
+            "Go back to Install tools and make sure Java installed successfully,\n"
             "then come back and try again."
         )
 
@@ -1750,7 +1699,7 @@ def create_avd(name, log_fn=None):
     if not Path(avdmgr).exists():
         return False, (
             f"avdmanager not found at: {avdmgr}\n"
-            "Go back to Step 2 (Android SDK) and reinstall the SDK."
+            "Go back to Android runtime and reinstall the SDK."
         )
 
     last_err = ""
@@ -2043,12 +1992,12 @@ class WelcomePage(PageBase):
         steps = tk.Frame(self, bg=BG2, padx=20, pady=16,
                          highlightthickness=1, highlightbackground=BORDER)
         steps.pack(fill="x", pady=(0, 14))
-        tk.Label(steps, text="Three simple steps",
+        tk.Label(steps, text="Flow overview",
                  font=("Segoe UI", 11, "bold"), bg=BG2, fg=T1, anchor="w").pack(fill="x")
         tk.Label(steps,
-                 text="1. Install tools   →   2. Add phones   →   3. Start the dashboard\n\n"
-                      "Tap Next on each screen. Use Tor + groups for identity rotation and parallel runs.\n"
-                      "On Snapdragon / ARM64 Windows, MuMu Player replaces Google emulators (no ARM64 AVD).",
+                 text="Setup → devices → automation & Play checklist → launch dashboard.\n\n"
+                      "Tap Next on each screen. Tor, groups, and scheduling stay on later steps.\n"
+                      "On Snapdragon / ARM64 Windows, MuMu replaces Google emulators (no ARM64 AVD).",
                  font=FS, bg=BG2, fg=T2, justify="left", anchor="w").pack(fill="x", pady=(8, 0))
 
         # Architecture diagram — canvas only; static content is packed below, NOT inside the callback
@@ -2187,7 +2136,7 @@ class PrerequisitesPage(PageBase):
         self._rows    = {}
 
         self.header(
-            "Step 1 — Install Everything",
+            "Install tools & CPharm files",
             "The wizard downloads and installs all tools automatically.\n"
             "Click the big button and wait — everything will be ready."
         )
@@ -2710,7 +2659,7 @@ class AndroidStudioPage(PageBase):
         self._working  = False
 
         self.header(
-            "Step 1 — Install Android SDK",
+            "Android SDK & runtime choice",
             "One button does everything. The wizard downloads command-line tools, platform-tools, "
             "and the emulator — licenses accepted automatically.\n"
             "No Android Studio UI. No terminal. ARM64 hosts can use MuMuPlayer instead (card below)."
@@ -3348,9 +3297,9 @@ class PhoneFarmPage(PageBase):
         super().__init__(parent)
         self._done = False
         self.header(
-            "Step 2 — Create Virtual Phones",
-            "Google emulators: the wizard downloads Android 14 and creates Pixel 6 AVDs.\n"
-            "MuMu mode: create instances in MuMuPlayer — automation sequences below still apply.\n"
+            "Create virtual phones",
+            "Google path: wizard downloads Android 14 and creates Pixel 6 AVDs.\n"
+            "MuMu path: create instances in MuMuPlayer — automation comes after phones boot.\n"
             "One-time setup. Each emulator uses ~2 GB RAM + ~4 GB disk."
         )
 
@@ -3460,37 +3409,6 @@ class PhoneFarmPage(PageBase):
                   padx=12, pady=6,
                   command=self._open_mumu).pack(anchor="w")
 
-        # Sequence editor — per-phone automation steps
-        seq_sep = tk.Frame(self, bg=BORDER, height=1)
-        seq_sep.pack(fill="x", pady=(10, 6))
-        seq_hdr = tk.Frame(self, bg=BG)
-        seq_hdr.pack(fill="x")
-        tk.Label(seq_hdr, text="Automation Sequence  (optional)",
-                 font=("Segoe UI", 10, "bold"), bg=BG, fg=ACCENT,
-                 anchor="w").pack(side="left")
-        tk.Label(seq_hdr,
-                 text="Define what each phone does automatically. Set steps, then assign to groups.",
-                 font=FS, bg=BG, fg=T2).pack(side="left", padx=(8, 0))
-        seq_row = tk.Frame(self, bg=BG)
-        seq_row.pack(fill="x", pady=(4, 0))
-        self._seq_steps = []
-        tk.Button(seq_row, text="+ Edit Default Sequence",
-                  font=("Segoe UI", 10, "bold"),
-                  bg=BG3, fg=T1, relief="flat", cursor="hand2",
-                  padx=10, pady=6,
-                  command=self._edit_sequence).pack(side="left", padx=(0, 8))
-        tk.Button(seq_row, text="💾 Save Sequence",
-                  font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
-                  padx=8, pady=6,
-                  command=self._save_sequence).pack(side="left", padx=(0, 4))
-        tk.Button(seq_row, text="📂 Load Sequence",
-                  font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
-                  padx=8, pady=6,
-                  command=self._load_sequence).pack(side="left", padx=(0, 8))
-        self._seq_lbl = tk.Label(seq_row, text="No steps defined",
-                                 font=FS, bg=BG, fg=T3)
-        self._seq_lbl.pack(side="left")
-
     def _open_mumu(self):
         root = _find_mumu_player()
         if root:
@@ -3511,62 +3429,6 @@ class PhoneFarmPage(PageBase):
             "MuMuPlayer Not Found",
             "Could not launch MuMuPlayer automatically.\n\n"
             "Please open MuMuPlayer from your Start menu or taskbar."
-        )
-
-    def _edit_sequence(self):
-        dlg = PerPhoneSequenceEditor(
-            self,
-            serial="default",
-            phone_name="Default Sequence (applied to all phones)",
-            steps_list=self._seq_steps,
-        )
-        self.wait_window(dlg)
-        n = len(self._seq_steps)
-        self._seq_lbl.config(
-            text=f"{n} step{'s' if n != 1 else ''} defined" if n else "No steps defined",
-            fg=T1 if n else T3,
-        )
-        state["default_steps"] = list(self._seq_steps)
-
-    def _save_sequence(self):
-        from tkinter import filedialog
-        if not self._seq_steps:
-            messagebox.showinfo("Nothing to save", "Add steps first via 'Edit Default Sequence'.")
-            return
-        path = filedialog.asksaveasfilename(
-            title="Save Sequence",
-            defaultextension=".json",
-            filetypes=[("JSON sequence", "*.json"), ("All files", "*.*")],
-            initialfile="default_sequence.json",
-        )
-        if not path:
-            return
-        Path(path).write_text(json.dumps(self._seq_steps, indent=2))
-        messagebox.showinfo("Saved", f"Sequence saved to:\n{path}")
-
-    def _load_sequence(self):
-        from tkinter import filedialog
-        path = filedialog.askopenfilename(
-            title="Load Sequence",
-            filetypes=[("JSON sequence", "*.json"), ("All files", "*.*")],
-        )
-        if not path:
-            return
-        try:
-            data = json.loads(Path(path).read_text())
-        except Exception as exc:
-            messagebox.showerror("Load failed", str(exc))
-            return
-        if not isinstance(data, list):
-            messagebox.showerror("Invalid file", "File must contain a JSON array of steps.")
-            return
-        self._seq_steps.clear()
-        self._seq_steps.extend(data)
-        state["default_steps"] = list(self._seq_steps)
-        n = len(self._seq_steps)
-        self._seq_lbl.config(
-            text=f"{n} step{'s' if n != 1 else ''} loaded" if n else "No steps defined",
-            fg=T1 if n else T3,
         )
 
     def _pick_count(self, n):
@@ -3720,10 +3582,10 @@ class PhoneFarmPage(PageBase):
 class BootPage(PageBase):
     def __init__(self, parent):
         super().__init__(parent)
-        self._server_proc = None
         self.header(
-            "Step 3 — Start the Phones",
-            "Boots your virtual phones. First boot takes 2–5 minutes per phone."
+            "Connect & verify — boot phones",
+            "Boot MuMu instances or AVDs, confirm ADB, optional Chrome check. "
+            "Automation server and scheduler run from the Launch step."
         )
 
         # Start Phones
@@ -3814,95 +3676,18 @@ class BootPage(PageBase):
         _attach_readonly_log_text(self._summary)
         self._summary.pack(fill="x")
 
-        # Server
-        srv = tk.Frame(self, bg=BG3, padx=14, pady=12)
-        srv.pack(fill="x", pady=(0, 8))
-        tk.Label(srv, text="A — Start the CPharm Server",
-                 font=("Segoe UI", 11, "bold"), bg=BG3,
-                 fg=ACCENT, anchor="w").pack(fill="x")
-        tk.Label(srv,
-                 text="Starts the background automation server. Keep this running while groups are active.",
-                 font=FS, bg=BG3, fg=T2, anchor="w", wraplength=640).pack(
-                     fill="x", pady=(2, 8))
-        srv_row = tk.Frame(srv, bg=BG3)
-        srv_row.pack(fill="x")
-        self._btn_srv_start = tk.Button(srv_row, text="▶  Start Server",
-                                        font=("Segoe UI", 10, "bold"),
-                                        bg=GREEN, fg=BG, relief="flat",
-                                        cursor="hand2", command=self._start_server)
-        self._btn_srv_start.pack(side="left", padx=(0, 8))
-        self._btn_srv_stop = tk.Button(srv_row, text="■  Stop Server",
-                                       font=("Segoe UI", 10, "bold"),
-                                       bg=RED, fg=BG, relief="flat",
-                                       cursor="hand2", state="disabled",
-                                       command=self._stop_server)
-        self._btn_srv_stop.pack(side="left")
-        self._srv_lbl = tk.Label(srv_row, text="Server not running",
-                                  font=FS, bg=BG3, fg=T2)
-        self._srv_lbl.pack(side="left", padx=10)
+        # Status grid — one row per target phone before boot
+        self._status_frame = tk.Frame(self, bg=BG)
+        self._status_frame.pack(fill="both", expand=True, pady=(SP["sm"], SP["xs"]))
+        self._status_rows = {}
 
-    
-        # Schedule
-        sched = tk.Frame(self, bg=BG3, padx=14, pady=12)
-        sched.pack(fill="x", pady=(0, 8))
-        tk.Label(sched, text="C — Daily Schedule",
-                 font=("Segoe UI", 11, "bold"), bg=BG3,
-                 fg=PURPLE, anchor="w").pack(fill="x")
-        tk.Label(sched,
-                 text="Automate hits spread randomly across 24 hours per phone.",
-                 font=FS, bg=BG3, fg=T2, anchor="w", wraplength=640).pack(
-                     fill="x", pady=(2, 8))
-
-        sched_row = tk.Frame(sched, bg=BG3)
-        sched_row.pack(fill="x")
-        tk.Label(sched_row, text="Hits/day:", font=FS, bg=BG3, fg=T2).pack(side="left")
-        self._sched_hits_var = tk.IntVar(value=720)
-        tk.Entry(sched_row, textvariable=self._sched_hits_var, font=FM,
-                 bg=BG2, fg=T1, insertbackground=T1, relief="flat",
-                 width=8).pack(side="left", padx=6)
-        tk.Label(sched_row, text="per phone", font=FS, bg=BG3, fg=T2).pack(side="left")
-        self._sched_btn = tk.Button(sched_row,
-                                   text="▶ Start Schedule",
-                                   font=("Segoe UI", 10, "bold"),
-                                   bg=PURPLE, fg=BG, relief="flat",
-                                   cursor="hand2", command=self._start_schedule)
-        self._sched_btn.pack(side="left", padx=(8, 0))
-        self._sched_lbl = tk.Label(sched_row, text="", font=FS, bg=BG3, fg=T2)
-        self._sched_lbl.pack(side="left", padx=8)
-
-
-
-    # Groups
-        grp = tk.Frame(self, bg=BG3, padx=14, pady=12)
-        grp.pack(fill="x", pady=(0, 8))
-        tk.Label(grp, text="B — Run Groups",
-                 font=("Segoe UI", 11, "bold"), bg=BG3,
-                 fg=GREEN, anchor="w").pack(fill="x")
-        tk.Label(grp,
-                 text="Starts all groups at the same time. Each group runs on its assigned phones.",
-                 font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 8))
-        grp_row = tk.Frame(grp, bg=BG3)
-        grp_row.pack(fill="x")
-        self._btn_run = tk.Button(grp_row, text="▶  Run All Groups",
-                                  font=("Segoe UI", 10, "bold"),
-                                  bg=GREEN, fg=BG, relief="flat",
-                                  cursor="hand2", command=self._run_groups)
-        self._btn_run.pack(side="left", padx=(0, 8))
-        self._btn_stop_grp = tk.Button(grp_row, text="■  Stop All Groups",
-                                       font=("Segoe UI", 10, "bold"),
-                                       bg=RED, fg=BG, relief="flat",
-                                       cursor="hand2", state="disabled",
-                                       command=self._stop_groups)
-        self._btn_stop_grp.pack(side="left")
-        self._run_lbl = tk.Label(grp_row, text="", font=FS, bg=BG3, fg=T2)
-        self._run_lbl.pack(side="left", padx=10)
-
-        # Log
-        tk.Label(self, text="Live log:", font=("Segoe UI", 9, "bold"),
-                 bg=BG, fg=T2, anchor="w").pack(fill="x", pady=(4, 2))
-        log_fr = tk.Frame(self, bg=BG2)
+        tk.Label(self, text="Boot log",
+                 font=("Segoe UI", 9, "bold"), bg=BG, fg=T2, anchor="w").pack(
+                     fill="x", pady=(SP["sm"], 2))
+        log_fr = tk.Frame(self, bg=BG2, highlightthickness=1,
+                          highlightbackground=BORDER)
         log_fr.pack(fill="both", expand=True)
-        self._log_box = tk.Text(log_fr, height=7, font=FM, bg=BG2, fg=T1,
+        self._log_box = tk.Text(log_fr, height=8, font=FM, bg=BG2, fg=T1,
                                 relief="flat", wrap="word")
         _attach_readonly_log_text(self._log_box)
         log_sb = ttk.Scrollbar(log_fr, orient="vertical",
@@ -3910,22 +3695,6 @@ class BootPage(PageBase):
         self._log_box.configure(yscrollcommand=log_sb.set)
         self._log_box.pack(side="left", fill="both", expand=True)
         log_sb.pack(side="right", fill="y")
-
-        misc = tk.Frame(self, bg=BG)
-        misc.pack(fill="x", pady=6)
-        # Status frame and phone list — referenced by on_enter / _boot_all / _stop_all
-        self._status_frame = tk.Frame(self, bg=BG)
-        self._status_frame.pack(fill="both", expand=True, pady=4)
-        self._status_rows = {}
-        self._phones = []          # currently booted phone serials
-        self._emu_procs = []       # emulator subprocess handles
-        tk.Button(misc, text="Open Dashboard in Browser",
-                  font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
-                  command=lambda: webbrowser.open(
-                      f"http://localhost:{DASHBOARD_PORT}")).pack(side="left", padx=(0, 8))
-        tk.Button(misc, text="💾 Save Config",
-                  font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
-                  command=self._save).pack(side="left")
 
     def on_enter(self):
         self._rebuild_grid()
@@ -4108,114 +3877,6 @@ class BootPage(PageBase):
             self._log_box.see("end")
         self.after(0, _do)
 
-    def _save(self):
-        d = state.get("cpharm_dir", "")
-        if not d:
-            return None
-        rec = Path(d) / "automation" / "recordings"
-        rec.mkdir(parents=True, exist_ok=True)
-        out = rec / "groups_config.json"
-        out.write_text(json.dumps({"groups": state["groups"]}, indent=2))
-        return str(out)
-
-    def _start_server(self):
-        import tempfile
-
-        d = state.get("cpharm_dir", "")
-        if not d:
-            d = str(Path(__file__).parent.parent)
-            state["cpharm_dir"] = d
-
-        self._save()
-        dashboard = Path(d) / "automation" / "dashboard.py"
-        if not dashboard.exists():
-            messagebox.showerror("Not found",
-                                 f"dashboard.py not found at:\n{dashboard}\n\n"
-                                 "Make sure CPharm is cloned correctly.")
-            return
-
-        self._btn_srv_start.config(state="disabled")
-        self._srv_lbl.config(text="⏳ Installing packages…", fg=YELLOW)
-        self._log_write("Checking/installing websockets + psutil…\n")
-
-        def _launch():
-            try:
-                py = state.get("python_cmd", "python")
-                if not py:
-                    py = "python"
-                cf = _NO_WIN
-
-                self.after(0, lambda: self._log_write(f"Using Python: {py}\n"))
-
-                pip = subprocess.run(
-                    [py, "-m", "pip", "install", "--quiet",
-                     "websockets>=12.0", "psutil>=5.9.0"],
-                    capture_output=True, text=True, timeout=120,
-                    creationflags=cf,
-                )
-                if pip.returncode != 0:
-                    err = pip.stderr.strip() or pip.stdout.strip() or "pip failed"
-                    self.after(0, lambda: (
-                        self._srv_lbl.config(text="❌ pip failed", fg=RED),
-                        self._btn_srv_start.config(state="normal"),
-                        self._log_write(f"pip error:\n{err}\n"),
-                    ))
-                    return
-
-                self.after(0, lambda: (
-                    self._srv_lbl.config(text="⏳ Starting…", fg=YELLOW),
-                    self._log_write("Packages OK — launching server…\n"),
-                ))
-
-                import tempfile as _tmp
-                err_file = _tmp.NamedTemporaryFile(
-                    mode="w", suffix=".log", delete=False
-                )
-                err_path = err_file.name
-                err_file.close()
-
-                log_fh = open(err_path, "w")
-                try:
-                    proc = subprocess.Popen(
-                        [py, str(dashboard)],
-                        cwd=str(dashboard.parent),
-                        stdout=log_fh,
-                        stderr=log_fh,
-                        creationflags=cf,
-                    )
-                finally:
-                    log_fh.close()
-
-                self._server_proc = proc
-                self.after(0, lambda: self._btn_srv_stop.config(state="normal"))
-
-                time.sleep(3)
-                if proc.poll() is None:
-                    self.after(0, lambda: (
-                        self._srv_lbl.config(text="✅ Server running", fg=GREEN),
-                        self._btn_run.config(state="normal"),
-                        self._log_write("Server is up! Click Run All Groups to start.\n"),
-                    ))
-                else:
-                    try:
-                        errtxt = Path(err_path).read_text(errors="replace").strip()[-1200:]
-                    except Exception:
-                        errtxt = "(no output captured)"
-                    self.after(0, lambda et=errtxt: (
-                        self._srv_lbl.config(text="❌ Server crashed", fg=RED),
-                        self._btn_srv_start.config(state="normal"),
-                        self._btn_srv_stop.config(state="disabled"),
-                        self._log_write(f"Server crashed:\n{et}\n"),
-                    ))
-            except Exception as exc:
-                self.after(0, lambda e=exc: (
-                    self._srv_lbl.config(text="❌ Launch error", fg=RED),
-                    self._btn_srv_start.config(state="normal"),
-                    self._log_write(f"Launch error: {e}\n"),
-                ))
-
-        threading.Thread(target=_launch, daemon=True).start()
-
     def _boot_all(self):
         # ── MuMuPlayer mode ────────────────────────���──────────────────────────
         if state.get("use_mumu"):
@@ -4330,7 +3991,7 @@ class BootPage(PageBase):
 
         if not avds:
             messagebox.showerror("No phones",
-                                 "Go back to Step 2 and create phones first.\n\n"
+                                 "Go back to Create phones and finish there first.\n\n"
                                  "Or connect a physical Android phone via USB — "
                                  "the wizard will detect it automatically.")
             return
@@ -4346,13 +4007,13 @@ class BootPage(PageBase):
             if not emu_ok:
                 self._log_write(
                     "❌ ARM64 (Snapdragon) detected — Google has no Windows ARM64 emulator.\n"
-                    "   Go back to Step 1 and enable  ✅ Use MuMuPlayer ARM64.\n"
+                    "   Go back to Android runtime and enable  ✅ Use MuMuPlayer ARM64.\n"
                     f"   Download: {MUMU_DOWNLOAD_URL}\n"
                 )
                 messagebox.showerror(
                     "MuMuPlayer required",
                     "ARM64 (Snapdragon) detected — Google has no Windows ARM64 emulator.\n\n"
-                    "Go back to Step 1 and click  ✅ Use MuMuPlayer ARM64  to switch modes.\n\n"
+                    "Go back to Android runtime and click  ✅ Use MuMuPlayer ARM64  to switch modes.\n\n"
                     f"Download MuMuPlayer ARM:  {MUMU_DOWNLOAD_URL}",
                 )
                 self._boot_btn.config(state="normal", text="▶  Start All Phones")
@@ -4511,100 +4172,137 @@ class BootPage(PageBase):
         ).start()
 
 
-    def _stop_server(self):
-        self._stop_groups()
-        if self._server_proc:
-            self._server_proc.terminate()
-            self._server_proc = None
-        self._srv_lbl.config(text="Stopped", fg=T2)
-        self._btn_srv_start.config(state="normal")
-        self._btn_srv_stop.config(state="disabled")
-        self._btn_run.config(state="disabled")
-        self._log_write("Server stopped.")
-
-    def _api(self, path, body):
-        import urllib.request
-        url  = f"http://localhost:{DASHBOARD_PORT}{path}"
-        data = json.dumps(body).encode()
-        req  = urllib.request.Request(url, data=data,
-                                      headers={"Content-Type": "application/json"},
-                                      method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=10) as r:
-                return json.loads(r.read())
-        except Exception as e:
-            return {"error": str(e)}
-
-    def _run_groups(self):
-        self._log_write("Starting all groups…")
-        self._btn_run.config(state="disabled")
-        self._btn_stop_grp.config(state="normal")
-
-        def go():
-            result = self._api("/api/groups/run", {"groups": state["groups"]})
-            if "error" in result:
-                self._log_write(f"❌  {result['error']}")
-                self._btn_run.config(state="normal")
-                self._btn_stop_grp.config(state="disabled")
-            else:
-                n = result.get("groups", len(state["groups"]))
-                self._log_write(f"✅  {n} group(s) running in parallel!")
-                self._run_lbl.config(text=f"{n} running", fg=GREEN)
-
-        threading.Thread(target=go, daemon=True).start()
-
-    def _stop_groups(self):
-        def go():
-            self._api("/api/groups/stop", {})
-            self._log_write("All groups stopped.")
-            self._run_lbl.config(text="", fg=T2)
-            self._btn_run.config(state="normal")
-            self._btn_stop_grp.config(state="disabled")
-
-        threading.Thread(target=go, daemon=True).start()
+# ─── page: automation — default sequence (after devices exist) ────────────────
 
 
-    def _start_schedule(self):
-        """Start the daily schedule on all booted phones."""
-        hits = self._sched_hits_var.get()
-        phones = state.get("phones", [])
-        if not phones:
-            messagebox.showwarning("No phones running",
-                                   "Boot phones first (Step 3).")
+class AutomationPage(PageBase):
+    """Edit default automation steps once phones are booted — feeds Groups."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._seq_steps: list = []
+        self.header(
+            "Automation — default sequence",
+            "Optional template applied when assigning phones to groups. "
+            "Per-phone overrides stay on the Groups step."
+        )
+
+        intro = tk.Frame(self, bg=BG2, padx=SP["card"], pady=SP["sm"],
+                         highlightthickness=1, highlightbackground=BORDER)
+        intro.pack(fill="x", pady=(0, SP["sm"]))
+        tk.Label(
+            intro,
+            text="Tor rotation and Play flows stay supported — same step types as before.",
+            font=FS, bg=BG2, fg=T2, justify="left", anchor="w",
+        ).pack(fill="x")
+
+        seq_row = tk.Frame(self, bg=BG)
+        seq_row.pack(fill="x", pady=(SP["sm"], 0))
+        tk.Button(
+            seq_row, text="Edit default sequence",
+            font=("Segoe UI", 10, "bold"),
+            bg=ACCENT, fg=BG, relief="flat", cursor="hand2",
+            padx=SP["md"], pady=SP["sm"],
+            command=self._edit_sequence,
+        ).pack(side="left", padx=(0, SP["sm"]))
+        tk.Button(
+            seq_row, text="Save JSON…",
+            font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
+            padx=SP["sm"], pady=SP["sm"],
+            command=self._save_sequence,
+        ).pack(side="left", padx=(0, SP["xs"]))
+        tk.Button(
+            seq_row, text="Load JSON…",
+            font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
+            padx=SP["sm"], pady=SP["sm"],
+            command=self._load_sequence,
+        ).pack(side="left", padx=(0, SP["sm"]))
+        self._seq_lbl = tk.Label(seq_row, text="No steps defined",
+                                 font=FS, bg=BG, fg=T3)
+        self._seq_lbl.pack(side="left")
+
+    def on_enter(self):
+        self._seq_steps.clear()
+        self._seq_steps.extend(state.get("default_steps", []))
+        n = len(self._seq_steps)
+        self._seq_lbl.config(
+            text=f"{n} step{'s' if n != 1 else ''} in template" if n else "No steps defined",
+            fg=T1 if n else T3,
+        )
+
+    def can_advance(self):
+        if not state.get("phones"):
+            messagebox.showwarning(
+                "Boot phones first",
+                "Go back one step and start your phones so ADB sees them.",
+            )
+            return False
+        state["default_steps"] = list(self._seq_steps)
+        return True
+
+    def _edit_sequence(self):
+        dlg = PerPhoneSequenceEditor(
+            self,
+            serial="default",
+            phone_name="Default sequence (template for group assignments)",
+            steps_list=self._seq_steps,
+        )
+        self.wait_window(dlg)
+        n = len(self._seq_steps)
+        self._seq_lbl.config(
+            text=f"{n} step{'s' if n != 1 else ''} in template" if n else "No steps defined",
+            fg=T1 if n else T3,
+        )
+        state["default_steps"] = list(self._seq_steps)
+
+    def _save_sequence(self):
+        if not self._seq_steps:
+            messagebox.showinfo("Nothing to save", "Add steps first via Edit.")
             return
-        serials = [p["serial"] for p in phones]
-        _groups = state.get("groups") or []
-        steps = next(iter(_groups[0]["phones"].values()), {}).get("steps", []) if _groups else []
+        path = filedialog.asksaveasfilename(
+            title="Save sequence",
+            defaultextension=".json",
+            filetypes=[("JSON sequence", "*.json"), ("All files", "*.*")],
+            initialfile="default_sequence.json",
+        )
+        if not path:
+            return
+        Path(path).write_text(json.dumps(self._seq_steps, indent=2))
+        messagebox.showinfo("Saved", f"Sequence saved to:\n{path}")
+
+    def _load_sequence(self):
+        path = filedialog.askopenfilename(
+            title="Load sequence",
+            filetypes=[("JSON sequence", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
         try:
-            import urllib.request
-            url = f"http://localhost:{DASHBOARD_PORT}/api/scheduler/start"
-            body = json.dumps({"serials": serials, "steps": steps,
-                              "hits_per_day": hits}).encode()
-            req = urllib.request.Request(
-                url, data=body,
-                headers={"Content-Type": "application/json"},
-                method="POST")
-            with urllib.request.urlopen(req, timeout=5) as r:
-                result = json.loads(r.read())
-            if result.get("ok"):
-                self._sched_lbl.config(
-                    text=f"Hitting {len(serials)} phones {hits}×/day randomly",
-                    fg=GREEN)
-                self._log_write("Scheduler started.\n")
-            else:
-                self._sched_lbl.config(text="Failed: " + str(result), fg=RED)
-        except Exception as e:
-            self._sched_lbl.config(text=f"Error: {e}", fg=RED)
+            data = json.loads(Path(path).read_text())
+        except Exception as exc:
+            messagebox.showerror("Load failed", str(exc))
+            return
+        if not isinstance(data, list):
+            messagebox.showerror("Invalid file", "File must contain a JSON array of steps.")
+            return
+        self._seq_steps.clear()
+        self._seq_steps.extend(data)
+        state["default_steps"] = list(self._seq_steps)
+        n = len(self._seq_steps)
+        self._seq_lbl.config(
+            text=f"{n} step{'s' if n != 1 else ''} loaded" if n else "No steps defined",
+            fg=T1 if n else T3,
+        )
 
 
-# ─── page 5: google play testing guide ───────────────────────────────────────
+# ─── page: google play testing guide ───────────────────────────────────────────
 
 class PlayStorePage(PageBase):
     """Explains how to use the phone farm for Google Play closed testing."""
     def __init__(self, parent):
         super().__init__(parent)
         self.header(
-            "Step 4 — Google Play Closed Testing",
+            "Google Play closed testing",
             "How to use your virtual phones to get your app into the Play Store."
         )
 
@@ -4688,7 +4386,7 @@ class GroupsPage(PageBase):
     def __init__(self, parent):
         super().__init__(parent)
         self.header(
-            "Step 5 — Groups & Sequences",
+            "Groups & sequences",
             "Split phones into groups. Each group runs its own sequence — stagger, repeat, "
             "and per-phone overrides stay available below."
         )
@@ -4808,7 +4506,7 @@ class GroupsPage(PageBase):
         phone_map = group.get("phones", {})
 
         if not state["phones"]:
-            tk.Label(phones_frame, text="Go back to Step 3 and start the phones first.",
+            tk.Label(phones_frame, text="Boot phones on Connect & boot before assigning groups.",
                      font=FS, bg=BG2, fg=RED).pack(anchor="w")
         else:
             for phone in state["phones"]:
@@ -5054,8 +4752,8 @@ class LaunchPage(PageBase):
         super().__init__(parent)
         self._server_proc = None
         self.header(
-            "Launch & Control 🚀",
-            "Everything from here. No browser needed — the wizard is the control panel."
+            "Launch — server, groups, scheduler",
+            "Start the dashboard API, run groups, optional daily schedule, open the web UI."
         )
 
         # Summary
@@ -5164,20 +4862,12 @@ class LaunchPage(PageBase):
         log_sb.pack(side="right", fill="y")
 
         misc = tk.Frame(self, bg=BG)
-        misc.pack(fill="x", pady=6)
-        # Status frame and phone list — referenced by on_enter / _boot_all / _stop_all
-        self._status_frame = tk.Frame(self, bg=BG)
-        self._status_frame.pack(fill="both", expand=True, pady=4)
-        self._status_rows = {}
-        self._phones = []          # currently booted phone serials
-        self._emu_procs = []       # emulator subprocess handles
-        self._overall_lbl = tk.Label(self, text="", font=FS, bg=BG, fg=T2)
-        self._overall_lbl.pack(fill="x", pady=(0, 4))
-        tk.Button(misc, text="Open Dashboard in Browser",
+        misc.pack(fill="x", pady=SP["sm"])
+        tk.Button(misc, text="Open dashboard in browser",
                   font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
                   command=lambda: webbrowser.open(
-                      f"http://localhost:{DASHBOARD_PORT}")).pack(side="left", padx=(0, 8))
-        tk.Button(misc, text="💾 Save Config",
+                      f"http://localhost:{DASHBOARD_PORT}")).pack(side="left", padx=(0, SP["sm"]))
+        tk.Button(misc, text="Save groups config",
                   font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
                   command=self._save).pack(side="left")
 
@@ -5373,7 +5063,7 @@ class LaunchPage(PageBase):
         phones = state.get("phones", [])
         if not phones:
             messagebox.showwarning("No phones running",
-                                   "Boot phones first (Step 3).")
+                                   "Boot phones on Connect & boot first.")
             return
         serials = [p["serial"] for p in phones]
         _groups = state.get("groups") or []
@@ -5403,25 +5093,33 @@ class LaunchPage(PageBase):
 # ─── main wizard ──────────────────────────────────────────────────────────────
 
 class CPharmWizard(tk.Tk):
+    """Phase rail: five milestones across nine screens (see PAGE_PHASE)."""
+
+    PHASE_LABELS = ("Setup", "Devices", "Automate", "Ship", "Launch")
+    # One phase index per page — aligns header rail with PAGE_NAMES / PAGES order.
+    PAGE_PHASE = (0, 0, 0, 1, 1, 2, 2, 3, 4)
+
     PAGES = [
         WelcomePage,
         PrerequisitesPage,
         AndroidStudioPage,
         PhoneFarmPage,
         BootPage,
-        PlayStorePage,
+        AutomationPage,
         GroupsPage,
+        PlayStorePage,
         LaunchPage,
     ]
     PAGE_NAMES = [
         "Welcome",
-        "Install Tools",
-        "Android SDK",
-        "Create Phones",
-        "Start Phones",
-        "Play Store",
+        "Install tools",
+        "Android runtime",
+        "Create phones",
+        "Connect & boot",
+        "Automation",
         "Groups",
-        "Launch!",
+        "Play Console",
+        "Launch",
     ]
 
     def __init__(self):
@@ -5479,43 +5177,52 @@ class CPharmWizard(tk.Tk):
                 break
 
     def _build_header(self):
-        hdr = tk.Frame(self, bg=BG2, height=58)
+        hdr = tk.Frame(self, bg=BG2, height=64, highlightthickness=1,
+                       highlightbackground=BORDER)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
         title_fr = tk.Frame(hdr, bg=BG2)
-        title_fr.pack(side="left", padx=16, pady=6)
+        title_fr.pack(side="left", padx=SP["lg"], pady=SP["sm"])
         tk.Label(title_fr, text="CPharm",
                  font=("Segoe UI", 14, "bold"),
                  bg=BG2, fg=T1).pack(anchor="w")
-        tk.Label(title_fr, text="Setup — follow the steps",
+        tk.Label(title_fr, text="Phone farm setup",
                  font=("Segoe UI", 9), bg=BG2, fg=T3).pack(anchor="w")
-        dot_row = tk.Frame(hdr, bg=BG2)
-        dot_row.pack(side="right", padx=16)
-        self._dots = []
-        for i in range(len(self.PAGES)):
-            d = tk.Label(dot_row, text="●", font=("Segoe UI", 9),
-                         bg=BG2, fg=T3)
-            d.pack(side="left", padx=3)
-            self._dots.append(d)
+
+        phase_row = tk.Frame(hdr, bg=BG2)
+        phase_row.pack(side="left", padx=(SP["md"], 0), pady=SP["sm"])
+        self._phase_lbls: list[tk.Label] = []
+        for i, label in enumerate(self.PHASE_LABELS):
+            if i:
+                tk.Label(phase_row, text="→", font=FS, bg=BG2, fg=T3).pack(
+                    side="left", padx=2)
+            lb = tk.Label(
+                phase_row, text=label,
+                font=("Segoe UI", 9, "bold"), bg=BG2, fg=T3,
+            )
+            lb.pack(side="left", padx=3)
+            self._phase_lbls.append(lb)
+
         self._step_lbl = tk.Label(hdr, text="", font=FS, bg=BG2, fg=T2)
-        self._step_lbl.pack(side="right", padx=(0, 10))
+        self._step_lbl.pack(side="right", padx=(0, SP["lg"]))
 
     def _build_footer(self):
-        ftr = tk.Frame(self, bg=BG2, height=56)
+        ftr = tk.Frame(self, bg=BG2, height=56, highlightthickness=1,
+                       highlightbackground=BORDER)
         ftr.pack(fill="x")
         ftr.pack_propagate(False)
         self._next_btn = tk.Button(ftr, text="Next  →",
                                    font=("Segoe UI", 11, "bold"),
                                    bg=ACCENT, fg=BG, relief="flat",
                                    cursor="hand2", command=self._next,
-                                   padx=20, pady=8)
-        self._next_btn.pack(side="right", padx=16, pady=8)
+                                   padx=SP["lg"], pady=SP["sm"])
+        self._next_btn.pack(side="right", padx=SP["lg"], pady=SP["sm"])
         self._back_btn = tk.Button(ftr, text="← Back",
                                    font=("Segoe UI", 11),
                                    bg=BG3, fg=T2, relief="flat",
                                    cursor="hand2", command=self._back,
-                                   padx=16, pady=8)
-        self._back_btn.pack(side="right", padx=(0, 8), pady=8)
+                                   padx=SP["md"], pady=SP["sm"])
+        self._back_btn.pack(side="right", padx=(0, SP["sm"]), pady=SP["sm"])
 
     def _on_mousewheel(self, event):
         if not self._active_canvas:
@@ -5533,11 +5240,15 @@ class CPharmWizard(tk.Tk):
                 outer.lift()
                 self._active_canvas = canvas
                 canvas.yview_moveto(0)
-            self._dots[i].config(
-                fg=ACCENT if i == idx else (T2 if i < idx else T3))
+        pidx = self.PAGE_PHASE[idx]
+        for i, lb in enumerate(self._phase_lbls):
+            lb.config(
+                fg=ACCENT if i == pidx else T3,
+                font=("Segoe UI", 9, "bold") if i == pidx else ("Segoe UI", 9),
+            )
         total = len(self.PAGES)
         self._step_lbl.config(
-            text=f"Step {idx + 1} of {total}  —  {self.PAGE_NAMES[idx]}")
+            text=f"Step {idx + 1} of {total}  ·  {self.PAGE_NAMES[idx]}")
         self._back_btn.config(state="normal" if idx > 0 else "disabled")
         self._next_btn.config(
             text="Finish ✓" if idx == total - 1 else "Next  →")

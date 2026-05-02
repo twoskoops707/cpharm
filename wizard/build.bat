@@ -34,7 +34,7 @@ echo.
 
 echo Step 3 of 3: Building CPharmSetup.exe ...
 cd /d "%~dp0"
-pyinstaller --onefile --windowed --name CPharmSetup setup_wizard.py
+pyinstaller --onefile --windowed --name CPharmSetup --hidden-import wizard_theme setup_wizard.py
 if errorlevel 1 (
     echo ERROR: Build failed. Read the error above.
     pause

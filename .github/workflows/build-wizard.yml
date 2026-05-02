@@ -30,7 +30,7 @@ jobs:
       - name: Build .exe
         working-directory: wizard
         run: |
-          pyinstaller --onefile --windowed --name CPharmSetup setup_wizard.py
+          pyinstaller --onefile --windowed --name CPharmSetup --hidden-import wizard_theme setup_wizard.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

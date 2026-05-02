@@ -3441,7 +3441,7 @@ class PhoneFarmPage(PageBase):
                  bg=BG2, fg=T1, insertbackground=T1, relief="flat",
                  width=22).pack(side="left", padx=(8, 6))
         tk.Label(name_box, text="_1, _2, _3…", font=FS, bg=BG3, fg=T3).pack(side="left")
-        self._prefix_var.trace("w", lambda *_: state.update(
+        self._prefix_var.trace_add("write", lambda *_: state.update(
             {"phone_prefix": self._prefix_var.get().strip() or "CPharm_Phone"}))
 
         # Count selection
@@ -4653,7 +4653,7 @@ class GroupsPage(PageBase):
         tk.Entry(hdr, textvariable=name_var, font=("Segoe UI", 13, "bold"),
                  bg=BG3, fg=T1, relief="flat", width=20,
                  insertbackground=T1).pack(side="left")
-        name_var.trace("w", lambda *_: group.update({"name": name_var.get()}))
+        name_var.trace_add("write", lambda *_: group.update({"name": name_var.get()}))
 
         if len(state["groups"]) > 1:
             rm = tk.Button(hdr, text="Remove", font=FS, bg=RED, fg=ON_ACCENT,
@@ -4798,9 +4798,9 @@ class GroupsPage(PageBase):
                           "repeat":       rep_var.get(),
                           "repeat_forever": forever_var.get()})
 
-        stag_var.trace("w", save)
-        rep_var.trace("w", save)
-        forever_var.trace("w", save)
+        stag_var.trace_add("write", save)
+        rep_var.trace_add("write", save)
+        forever_var.trace_add("write", save)
 
         return card
 

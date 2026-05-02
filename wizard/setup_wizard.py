@@ -961,6 +961,83 @@ def _find_mumu_player():
     return None
 
 
+def _find_mumu_player_exe() -> Path | None:
+    """Resolve path to the MuMu **GUI** launcher (not the shell CLI)."""
+    root = _find_mumu_player()
+    candidates = (
+        Path("MuMuPlayer.exe"),
+        Path("MuMuNxMain.exe"),
+        Path("nx_main") / "MuMuPlayer.exe",
+        Path("nx_main") / "MuMuNxMain.exe",
+        Path("shell") / "MuMuPlayer.exe",
+        Path("shell") / "MuMuNxMain.exe",
+    )
+    if root:
+        for rel in candidates:
+            p = root / rel
+            if p.is_file():
+                return p
+        try:
+            for pat in ("MuMuPlayer.exe", "MuMuNxMain.exe"):
+                for i, p in enumerate(root.rglob(pat)):
+                    if i > 50:
+                        break
+                    if p.is_file():
+                        return p
+        except Exception:
+            pass
+    # Manager not found — still try common GUI exe locations (fresh installs).
+    for base_var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        base = os.environ.get(base_var, "")
+        if not base:
+            continue
+        base_path = Path(base)
+        for folder in (
+            "Netease\\MuMuPlayerARM",
+            "Netease\\MuMuPlayer-12.0",
+            "Netease\\MuMuPlayerGlobal-12.0",
+            "Netease\\MuMuPlayer",
+            "MuMuPlayerARM",
+            "MuMuPlayer",
+        ):
+            rp = base_path / folder
+            if not rp.is_dir():
+                continue
+            for sub in ("", "nx_main", "shell"):
+                base = rp / sub if sub else rp
+                for name in ("MuMuPlayer.exe", "MuMuNxMain.exe"):
+                    p = base / name
+                    if p.is_file():
+                        return p
+    return None
+
+
+def _launch_gui_exe(exe: Path) -> bool:
+    """Start a Windows GUI app — never use CREATE_NO_WINDOW (it suppresses MuMuPlayer)."""
+    if not exe.is_file():
+        return False
+    if IS_WIN:
+        try:
+            os.startfile(str(exe))
+            return True
+        except OSError:
+            pass
+        try:
+            subprocess.Popen(
+                [str(exe)],
+                cwd=str(exe.parent),
+                shell=False,
+            )
+            return True
+        except Exception:
+            return False
+    try:
+        subprocess.Popen([str(exe)], cwd=str(exe.parent))
+        return True
+    except Exception:
+        return False
+
+
 def _mumu_parse_json_output(out: str):
     """MuMu shell CLI sometimes prints banners; extract the JSON object or array."""
     s = (out or "").strip()
@@ -3622,25 +3699,15 @@ class PhoneFarmPage(PageBase):
                   command=self._open_mumu).pack(anchor="w")
 
     def _open_mumu(self):
-        root = _find_mumu_player()
-        if root:
-            for candidate in (
-                "MuMuPlayer.exe",
-                Path("nx_main") / "MuMuPlayer.exe",
-                Path("nx_main") / "MuMuNxMain.exe",
-            ):
-                exe = root / candidate
-                if exe.exists():
-                    try:
-                        subprocess.Popen([str(exe)],
-                                         creationflags=subprocess.CREATE_NO_WINDOW if IS_WIN else 0)
-                        return
-                    except Exception:
-                        pass
+        exe = _find_mumu_player_exe()
+        if exe and _launch_gui_exe(exe):
+            return
         messagebox.showinfo(
             "MuMuPlayer Not Found",
-            "Could not launch MuMuPlayer automatically.\n\n"
-            "Please open MuMuPlayer from your Start menu or taskbar."
+            "Could not find MuMuPlayer.exe / MuMuNxMain.exe.\n\n"
+            "Install MuMu Player ARM from mumuplayer.com, or on Step 3 use "
+            "“Locate MuMuManager.exe” so the wizard can find your install folder.\n\n"
+            "You can still open MuMu from the Start menu."
         )
 
     def _pick_count(self, n):

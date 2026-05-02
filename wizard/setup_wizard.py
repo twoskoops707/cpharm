@@ -4069,7 +4069,9 @@ class PhoneFarmPage(PageBase):
                       "  6. Click Next below — the wizard connects automatically\n\n"
                       "Note: MuMu uses OEM-style images (e.g. Google Pixel 8 / GC3VE, HONOR 200 Pro,\n"
                       "  etc.) — whatever appears under Device model here is normal for that template.\n"
-                      "  Root / writable system may be off unless you enable them in MuMu settings.",
+                      "  Each instance can be a different model or resolution; CPharm connects by ADB serial,\n"
+                      "  so mixed farms are fine. Root / writable system may be off unless you enable them\n"
+                      "  in MuMu settings per instance.",
                  font=FS, bg="#1a2a1a", fg=T2,
                  anchor="w", justify="left").pack(fill="x", pady=(6, 10))
         tk.Button(self._mumu_panel,

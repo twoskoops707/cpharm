@@ -53,8 +53,10 @@ from wizard_theme import (
     FM,
     FS,
     FONT_CAPTION,
+    FONT_DISPLAY,
     FONT_H2,
     GREEN,
+    RADIUS,
     ON_ACCENT,
     PURPLE,
     RED,
@@ -2729,11 +2731,11 @@ class WelcomePage(PageBase):
             "Virtual Android phones on your Windows laptop — Snapdragon ARM64 or Intel.\n"
             "This wizard installs and wires everything; primary actions use the footer controls below.",
         )
-        tk.Label(self, text="CPharm Phone Farm", font=FONT_H2,
+        tk.Label(self, text="CPharm Phone Farm", font=FONT_DISPLAY,
                  bg=BG, fg=ACCENT).pack(pady=(2, 10))
 
-        steps = tk.Frame(self, bg=BG2, padx=20, pady=16,
-                         highlightthickness=1, highlightbackground=BORDER)
+        steps = tk.Frame(self, bg=BG2, padx=SP["xl"], pady=SP["lg"],
+                         highlightthickness=1, highlightbackground=BORDER_STRONG)
         steps.pack(fill="x", pady=(0, 14))
         tk.Label(steps, text="Flow overview",
                  font=FONT_H2, bg=BG2, fg=T1, anchor="w").pack(fill="x")
@@ -2745,7 +2747,7 @@ class WelcomePage(PageBase):
 
         # Architecture diagram — canvas only; static content is packed below, NOT inside the callback
         c = tk.Canvas(self, bg=BG3, height=152,
-                      highlightthickness=1, highlightbackground=BORDER_STRONG)
+                      highlightthickness=1, highlightbackground=BORDER)
         c.pack(fill="x", padx=16, pady=(0, 14))
         c.bind("<Configure>", lambda e: self._draw_diagram(c))
 
@@ -2756,8 +2758,8 @@ class WelcomePage(PageBase):
         tk.Label(self, text="Session flows, groups, scheduling, and Play Store closed-testing paths "
                                 "stay available on later wizard pages.",
                  font=FS, bg=BG, fg=T3, anchor="w").pack(fill="x", padx=4, pady=(0, 4))
-        f = tk.Frame(self, bg=BG2, padx=16, pady=14,
-                     highlightthickness=1, highlightbackground=BORDER)
+        f = tk.Frame(self, bg=BG2, padx=SP["lg"], pady=SP["card"],
+                     highlightthickness=1, highlightbackground=BORDER_STRONG)
         f.pack(fill="x", pady=(4, 0))
         feat_icons = (
             "feat_phones",
@@ -2799,7 +2801,7 @@ class WelcomePage(PageBase):
         bw = 128
         gap = max(8, (w - len(boxes) * bw) // (len(boxes) + 1))
         y1, y2 = 22, 102
-        rr = 12
+        rr = float(RADIUS["md"])
         positions = []
         for i, (col, label) in enumerate(boxes):
             x1 = gap + i * (bw + gap)

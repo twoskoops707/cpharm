@@ -13,17 +13,18 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
-# --- palette (ink / slate surfaces, single aurora accent) ---
-BG = "#0b0e14"
-BG2 = "#121826"
-BG3 = "#1a2233"
-BG4 = "#222c3d"
-BORDER = "#2f3d52"
+# --- palette v2 (ink slate + teal accent; aligned with automation/dashboard tokens) ---
+BG = "#060910"
+BG2 = "#0c121c"
+BG3 = "#141c2a"
+BG4 = "#1c2738"
+BORDER = "#2a3a50"
 BORDER_STRONG = "#3d5166"
 
-ACCENT = "#3ee0d0"
-ACCENT_DIM = "#2bb8aa"
-ACCENT_GLOW = "#5eeadb"
+ACCENT = "#34e4d0"
+ACCENT_DIM = "#26b8a8"
+ACCENT_GLOW = "#6af0e0"
+ACCENT_MUTED = "#143d38"
 
 GREEN = "#4ade80"
 RED = "#f87171"
@@ -35,15 +36,19 @@ T2 = "#94a3b8"
 T3 = "#64748b"
 
 # Text on filled accent buttons (dark ink)
-ON_ACCENT = "#071016"
+ON_ACCENT = "#061016"
 
 # spacing scale (px)
 SP = {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "card": 14}
+
+# corner radius (px) — canvas cards / parity with dashboard --rad
+RADIUS = {"sm": 6, "md": 10, "lg": 14, "xl": 18}
 
 # Typography — Segoe UI / Variable; keep legacy aliases used by setup_wizard
 FONT_HERO = ("Segoe UI", 24, "bold")
 FONT_H1 = ("Segoe UI", 20, "bold")
 FONT_H2 = ("Segoe UI", 12, "bold")
+FONT_DISPLAY = ("Segoe UI", 26, "bold")
 FONT_LEAD = ("Segoe UI", 11)
 FONT_BODY = ("Segoe UI", 10)
 FONT_UI = ("Segoe UI", 11)

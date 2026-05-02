@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableDelayedExpansion
 title CPharm - Dashboard
 color 0A
 
@@ -28,7 +29,6 @@ for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /i "IPv4" ^| findstr /v 
     set IP=!IP: =!
     echo  [*] Open on your phone: http://!IP!:8080
 )
-setlocal EnableDelayedExpansion
 
 echo.
 echo  Press Ctrl+C to stop the dashboard.

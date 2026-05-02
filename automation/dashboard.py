@@ -59,6 +59,7 @@ _executor = concurrent.futures.ThreadPoolExecutor(max_workers=32)
 SCRIPT_DIR     = Path(__file__).parent
 HTML_FILE      = SCRIPT_DIR / "dashboard.html"
 PLAYSTORE_FILE = SCRIPT_DIR / "playstore.html"
+GROUPS_CFG     = REC_DIR / "groups_config.json"
 
 
 # ── ADB helpers ───────────────────────────────────────────────────────────────
@@ -375,7 +376,16 @@ async def handle_get(path: str) -> bytes:
         return json_ok(list_phones())
     if path == "/api/ip":
         ip = get_local_ip()
-        return json_ok({"ip": ip, "url": f"http://{ip}:{PORT}"})
+        return json_ok(
+            {
+                "ip": ip,
+                "url": f"http://{ip}:{PORT}",
+                "httpPort": PORT,
+                "wsPort": WS_PORT,
+            }
+        )
+    if path == "/api/config":
+        return json_ok({"httpPort": PORT, "wsPort": WS_PORT, "port": PORT})
     if path == "/api/apks":
         APK_DIR.mkdir(exist_ok=True)
         files = [{"name": f.name, "size_mb": round(f.stat().st_size / 1024 / 1024, 1)}
@@ -670,10 +680,9 @@ async def handle_post(path: str, body: bytes) -> bytes:
     if path == "/api/groups/run":
         raw_groups = data.get("groups")
         if not raw_groups:
-            cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
-            if cfg_path.exists():
+            if GROUPS_CFG.exists():
                 try:
-                    raw_groups = json.loads(cfg_path.read_text()).get("groups", [])
+                    raw_groups = json.loads(GROUPS_CFG.read_text()).get("groups", [])
                 except (json.JSONDecodeError, OSError):
                     return json_err("corrupt groups_config.json")
         if not raw_groups:
@@ -839,11 +848,10 @@ async def handle_post(path: str, body: bytes) -> bytes:
     if path == "/api/groups/clone":
         group_name = data.get("name", "").strip()
         source_serial = data.get("source_serial", "").strip()
-        cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
-        if not cfg_path.exists():
+        if not GROUPS_CFG.exists():
             return json_err("no saved groups_config.json found")
         try:
-            cfg = json.loads(cfg_path.read_text())
+            cfg = json.loads(GROUPS_CFG.read_text())
         except (json.JSONDecodeError, OSError):
             return json_err("corrupt groups_config.json")
         groups = cfg.get("groups", [])
@@ -869,7 +877,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 phone_map[serial]["steps"] = list(source_steps)
             else:
                 phone_map[serial] = {"steps": list(source_steps)}
-        cfg_path.write_text(json.dumps(cfg, indent=2))
+        GROUPS_CFG.write_text(json.dumps(cfg, indent=2))
         return json_ok({"ok": True, "cloned": len(phone_map), "steps_count": len(source_steps)})
 
     # ── Get/Update per-phone steps ──
@@ -877,11 +885,10 @@ async def handle_post(path: str, body: bytes) -> bytes:
         group_name = data.get("name", "").strip()
         serial = data.get("serial", "").strip()
         new_steps = data.get("steps")
-        cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
-        if not cfg_path.exists():
+        if not GROUPS_CFG.exists():
             return json_err("no saved groups_config.json found")
         try:
-            cfg = json.loads(cfg_path.read_text())
+            cfg = json.loads(GROUPS_CFG.read_text())
         except Exception:
             return json_err("corrupt groups_config.json")
         for g in cfg.get("groups", []):
@@ -895,7 +902,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                         phone_map[serial]["steps"] = new_steps
                     else:
                         phone_map[serial] = {"steps": new_steps}
-                    cfg_path.write_text(json.dumps(cfg, indent=2))
+                    GROUPS_CFG.write_text(json.dumps(cfg, indent=2))
                     return json_ok({"ok": True, "serial": serial, "steps": new_steps})
                 else:
                     # Return current steps for this phone
@@ -904,10 +911,9 @@ async def handle_post(path: str, body: bytes) -> bytes:
         return json_err("group not found")
 
     if path == "/api/groups/load":
-        cfg_path = Path(__file__).parent / "recordings" / "groups_config.json"
-        if cfg_path.exists():
+        if GROUPS_CFG.exists():
             try:
-                cfg = json.loads(cfg_path.read_text())
+                cfg = json.loads(GROUPS_CFG.read_text())
             except (json.JSONDecodeError, OSError):
                 return json_err("corrupt groups_config.json")
             return json_ok(cfg)

@@ -506,11 +506,12 @@ let teachFile   = null;
 let apkFiles    = [];
 let installDone = 0;
 
-// ── WebSocket ──────────────────────────────────────────────────────
-const WS_URL = `ws://${location.hostname}:8081`;
+// ── WebSocket (port from /api/config — matches config.WS_PORT) ───────
+let WS_URL = '';
 let ws, wsRetry = 0;
 
 function connectWS() {
+  if (!WS_URL) return;
   ws = new WebSocket(WS_URL);
   ws.onopen = () => {
     wsRetry = 0;
@@ -926,10 +927,11 @@ async function initIp() {
   const chip = document.getElementById('ip-chip');
   try {
     const r = await api('/api/ip');
-    chip.textContent = r.ip + ':8080';
+    const hp = r.httpPort ?? 8080;
+    chip.textContent = r.ip + ':' + hp;
     chip.title = 'Tap to copy';
     chip.addEventListener('click', () => {
-      navigator.clipboard?.writeText(r.url ?? `http://${r.ip}:8080`).then(() => toast('Address copied!', 'ok'));
+      navigator.clipboard?.writeText(r.url ?? `http://${r.ip}:${hp}`).then(() => toast('Address copied!', 'ok'));
     });
   } catch { chip.textContent = location.host; }
 }
@@ -1074,10 +1076,18 @@ document.getElementById('fab').addEventListener('click', () => {
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
 // ── Boot ────────────────────────────────────────────────────────────────
-connectWS();
-initIp();
-loadServerApks();
-api('/api/phones').then(d => { if (!phones.length) onPhonesUpdate(d); }).catch(() => {});
+(async function boot() {
+  try {
+    const cfg = await api('/api/config');
+    WS_URL = `ws://${location.hostname}:${cfg.wsPort}`;
+  } catch {
+    WS_URL = `ws://${location.hostname}:8081`;
+  }
+  connectWS();
+  initIp();
+  loadServerApks();
+  api('/api/phones').then(d => { if (!phones.length) onPhonesUpdate(d); }).catch(() => {});
+})();
 </script>
 </body>
 </html>

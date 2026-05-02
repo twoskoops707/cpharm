@@ -95,9 +95,41 @@ MUMU_MANAGER_LEGACY = "MuMuManager.exe"
 MUMU_MANAGER_EXES = (MUMU_MANAGER_PRIMARY, MUMU_MANAGER_LEGACY)
 
 
-def _wizard_runtime_root() -> Path:
-    """Repo root containing automation/ and wizard/ for this running wizard."""
+def _dev_repo_root() -> Path:
+    """Directory containing ``automation/`` when running the wizard from source."""
     return Path(__file__).resolve().parent.parent
+
+
+def _cpharm_install_root() -> Path:
+    """
+    Root directory that contains ``automation/dashboard.py`` (checkout or install tree).
+
+    When ``sys.frozen`` (PyInstaller), prefers ``CPHARM_HOME``, then the directory
+    containing ``sys.executable``, then ``sys._MEIPASS`` if the bundle includes
+    ``automation/``. Unfrozen builds fall back to the repo root next to ``wizard/``.
+    """
+    env = os.environ.get("CPHARM_HOME", "").strip()
+    if env:
+        p = Path(env).expanduser().resolve()
+        if (p / "automation" / "dashboard.py").exists():
+            return p
+
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        if (exe_dir / "automation" / "dashboard.py").exists():
+            return exe_dir
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            mp = Path(meipass)
+            if (mp / "automation" / "dashboard.py").exists():
+                return mp
+
+    return _dev_repo_root()
+
+
+def _wizard_runtime_root() -> Path:
+    """Repo/install root containing automation/ and wizard/ for this running wizard."""
+    return _cpharm_install_root()
 
 
 def _install_targets_live_tree(install_dir: Path) -> bool:
@@ -644,6 +676,9 @@ def _direct_download_platform_tools(sdk_path, log_fn=None):
         return False
 
 
+_arm64_adb_warned = False
+
+
 def _pe_machine_type(exe_path: str) -> int:
     """Read Windows PE machine type. Returns 0xAA64 for ARM64, 0x8664 for x64, 0 on error."""
     try:
@@ -658,6 +693,25 @@ def _pe_machine_type(exe_path: str) -> int:
             return int.from_bytes(f.read(2), "little")
     except Exception:
         return 0
+
+
+def _warn_arm64_x64_adb(log_fn) -> None:
+    """If the host is Windows ARM64 but ``adb.exe`` is x64, log one Prism-emulation note."""
+    global _arm64_adb_warned
+    if not log_fn or not IS_WIN or _arm64_adb_warned:
+        return
+    if "arm64" not in _machine_arch():
+        return
+    exe = adb_executable()
+    if not exe or not Path(exe).exists():
+        return
+    if _pe_machine_type(exe) != 0x8664:
+        return
+    _arm64_adb_warned = True
+    log_fn(
+        "  Note: adb.exe is x64 — on ARM64 Windows it runs under Prism emulation "
+        "(may be slower than a native ARM64 build).\n"
+    )
 
 
 MUMU_DOWNLOAD_URL = "https://www.mumuplayer.com/windows-arm.html"
@@ -970,6 +1024,7 @@ def _connect_mumu_phones(count=16, log_fn=None):
     # Fresh adb server avoids stale TCP state after emulator updates.
     adb("kill-server", timeout=5)
     adb("start-server", timeout=12)
+    _warn_arm64_x64_adb(log_fn)
 
     mgr = _find_mumu_manager()
     connected = []
@@ -2343,8 +2398,9 @@ class PrerequisitesPage(PageBase):
         d = state.get("cpharm_dir", "") or self._install_dir.get()
         if d and (Path(d) / "automation" / "dashboard.py").exists():
             return True
-        if (Path(__file__).parent.parent / "automation" / "dashboard.py").exists():
-            state["cpharm_dir"] = str(Path(__file__).parent.parent)
+        root = _cpharm_install_root()
+        if (root / "automation" / "dashboard.py").exists():
+            state["cpharm_dir"] = str(root)
             return True
         return False
 
@@ -3534,6 +3590,7 @@ class PhoneFarmPage(PageBase):
             def _prep_adb():
                 _ensure_minimal_platform_tools(log_fn=self._log_write)
                 self._log_write(f"Using adb: {adb_executable()}\n")
+                _warn_arm64_x64_adb(self._log_write)
 
             threading.Thread(target=_prep_adb, daemon=True).start()
             return
@@ -5037,10 +5094,8 @@ class LaunchPage(PageBase):
     _log_write = lambda self, t: self._log(t)
 
     def _save(self):
-        d = state.get("cpharm_dir", "")
-        if not d:
-            return None
-        rec = Path(d) / "automation" / "recordings"
+        d = (state.get("cpharm_dir") or "").strip()
+        rec = (Path(d) if d else _cpharm_install_root()) / "automation" / "recordings"
         rec.mkdir(parents=True, exist_ok=True)
         out = rec / "groups_config.json"
         out.write_text(json.dumps({"groups": state["groups"]}, indent=2))
@@ -5051,7 +5106,7 @@ class LaunchPage(PageBase):
 
         d = state.get("cpharm_dir", "")
         if not d:
-            d = str(Path(__file__).parent.parent)
+            d = str(_cpharm_install_root())
             state["cpharm_dir"] = d
 
         self._save()
@@ -5321,7 +5376,7 @@ class CPharmWizard(tk.Tk):
 
         # Try to auto-detect CPharm directory
         guesses = [
-            Path(__file__).parent.parent,
+            _cpharm_install_root(),
             Path.home() / "CPharm",
             Path("C:/CPharm"),
         ]

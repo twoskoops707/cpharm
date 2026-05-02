@@ -5,6 +5,8 @@ alwaysApply: true
 
 # GitHub Actions / CI
 
+**User tests workflow builds (e.g. wizard EXE from GitHub Actions), not uncommitted local files.** After any fix or feature work, **commit and push the same session** so the next build artifacts match what you are testing.
+
 After making code changes, **commit and push to GitHub** before assuming CI or workflow builds will run.
 
-Local edits alone do **not** trigger GitHub Actions—only commits that reach the remote do.
+Local edits alone do **not** trigger GitHub Actions—only commits that reach the remote do. Do not leave “only on disk” fixes when the user needs a build to verify.

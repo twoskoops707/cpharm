@@ -48,6 +48,63 @@ PYTHON_URL_X64    = "https://www.python.org/ftp/python/3.13.0/python-3.13.0-amd6
 CPHARM_ZIP_URL    = "https://github.com/twoskoops707/cpharm/archive/refs/heads/master.zip"
 CPHARM_DEFAULT    = os.path.join(os.path.expanduser("~"), "CPharm")
 
+# MuMu / Netease CLI: newer installs use nemux-shell-winui.Manager.exe; older builds use MuMuManager.exe
+MUMU_MANAGER_PRIMARY = "nemux-shell-winui.Manager.exe"
+MUMU_MANAGER_LEGACY = "MuMuManager.exe"
+MUMU_MANAGER_EXES = (MUMU_MANAGER_PRIMARY, MUMU_MANAGER_LEGACY)
+
+
+def _wizard_runtime_root() -> Path:
+    """Repo root containing automation/ and wizard/ for this running wizard."""
+    return Path(__file__).resolve().parent.parent
+
+
+def _install_targets_live_tree(install_dir: Path) -> bool:
+    """True if we must not delete/replace install_dir wholesale (wizard runs from that tree or below)."""
+    try:
+        inst = install_dir.resolve()
+        rt = _wizard_runtime_root().resolve()
+    except OSError:
+        return False
+    if inst == rt:
+        return True
+    try:
+        return rt.is_relative_to(inst)
+    except (ValueError, AttributeError):
+        ip, rp = str(inst), str(rt)
+        if not ip.endswith(os.sep):
+            ip += os.sep
+        return rp.lower().startswith(ip.lower())
+
+
+def _merge_dir_into(src: Path, dst: Path) -> None:
+    """Copy src tree into dst; existing files are overwritten. Does not delete dst first."""
+    if not src.is_dir():
+        return
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        s, d = item, dst / item.name
+        if s.is_dir():
+            shutil.copytree(s, d, dirs_exist_ok=True)
+        else:
+            shutil.copy2(s, d)
+
+
+def _is_mumu_manager_cli_path(path: Path | str) -> bool:
+    n = Path(path).name.lower()
+    return n in {x.lower() for x in MUMU_MANAGER_EXES}
+
+
+def _is_mumu_gui_path(path: Path | str) -> bool:
+    """True if path looks like the MuMu Player GUI, not the shell CLI manager."""
+    n = Path(path).name.lower()
+    if _is_mumu_manager_cli_path(path):
+        return False
+    return n in ("mumuplayer.exe", "mumunxmain.exe") or (
+        "mumu" in n and "player" in n
+    )
+
+
 BG     = "#0d1117"
 BG2    = "#161b22"
 BG3    = "#21262d"
@@ -595,8 +652,8 @@ def _mumu_install_root(mgr_path) -> Path:
     return p.parent
 
 
-def _glob_mumu_manager(max_dirs=80):
-    """Shallow search for MuMuManager.exe under Netease / MuMu install trees."""
+def _glob_mumu_manager(max_dirs=160):
+    """Search for nemux-shell-winui.Manager.exe or MuMuManager.exe under MuMu install trees."""
     roots = []
     for base_var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA", "PROGRAMW6432"):
         base = os.environ.get(base_var, "")
@@ -613,27 +670,32 @@ def _glob_mumu_manager(max_dirs=80):
                     roots.append(d)
         except Exception:
             pass
-    seen = set()
+    seen_paths = set()
+    seen_roots = set()
     for root in roots:
-        if root in seen:
+        if root in seen_roots:
             continue
-        seen.add(root)
-        try:
-            for i, p in enumerate(root.rglob("MuMuManager.exe")):
-                if i >= max_dirs:
-                    break
-                if p.is_file():
-                    yield p
-        except Exception:
-            pass
+        seen_roots.add(root)
+        for exe_name in MUMU_MANAGER_EXES:
+            try:
+                for i, p in enumerate(root.rglob(exe_name)):
+                    if i >= max_dirs:
+                        break
+                    if p.is_file():
+                        rp = str(p.resolve())
+                        if rp not in seen_paths:
+                            seen_paths.add(rp)
+                            yield p
+            except Exception:
+                pass
 
 
 def _find_mumu_manager():
-    """Return path to MuMuManager.exe, or None.
+    """Return path to MuMu shell CLI (nemux-shell-winui.Manager.exe preferred), or None.
 
     Search order:
       1. User-browsed path stored in state["mumu_mgr_path"]
-      2. 'where' MuMuManager / MuMuManager.exe (PATH)
+      2. 'where' for nemux-shell-winui.Manager.exe / MuMuManager.exe (PATH)
       3. Windows registry Uninstall entries for any "MuMu" product
       4. Standard filesystem candidates under PROGRAMFILES / LOCALAPPDATA
       5. Shallow glob under Netease / MuMu* folders
@@ -645,13 +707,18 @@ def _find_mumu_manager():
     cached = state.get("mumu_mgr_path", "")
     if cached:
         p = Path(cached)
-        if p.exists():
+        if p.exists() and _is_mumu_manager_cli_path(p):
             return p
 
     candidates = []
 
     # 2. 'where' command — works if MuMu install dir is on PATH
-    for query in ("MuMuManager.exe", "MuMuManager"):
+    for query in (
+        MUMU_MANAGER_PRIMARY,
+        MUMU_MANAGER_LEGACY,
+        "nemux-shell-winui.Manager",
+        "MuMuManager",
+    ):
         try:
             r = subprocess.run(
                 ["where", query],
@@ -664,7 +731,7 @@ def _find_mumu_manager():
                     if not line:
                         continue
                     p = Path(line)
-                    if p.exists() and p.name.lower() == "mumumanager.exe":
+                    if p.exists() and _is_mumu_manager_cli_path(p):
                         candidates.insert(0, p)
         except Exception:
             pass
@@ -696,9 +763,13 @@ def _find_mumu_manager():
                                     try:
                                         loc = Path(winreg.QueryValueEx(sub, val_name)[0])
                                         for sub_dir in ("shell", "nx_main", ""):
-                                            exe = loc / sub_dir / "MuMuManager.exe" if sub_dir \
-                                                  else loc / "MuMuManager.exe"
-                                            candidates.append(exe)
+                                            for exe_name in MUMU_MANAGER_EXES:
+                                                exe = (
+                                                    loc / sub_dir / exe_name
+                                                    if sub_dir
+                                                    else loc / exe_name
+                                                )
+                                                candidates.append(exe)
                                     except OSError:
                                         pass
                         except OSError:
@@ -712,7 +783,7 @@ def _find_mumu_manager():
     except ImportError:
         pass
 
-    # 4. Filesystem candidates
+    # 4. Filesystem candidates (prefer nemux CLI, then legacy)
     for base_var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA", "PROGRAMW6432"):
         base = os.environ.get(base_var, "")
         if not base:
@@ -728,19 +799,21 @@ def _find_mumu_manager():
         ):
             root = Path(base) / folder
             for sub_dir in ("shell", "nx_main", ""):
-                candidates.append(
-                    root / sub_dir / "MuMuManager.exe" if sub_dir
-                    else root / "MuMuManager.exe"
-                )
+                for exe_name in MUMU_MANAGER_EXES:
+                    candidates.append(
+                        root / sub_dir / exe_name if sub_dir
+                        else root / exe_name
+                    )
 
     for p in candidates:
-        if p.exists():
+        if p.exists() and _is_mumu_manager_cli_path(p):
             return p
 
     # 5. Discovery search (new install paths / renamed folders)
     try:
         for p in _glob_mumu_manager():
-            return p
+            if _is_mumu_manager_cli_path(p):
+                return p
     except Exception:
         pass
     return None
@@ -788,9 +861,9 @@ def _mumu_adb_port(d: dict):
 
 
 def _mumu_run(mgr_path, *args, timeout=15):
-    """Run MuMuManager.exe with args, return (ok, combined_stdout_stderr).
+    """Run MuMu shell CLI (nemux-shell-winui.Manager.exe or MuMuManager.exe).
 
-    Uses cwd = folder containing the exe (required by several MuMu builds).
+    Returns (ok, combined_stdout_stderr). Uses cwd = folder containing the exe.
     """
     mgr_path = Path(mgr_path)
     cwd = str(mgr_path.parent)
@@ -811,7 +884,7 @@ def _mumu_run(mgr_path, *args, timeout=15):
 def _mumu_get_instances(mgr_path, log_fn=None):
     """Return list of dicts: {index, name, adb_serial, started}.
 
-    Uses MuMuManager.exe info -v all
+    Uses manager CLI: info -v all
     JSON can be a single dict (one instance) or a dict-of-dicts keyed by index.
     """
     ok, out = _mumu_run(mgr_path, "info", "-v", "all", timeout=15)
@@ -863,9 +936,9 @@ def _mumu_launch(mgr_path, index, log_fn=None):
 
 
 def _connect_mumu_phones(count=16, log_fn=None):
-    """Connect to MuMuPlayer instances via MuMuManager API + adb connect.
+    """Connect to MuMuPlayer instances via MuMu shell CLI + adb connect.
 
-    Always tries both MuMuManager (for names/exact ports) AND the port
+    Always tries both the manager CLI (for names/exact ports) AND the port
     fallback scan — so phones are found even if MuMuManager lookup fails.
     Returns list of connected ADB serials.
     """
@@ -885,10 +958,10 @@ def _connect_mumu_phones(count=16, log_fn=None):
 
     if mgr:
         if log_fn:
-            log_fn(f"  MuMuManager found: {mgr}\n")
+            log_fn(f"  MuMu CLI found ({Path(mgr).name}): {mgr}\n")
         instances = _mumu_get_instances(mgr, log_fn=log_fn)
         if log_fn:
-            log_fn(f"  Instances from MuMuManager: {len(instances)}\n")
+            log_fn(f"  Instances from MuMu CLI: {len(instances)}\n")
         for inst in instances:
             serial = inst["adb_serial"]
             tried_serials.add(serial)
@@ -903,7 +976,7 @@ def _connect_mumu_phones(count=16, log_fn=None):
                         log_fn(f"  ✅ {inst['name']}: {serial}\n")
     else:
         if log_fn:
-            log_fn("  MuMuManager.exe not found — using port scan fallback\n")
+            log_fn("  MuMu shell CLI not found — using port scan fallback\n")
 
     # Port scan: MuMu 12 uses 16384 + n*32; some builds use other bases.
     def _scan_ports(base_port, stride, n_iter):
@@ -2312,13 +2385,21 @@ class PrerequisitesPage(PageBase):
         tor_dir = install_dir / "automation" / "tor"
         tor_dir.mkdir(parents=True, exist_ok=True)
 
+        if (tor_dir / "tor.exe").exists():
+            self._set_row("tor", "✅  Already installed", GREEN)
+            self._log_write(
+                f"Tor already present at {tor_dir} — skipping re-download "
+                f"(avoids overwriting files while the wizard uses this tree).\n"
+            )
+            return
+
         self._set_row("tor", "⬇  Finding latest…", ACCENT)
         self._log_write("Looking up latest Tor version…")
         tor_url = _fetch_latest_tor_url()
         self._log_write(f"Downloading: {tor_url}")
         self._set_row("tor", "⬇  Downloading…", ACCENT)
 
-        tmp = tor_dir / "_tor_bundle.tar.gz"
+        tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / "cpharm_tor_bundle.tar.gz"
         try:
             _urlretrieve(tor_url, tmp, timeout=120)
         except Exception as e:
@@ -2328,15 +2409,30 @@ class PrerequisitesPage(PageBase):
             return
 
         self._set_row("tor", "📦  Extracting…", YELLOW)
-        self._log_write("Extracting Tor…")
-        with tarfile.open(tmp, "r:gz") as tf:
-            for member in tf.getmembers():
-                if member.name.startswith("tor/"):
-                    member.name = member.name[len("tor/"):]
-                    if not member.name:
-                        continue
-                    tf.extract(member, tor_dir)
-        tmp.unlink(missing_ok=True)
+        self._log_write("Extracting Tor to a temp folder, then merging into automation/tor…")
+        ext_root = Path(os.environ.get("TEMP", "C:\\Temp")) / "_cpharm_tor_extract"
+        try:
+            if ext_root.exists():
+                shutil.rmtree(ext_root)
+            ext_root.mkdir(parents=True)
+            with tarfile.open(tmp, "r:gz") as tf:
+                for member in tf.getmembers():
+                    if member.name.startswith("tor/"):
+                        member.name = member.name[len("tor/"):]
+                        if not member.name:
+                            continue
+                        tf.extract(member, ext_root)
+            inner = ext_root
+            if inner.exists():
+                _merge_dir_into(inner, tor_dir)
+        except Exception as e:
+            self._log_write(f"  Extract/merge failed: {e}")
+            self._set_row("tor", "❌  Failed", RED)
+            self._log_write("  Tor install failed — IP rotation will use system Tor if available.")
+            return
+        finally:
+            tmp.unlink(missing_ok=True)
+            shutil.rmtree(ext_root, ignore_errors=True)
 
         if (tor_dir / "tor.exe").exists():
             self._set_row("tor", "✅  Done", GREEN)
@@ -2346,11 +2442,19 @@ class PrerequisitesPage(PageBase):
             self._log_write("Tor not found after extract — IP rotation will use system Tor if available.")
 
     def _install_cpharm(self):
-        install_dir = Path(self._install_dir.get())
+        install_dir = Path(self._install_dir.get()).resolve()
+        live_tree = _install_targets_live_tree(install_dir)
+
         if self._check_cpharm():
             self._set_row("cpharm", "✅  Already here", GREEN)
             self._log_write(f"CPharm files already present at {state.get('cpharm_dir', install_dir)}")
             return
+
+        if live_tree:
+            self._log_write(
+                "Install folder is (or contains) the running CPharm checkout — "
+                "will merge updates without deleting the live tree.\n"
+            )
 
         self._set_row("cpharm", "⬇  Downloading…", ACCENT)
         self._log_write("Downloading CPharm files from GitHub…")
@@ -2364,43 +2468,65 @@ class PrerequisitesPage(PageBase):
 
         if zip_ok:
             self._set_row("cpharm", "📦  Extracting…", YELLOW)
-            self._log_write(f"Extracting to {install_dir}…")
-            extract_tmp = install_dir.parent / "_cpharm_extract"
+            self._log_write(f"Extracting ZIP to temp, then merging into {install_dir}…")
+            extract_tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / "_cpharm_zip_extract"
             if extract_tmp.exists():
                 shutil.rmtree(extract_tmp)
+            extract_tmp.mkdir(parents=True)
             try:
                 with zipfile.ZipFile(tmp, "r") as zf:
                     zf.extractall(extract_tmp)
                 tmp.unlink(missing_ok=True)
                 inner = next(extract_tmp.iterdir(), None)
-                if inner and inner.is_dir():
-                    if install_dir.exists():
+                src_root = inner if inner and inner.is_dir() else extract_tmp
+                if live_tree:
+                    _merge_dir_into(src_root, install_dir)
+                    self._log_write(
+                        "Merged extracted files into the existing folder "
+                        "(running wizard was not deleted).\n"
+                    )
+                else:
+                    install_dir.mkdir(parents=True, exist_ok=True)
+                    if install_dir.exists() and any(install_dir.iterdir()):
                         shutil.rmtree(install_dir)
-                    shutil.move(str(inner), str(install_dir))
+                    shutil.move(str(src_root), str(install_dir))
                 shutil.rmtree(extract_tmp, ignore_errors=True)
             except Exception as e:
                 self._log_write(f"  Extraction failed: {e}")
                 zip_ok = False
+                shutil.rmtree(extract_tmp, ignore_errors=True)
 
         if (install_dir / "automation" / "dashboard.py").exists():
             state["cpharm_dir"] = str(install_dir)
             self._set_row("cpharm", "✅  Done", GREEN)
             self._log_write(f"CPharm installed at {install_dir} ✅")
-        else:
-            self._log_write("  ZIP method failed — trying git clone fallback…")
-            self._set_row("cpharm", "⬇  git clone…", YELLOW)
-            ok, out = run_cmd(
-                ["git", "clone", REPO_URL, str(install_dir)],
-                timeout=120,
+            return
+
+        self._log_write("  ZIP method failed — trying git clone fallback…")
+        self._set_row("cpharm", "⬇  git clone…", YELLOW)
+
+        if live_tree and install_dir == _wizard_runtime_root().resolve():
+            self._set_row("cpharm", "❌  Failed", RED)
+            self._log_write(
+                "Git clone skipped: install path is this running repo, but automation/dashboard.py "
+                "is still missing.\n"
+                "Clone or unpack CPharm into this folder manually, or choose a different install directory.\n"
             )
-            if ok or (install_dir / "automation" / "dashboard.py").exists():
-                state["cpharm_dir"] = str(install_dir)
-                self._set_row("cpharm", "✅  Done", GREEN)
-                self._log_write(f"CPharm installed via git clone ✅")
-            else:
-                self._set_row("cpharm", "❌  Failed", RED)
-                self._log_write("Both ZIP download and git clone failed.")
-                self._log_write(f"Manual: git clone {REPO_URL} \"{install_dir}\"")
+            self._log_write(f"Manual: git clone {REPO_URL} \"{install_dir}\"")
+            return
+
+        ok, out = run_cmd(
+            ["git", "clone", REPO_URL, str(install_dir)],
+            timeout=120,
+        )
+        if ok or (install_dir / "automation" / "dashboard.py").exists():
+            state["cpharm_dir"] = str(install_dir)
+            self._set_row("cpharm", "✅  Done", GREEN)
+            self._log_write("CPharm installed via git clone ✅")
+        else:
+            self._set_row("cpharm", "❌  Failed", RED)
+            self._log_write("Both ZIP download and git clone failed.")
+            self._log_write(f"Manual: git clone {REPO_URL} \"{install_dir}\"")
 
     # ── main install flow ─────────────────────────────────────────────────────
 

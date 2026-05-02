@@ -26,6 +26,10 @@ import threading
 import urllib.parse
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 from websockets.server import serve
 
 import tor_manager
@@ -58,7 +62,6 @@ _app_cache_time: dict[str, float] = {}
 APP_CACHE_TTL = 30.0
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=32)
 
-SCRIPT_DIR     = Path(__file__).parent
 HTML_FILE      = SCRIPT_DIR / "dashboard.html"
 PLAYSTORE_FILE = SCRIPT_DIR / "playstore.html"
 GROUPS_CFG     = REC_DIR / "groups_config.json"

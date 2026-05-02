@@ -21,6 +21,9 @@ import tor_manager
 
 log = logging.getLogger("scheduler")
 
+# When JSON body omits hits_per_day, match wizard / groups default (720/day)
+DEFAULT_HITS_PER_DAY = 720
+
 PHONE_SCHED = {}    # serial -> {"hits": N, "times": [epoch], "idx": N}
 RUNNING = {}         # serial -> bool
 _main_loop = None    # event loop captured from async context
@@ -174,7 +177,7 @@ async def handle_scheduler(path: str, body_bytes: bytes, method: str = "POST"):
     if path == "/api/scheduler/generate":
         serials = [s for s in data.get("serials", []) if _SERIAL_RE.match(str(s))]
         try:
-            hits = max(0, min(int(data.get("hits_per_day", 0)), 1440))
+            hits = max(0, min(int(data.get("hits_per_day", DEFAULT_HITS_PER_DAY)), 1440))
         except (TypeError, ValueError):
             return dashboard.json_err("hits_per_day must be an integer")
         result = {}
@@ -187,9 +190,11 @@ async def handle_scheduler(path: str, body_bytes: bytes, method: str = "POST"):
 
     if path == "/api/scheduler/start":
         serials = [s for s in data.get("serials", []) if _SERIAL_RE.match(str(s))]
-        steps   = data.get("steps", [])
+        default_steps = data.get("steps", [])
+        steps_per_serial = data.get("steps_per_serial") or {}
+        hits_per_serial = data.get("hits_per_serial") or {}
         try:
-            hits = max(0, min(int(data.get("hits_per_day", 0)), 1440))
+            default_hits = max(0, min(int(data.get("hits_per_day", DEFAULT_HITS_PER_DAY)), 1440))
         except (TypeError, ValueError):
             return dashboard.json_err("hits_per_day must be an integer")
         started = []
@@ -197,11 +202,19 @@ async def handle_scheduler(path: str, body_bytes: bytes, method: str = "POST"):
             for s in serials:
                 if RUNNING.get(s, False):
                     continue
+                steps = steps_per_serial.get(s, default_steps)
+                if not isinstance(steps, list):
+                    steps = default_steps
+                try:
+                    hits = hits_per_serial.get(s, default_hits)
+                    hits = max(0, min(int(hits), 1440))
+                except (TypeError, ValueError):
+                    hits = default_hits
                 RUNNING[s] = True
                 t = threading.Thread(target=_sched_loop, args=(s, steps, hits), daemon=True)
                 t.start()
                 started.append(s)
-        return dashboard.json_ok({"started": started})
+        return dashboard.json_ok({"ok": True, "started": started})
 
     if path == "/api/scheduler/stop":
         with _sched_lock:

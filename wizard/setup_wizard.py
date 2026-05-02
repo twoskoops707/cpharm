@@ -8,7 +8,7 @@ Intended journey (high level):
   4. Create devices — Pixel AVDs via sdkmanager/avdmanager, or MuMu instances you spawn yourself.
   5. Connect & verify — ADB, boot emulators or MuMu phones, Chrome smoke checks; logs stay here.
   6. Automation — default step sequence (URLs, taps, Tor rotate); seeds Groups assignments.
-  7. Groups — stagger/repeat, per-phone overrides, clone-from-master (unchanged behavior).
+  7. Groups — stagger/repeat, per-phone steps and hits/day, clone master sequence to all phones.
   8. Play Console — closed-testing checklist when you ship builds to testers.
   9. Launch — start dashboard server, run groups, daily scheduler, open local dashboard URL.
 
@@ -237,6 +237,9 @@ def _is_mumu_gui_path(path: Path | str) -> bool:
     return n in ("mumuplayer.exe", "mumunxmain.exe")
 
 
+# Daily scheduler default (per-phone override lives on Groups page).
+DEFAULT_HITS_PER_DAY = 720
+
 STEP_LABELS = {
     "open_url":        "Open a website in Chrome",
     "tap":             "Tap the screen at a spot",
@@ -266,6 +269,91 @@ state = {
     }],
     "use_mumu": False,
 }
+
+
+def _normalize_all_groups():
+    """Ensure groups[].phones uses per-phone dicts with steps + hits_per_day."""
+    if not state.get("groups"):
+        return
+    default_steps = state.get("default_steps", [])
+    phones_booted = state.get("phones") or []
+    for g in state["groups"]:
+        phones_field = g.get("phones")
+        if isinstance(phones_field, list):
+            phones_field = {
+                p: {"steps": list(default_steps),
+                    "hits_per_day": DEFAULT_HITS_PER_DAY}
+                for p in phones_field}
+            g["phones"] = phones_field
+        elif not isinstance(phones_field, dict):
+            g["phones"] = {}
+        if phones_booted and not g["phones"]:
+            for p in phones_booted:
+                g["phones"][p["serial"]] = {
+                    "steps": list(default_steps),
+                    "hits_per_day": DEFAULT_HITS_PER_DAY,
+                }
+        for _serial, pdata in list(g.get("phones", {}).items()):
+            if not isinstance(pdata, dict):
+                g["phones"][_serial] = {
+                    "steps": list(default_steps),
+                    "hits_per_day": DEFAULT_HITS_PER_DAY,
+                }
+                continue
+            if "hits_per_day" not in pdata:
+                pdata["hits_per_day"] = DEFAULT_HITS_PER_DAY
+
+
+def _scheduler_maps_for_serials(serials: list[str], fallback_hits: int):
+    """Per-phone hits/steps from groups (first group listing each serial wins)."""
+    hits_ps: dict[str, int] = {}
+    steps_ps: dict[str, list] = {}
+    for g in state.get("groups") or []:
+        pmap = g.get("phones") or {}
+        if not isinstance(pmap, dict):
+            continue
+        for serial, pdata in pmap.items():
+            if not isinstance(pdata, dict):
+                continue
+            if serial in hits_ps:
+                continue
+            try:
+                h = int(pdata.get("hits_per_day", DEFAULT_HITS_PER_DAY))
+            except (TypeError, ValueError):
+                h = DEFAULT_HITS_PER_DAY
+            hits_ps[serial] = max(0, min(h, 1440))
+            steps_ps[serial] = list(pdata.get("steps") or [])
+    try:
+        fb = max(0, min(int(fallback_hits), 1440))
+    except (TypeError, ValueError):
+        fb = DEFAULT_HITS_PER_DAY
+    hits_out: dict[str, int] = {}
+    steps_out: dict[str, list] = {}
+    for s in serials:
+        if s in hits_ps:
+            hits_out[s] = hits_ps[s]
+            steps_out[s] = steps_ps.get(s, [])
+        else:
+            hits_out[s] = fb
+            steps_out[s] = []
+    return hits_out, steps_out
+
+
+def _try_load_groups_config():
+    """Restore groups from recordings/groups_config.json when present."""
+    d = (state.get("cpharm_dir") or "").strip()
+    root = Path(d) if d else _cpharm_install_root()
+    cfg = root / "automation" / "recordings" / "groups_config.json"
+    if not cfg.is_file():
+        return
+    try:
+        raw = json.loads(cfg.read_text(encoding="utf-8"))
+        groups = raw.get("groups")
+        if isinstance(groups, list) and groups:
+            state["groups"] = groups
+            _normalize_all_groups()
+    except Exception:
+        pass
 
 
 # ─── per-phone sequence editor ────────────────────────────────────────────────
@@ -5255,8 +5343,8 @@ class GroupsPage(PageBase):
                          highlightthickness=1, highlightbackground=BORDER)
         intro.pack(fill="x", pady=(0, 10))
         tk.Label(intro,
-                 text="Assign phones with checkboxes, edit per-phone sequences, clone from Phone 1, "
-                      "and tune timing — nothing was removed; styling only tightened elsewhere.",
+                 text="Assign phones with checkboxes, set hits/day per phone for the daily scheduler, "
+                      "edit each phone's sequence, and copy the master (Phone 1) sequence to all phones.",
                  font=FS, bg=BG2, fg=T2, justify="left", anchor="w").pack(fill="x")
 
         ctrl = tk.Frame(self, bg=BG)
@@ -5283,26 +5371,19 @@ class GroupsPage(PageBase):
         self._cards: list[tk.Frame] = []
 
     def on_enter(self):
-        default_steps = state.get("default_steps", [])
-        if state["phones"] and state["groups"]:
-            for g in state["groups"]:
-                phones_field = g["phones"]
-                if isinstance(phones_field, list):
-                    phones_field = {p: {"steps": list(default_steps)}
-                                    for p in phones_field}
-                    g["phones"] = phones_field
-                elif not isinstance(phones_field, dict):
-                    g["phones"] = {}
-                if not phones_field and state["phones"]:
-                    for p in state["phones"]:
-                        g["phones"][p["serial"]] = {"steps": list(default_steps)}
+        _normalize_all_groups()
         self._rebuild()
 
     def _add_group(self):
         n = len(state["groups"]) + 1
         default_steps = state.get("default_steps", [])
-        phones_map = {p["serial"]: {"steps": list(default_steps)}
-                      for p in state.get("phones", [])}
+        phones_map = {
+            p["serial"]: {
+                "steps": list(default_steps),
+                "hits_per_day": DEFAULT_HITS_PER_DAY,
+            }
+            for p in state.get("phones", [])
+        }
         state["groups"].append({
             "name":           f"Group {n}",
             "phones":         phones_map,
@@ -5374,9 +5455,20 @@ class GroupsPage(PageBase):
         else:
             for phone in state["phones"]:
                 serial = phone["serial"]
-                pdata = phone_map.get(serial, {})
-                steps = pdata.get("steps", []) if isinstance(pdata, dict) else []
-                psteps = steps  # keep reference for mutation
+                in_group = serial in phone_map
+                if in_group:
+                    pdata = phone_map[serial]
+                    if not isinstance(pdata, dict):
+                        pdata = {"steps": [], "hits_per_day": DEFAULT_HITS_PER_DAY}
+                        phone_map[serial] = pdata
+                    if "hits_per_day" not in pdata:
+                        pdata["hits_per_day"] = DEFAULT_HITS_PER_DAY
+                    psteps = pdata.setdefault("steps", [])
+                    hit_initial = int(pdata["hits_per_day"])
+                else:
+                    pdata = None
+                    psteps = []
+                    hit_initial = DEFAULT_HITS_PER_DAY
 
                 row = tk.Frame(phones_frame, bg=BG3, padx=8, pady=5)
                 row.pack(fill="x", pady=2)
@@ -5391,6 +5483,25 @@ class GroupsPage(PageBase):
                                    font=FM, bg=BG3,
                                    fg=GREEN if step_cnt else YELLOW, width=10, anchor="w")
                 cnt_lbl.pack(side="left", padx=(4, 6))
+
+                # Scheduler: hits per day (per phone)
+                tk.Label(row, text="hits/day", font=FS, bg=BG3, fg=T3, width=7, anchor="e").pack(
+                    side="left", padx=(2, 0))
+                hits_var = tk.IntVar(value=hit_initial)
+
+                def save_hits(*_, sv=serial, var=hits_var, g=group):
+                    ent = g["phones"].get(sv)
+                    if sv not in g["phones"] or not isinstance(ent, dict):
+                        return
+                    try:
+                        ent["hits_per_day"] = max(0, min(int(var.get()), 1440))
+                    except (tk.TclError, TypeError, ValueError):
+                        ent["hits_per_day"] = DEFAULT_HITS_PER_DAY
+
+                hits_sb = tk.Spinbox(row, from_=0, to=1440, textvariable=hits_var,
+                                     width=5, font=FM, bg=BG2, fg=T1, relief="flat")
+                hits_sb.pack(side="left", padx=(2, 8))
+                hits_var.trace_add("write", save_hits)
 
                 # Edit this phone's sequence
                 def edit_phone(serial=serial, psteps_ref=[psteps], cnt_lbl=cnt_lbl):
@@ -5421,10 +5532,17 @@ class GroupsPage(PageBase):
                 # Toggle
                 var = tk.BooleanVar(value=serial in phone_map)
 
-                def toggle(v=var, s=serial, ref=[psteps]):
+                def toggle(v=var, s=serial, ref=[psteps], hv=hits_var):
                     if v.get():
                         if s not in group["phones"]:
-                            group["phones"][s] = {"steps": ref[0]}
+                            try:
+                                h = max(0, min(int(hv.get()), 1440))
+                            except (tk.TclError, TypeError, ValueError):
+                                h = DEFAULT_HITS_PER_DAY
+                            group["phones"][s] = {
+                                "steps": list(ref[0]),
+                                "hits_per_day": h,
+                            }
                     else:
                         group["phones"].pop(s, None)
 
@@ -5440,15 +5558,26 @@ class GroupsPage(PageBase):
                 master_steps = (phone_map.get(master_serial, {}) or {}).get("steps", [])
 
                 def clone_all(i=idx, ms=master_serial, msteps=master_steps):
-                    # Clone Phone 1's sequence to all phones in this group
+                    # Clone Phone 1's sequence to every phone's own editable copy (steps only).
                     for phone in state["phones"]:
                         s = phone["serial"]
                         if s in group["phones"]:
-                            group["phones"][s]["steps"] = list(msteps)
+                            ent = group["phones"][s]
+                            if not isinstance(ent, dict):
+                                ent = {"steps": list(msteps),
+                                       "hits_per_day": DEFAULT_HITS_PER_DAY}
+                                group["phones"][s] = ent
+                            else:
+                                prev_h = ent.get("hits_per_day", DEFAULT_HITS_PER_DAY)
+                                ent["steps"] = list(msteps)
+                                ent["hits_per_day"] = prev_h
                         else:
-                            group["phones"][s] = {"steps": list(msteps)}
+                            group["phones"][s] = {
+                                "steps": list(msteps),
+                                "hits_per_day": DEFAULT_HITS_PER_DAY,
+                            }
                     self._rebuild()
-                    self._log_write(f"[{state['groups'][i]['name']}] Cloned to all phones.")
+                    self._log_write(f"[{state['groups'][i]['name']}] Master sequence copied to all phones.")
 
                 cl_img = load_icon("icon_clone", self.winfo_toplevel())
                 cb_kw = dict(
@@ -5714,18 +5843,19 @@ class LaunchPage(PageBase):
                  font=("Segoe UI", 11, "bold"), bg=BG3,
                  fg=PURPLE, anchor="w").pack(fill="x")
         tk.Label(sched,
-                 text="Automate hits spread randomly across 24 hours per phone.",
+                 text="Hits are spread at random times across 24h. Per-phone counts are on the Groups page; "
+                      "the value below is the fallback for phones not in any group.",
                  font=FS, bg=BG3, fg=T2, anchor="w", wraplength=640).pack(
                      fill="x", pady=(2, 8))
 
         sched_row = tk.Frame(sched, bg=BG3)
         sched_row.pack(fill="x")
-        tk.Label(sched_row, text="Hits/day:", font=FS, bg=BG3, fg=T2).pack(side="left")
-        self._sched_hits_var = tk.IntVar(value=720)
+        tk.Label(sched_row, text="Fallback hits/day:", font=FS, bg=BG3, fg=T2).pack(side="left")
+        self._sched_hits_var = tk.IntVar(value=DEFAULT_HITS_PER_DAY)
         tk.Entry(sched_row, textvariable=self._sched_hits_var, font=FM,
                  bg=BG2, fg=T1, insertbackground=T1, relief="flat",
                  width=8).pack(side="left", padx=6)
-        tk.Label(sched_row, text="per phone", font=FS, bg=BG3, fg=T2).pack(side="left")
+        tk.Label(sched_row, text="(unassigned phones only)", font=FS, bg=BG3, fg=T2).pack(side="left")
         self._sched_btn = tk.Button(sched_row,
                                    text="Start schedule",
                                    font=("Segoe UI", 10, "bold"),
@@ -5769,13 +5899,25 @@ class LaunchPage(PageBase):
         lines = []
         for i, g in enumerate(state["groups"], 1):
             names = []
+            hits_list = []
             for s in g["phones"]:
                 m = next((p for p in state["phones"] if p["serial"] == s), None)
                 names.append(m["name"] if m else s)
+                ent = g["phones"].get(s)
+                if isinstance(ent, dict) and "hits_per_day" in ent:
+                    try:
+                        hits_list.append(int(ent["hits_per_day"]))
+                    except (TypeError, ValueError):
+                        pass
             rep = "forever" if g["repeat_forever"] else f"{g['repeat']}×"
+            hpart = ""
+            if hits_list:
+                lo, hi = min(hits_list), max(hits_list)
+                hpart = f"  |  hits/day {lo}" if lo == hi else f"  |  hits/day {lo}–{hi}"
+            nsteps = len(next(iter(g["phones"].values()), {}).get("steps", []))
             lines.append(
-                f"  {g['name']}  |  {len(names)} phone(s)  |  "
-                f"{len(next(iter(g['phones'].values()), {}).get('steps', []))} steps  |  stagger {g['stagger_secs']}s  |  {rep}")
+                f"  {g['name']}  |  {len(names)} phone(s)  |  {nsteps} steps{hpart}  |  "
+                f"stagger {g['stagger_secs']}s  |  {rep}")
         self._summary.delete("1.0", "end")
         self._summary.insert("end", "\n".join(lines) or "  (no groups)")
 
@@ -5958,22 +6100,43 @@ class LaunchPage(PageBase):
         threading.Thread(target=go, daemon=True).start()
 
     def _start_schedule(self):
-        """Start the daily schedule on all booted phones."""
-        hits = self._sched_hits_var.get()
+        """Start the daily schedule on all booted phones (per-phone steps and hits from Groups)."""
+        try:
+            fallback_hits = max(0, min(int(self._sched_hits_var.get()), 1440))
+        except (TypeError, ValueError, tk.TclError):
+            fallback_hits = DEFAULT_HITS_PER_DAY
         phones = state.get("phones", [])
         if not phones:
             messagebox.showwarning("No phones running",
                                    "Boot phones on Connect & boot first.")
             return
         serials = [p["serial"] for p in phones]
-        _groups = state.get("groups") or []
-        first_phones = (_groups[0].get("phones") if _groups else None) or {}
-        steps = next(iter(first_phones.values()), {}).get("steps", []) if first_phones else []
+        default_steps = list(state.get("default_steps", []))
+        steps_per_serial = {s: list(default_steps) for s in serials}
+        hits_per_serial = {s: fallback_hits for s in serials}
+        assigned: set[str] = set()
+        for g in state.get("groups") or []:
+            for s, pdata in (g.get("phones") or {}).items():
+                if s not in serials or s in assigned:
+                    continue
+                if isinstance(pdata, dict):
+                    steps_per_serial[s] = list(pdata.get("steps", default_steps))
+                    try:
+                        hits_per_serial[s] = max(
+                            0, min(int(pdata.get("hits_per_day", fallback_hits)), 1440))
+                    except (TypeError, ValueError):
+                        hits_per_serial[s] = fallback_hits
+                assigned.add(s)
         try:
             import urllib.request
             url = f"http://localhost:{DASHBOARD_PORT}/api/scheduler/start"
-            body = json.dumps({"serials": serials, "steps": steps,
-                              "hits_per_day": hits}).encode()
+            body = json.dumps({
+                "serials": serials,
+                "steps": default_steps,
+                "hits_per_day": fallback_hits,
+                "steps_per_serial": steps_per_serial,
+                "hits_per_serial": hits_per_serial,
+            }).encode()
             req = urllib.request.Request(
                 url, data=body,
                 headers={"Content-Type": "application/json"},
@@ -5981,10 +6144,13 @@ class LaunchPage(PageBase):
             with urllib.request.urlopen(req, timeout=5) as r:
                 result = json.loads(r.read())
             if result.get("ok"):
+                hvals = list(hits_per_serial.values())
+                hsum = f"{min(hvals)}–{max(hvals)}" if hvals and min(hvals) != max(hvals) else str(
+                    hvals[0] if hvals else fallback_hits)
                 self._sched_lbl.config(
-                    text=f"Hitting {len(serials)} phones {hits}×/day randomly",
+                    text=f"Scheduled {len(serials)} phones ({hsum} hits/day)",
                     fg=GREEN)
-                self._log_write("Scheduler started.\n")
+                self._log_write("Scheduler started (per-phone steps and hits from Groups).\n")
             else:
                 self._sched_lbl.config(text="Failed: " + str(result), fg=RED)
         except Exception as e:
@@ -6078,6 +6244,7 @@ class CPharmWizard(tk.Tk):
             if (g / "automation" / "dashboard.py").exists():
                 state["cpharm_dir"] = str(g)
                 break
+        _try_load_groups_config()
 
     def _build_header(self):
         hdr = tk.Frame(self, bg=BG2, height=68, highlightthickness=1,

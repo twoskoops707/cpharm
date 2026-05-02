@@ -61,6 +61,9 @@ HTML_FILE      = SCRIPT_DIR / "dashboard.html"
 PLAYSTORE_FILE = SCRIPT_DIR / "playstore.html"
 GROUPS_CFG     = REC_DIR / "groups_config.json"
 
+# Matches wizard `DEFAULT_HITS_PER_DAY` — per-phone daily scheduler quota default
+DEFAULT_HITS_PER_DAY = 720
+
 
 # ── ADB helpers ───────────────────────────────────────────────────────────────
 
@@ -405,6 +408,10 @@ async def handle_post(path: str, body: bytes) -> bytes:
             data = json.loads(body)
         except Exception:
             pass
+
+    # ── Scheduler (wizard POSTs here; GET also supported in main handler) ──
+    if path.startswith("/api/scheduler"):
+        return await handle_scheduler(path, body)
 
     # ── Connect / disconnect device ──
     if path == "/api/devices/connect":
@@ -871,12 +878,24 @@ async def handle_post(path: str, body: bytes) -> bytes:
             source_steps = target["steps"]
         if not source_steps:
             return json_err("no source steps found to clone")
-        # Clone to all phones in the group
+        # Clone to all phones in the group (preserve per-phone hits_per_day if present)
         for serial in phone_map:
             if isinstance(phone_map[serial], dict):
+                prev_hits = phone_map[serial].get("hits_per_day")
                 phone_map[serial]["steps"] = list(source_steps)
+                if prev_hits is not None:
+                    try:
+                        phone_map[serial]["hits_per_day"] = max(
+                            0, min(int(prev_hits), 1440))
+                    except (TypeError, ValueError):
+                        phone_map[serial]["hits_per_day"] = DEFAULT_HITS_PER_DAY
+                else:
+                    phone_map[serial]["hits_per_day"] = DEFAULT_HITS_PER_DAY
             else:
-                phone_map[serial] = {"steps": list(source_steps)}
+                phone_map[serial] = {
+                    "steps": list(source_steps),
+                    "hits_per_day": DEFAULT_HITS_PER_DAY,
+                }
         GROUPS_CFG.write_text(json.dumps(cfg, indent=2))
         return json_ok({"ok": True, "cloned": len(phone_map), "steps_count": len(source_steps)})
 

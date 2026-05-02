@@ -2038,14 +2038,78 @@ def _try_newnym(serial: str) -> bool:
         return False
 
 
-def setup_chrome(serial):
+def _chrome_pkg_installed(serial: str) -> bool:
+    out = adb("shell", "pm", "path", "com.android.chrome", serial=serial, timeout=20)
+    return "package:" in (out or "")
+
+
+def ensure_android_chrome(
+    serial: str,
+    log_fn=None,
+    *,
+    open_play_if_missing: bool = True,
+) -> bool:
+    """Ensure ``com.android.chrome`` exists (many MuMu / AVD images ship without Chrome)."""
+    if _chrome_pkg_installed(serial):
+        return True
+    adb("shell", "pm", "enable", "com.android.chrome", serial=serial, timeout=15)
+    if _chrome_pkg_installed(serial):
+        return True
+    for args in (
+        ("shell", "cmd", "package", "install-existing", "com.android.chrome"),
+        ("shell", "cmd", "package", "install-existing", "--user", "0", "com.android.chrome"),
+        ("shell", "pm", "install-existing", "com.android.chrome"),
+        ("shell", "pm", "install-existing", "--user", "0", "com.android.chrome"),
+    ):
+        out = adb(*args, serial=serial, timeout=120)
+        if log_fn:
+            log_fn(f"    {' '.join(args[1:])} → {(out or '')[:160]}\n")
+        if _chrome_pkg_installed(serial):
+            return True
+    if open_play_if_missing:
+        if log_fn:
+            log_fn(
+                "    Opening Play Store — install **Google Chrome**, wait until it finishes, "
+                "then tap “Setup Chrome on all phones” again.\n"
+            )
+        adb(
+            "shell",
+            "am",
+            "start",
+            "-a",
+            "android.intent.action.VIEW",
+            "-d",
+            "market://details?id=com.android.chrome",
+            serial=serial,
+            timeout=20,
+        )
+    elif log_fn:
+        log_fn("    Chrome not pre-installed — use Setup Chrome after installing from Play Store.\n")
+    return False
+
+
+def setup_chrome(serial, log_fn=None, *, offer_play_store: bool = True):
     """
     Kill Chrome first-run experience so URLs open immediately every time.
 
     Fresh AVDs show ToS / sync screens that swallow the target URL.
     Writing the chrome-command-line flags file disables all of that.
     Works without root — shell user can write to /data/local/tmp.
+
+    If Chrome is not installed, tries ``pm install-existing`` and optionally opens Play Store
+    (only when ``offer_play_store`` is True — e.g. user tapped Setup Chrome).
     """
+    if not ensure_android_chrome(
+        serial,
+        log_fn=log_fn,
+        open_play_if_missing=offer_play_store,
+    ):
+        if offer_play_store:
+            raise RuntimeError(
+                "Google Chrome is not on this device yet. "
+                "If the Play Store opened, install Chrome, wait for it to finish, then try again."
+            )
+        return False
     flags = (
         "chrome --disable-first-run-experience "
         "--no-default-browser-check --no-first-run "
@@ -3919,11 +3983,12 @@ class BootPage(PageBase):
         chrome_box = tk.Frame(self, bg=BG3, padx=14, pady=10)
         chrome_box.pack(fill="x", pady=(0, 8))
         tk.Label(chrome_box,
-                 text="Fix Chrome  (run once after phones boot)",
+                 text="Google Chrome on each phone",
                  font=("Segoe UI", 10, "bold"), bg=BG3, fg=YELLOW,
                  anchor="w").pack(fill="x")
         tk.Label(chrome_box,
-                 text="Disables first-run screens so URLs open instantly every time.",
+                 text="Ensures the Chrome app is installed (MuMu often ships without it), "
+                      "then disables first-run / sync prompts so URLs open cleanly.",
                  font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 6))
         chrome_ctrl = tk.Frame(chrome_box, bg=BG3)
         chrome_ctrl.pack(fill="x")
@@ -4008,7 +4073,7 @@ class BootPage(PageBase):
                     state["phones"] = phones
                     for p in phones:
                         try:
-                            setup_chrome(p["serial"])
+                            setup_chrome(p["serial"], offer_play_store=False)
                         except Exception:
                             pass
                     self.after(0, lambda: (
@@ -4255,10 +4320,15 @@ class BootPage(PageBase):
                         new_id = rotate_android_id(serial)
                         phones.append({"serial": serial, "name": name})
                         try:
-                            setup_chrome(serial)
-                            self._log_write(f"  ✅ {name}: {serial}  ID:{new_id[:8]}… Chrome ✓\n")
-                        except Exception:
-                            self._log_write(f"  ✅ {name}: {serial}  ID:{new_id[:8]}…\n")
+                            if setup_chrome(serial, log_fn=self._log_write, offer_play_store=False):
+                                self._log_write(f"  ✅ {name}: {serial}  ID:{new_id[:8]}… Chrome ✓\n")
+                            else:
+                                self._log_write(
+                                    f"  ✅ {name}: {serial}  ID:{new_id[:8]}… "
+                                    "(Chrome missing — open Play Store on device or tap Setup Chrome below)\n"
+                                )
+                        except Exception as e:
+                            self._log_write(f"  ⚠ {name}: {e}\n")
                         row_lbl = self._status_rows.get(serial)
                         if row_lbl:
                             self.after(0, lambda lb=row_lbl: lb.config(text="✅ Running", fg=GREEN))
@@ -4381,7 +4451,7 @@ class BootPage(PageBase):
                     new_id = rotate_android_id(serial)
                     phones.append({"serial": serial, "name": avd})
                     try:
-                        setup_chrome(serial)
+                        setup_chrome(serial, offer_play_store=False)
                     except Exception:
                         pass
                     self._log_write(
@@ -4453,7 +4523,7 @@ class BootPage(PageBase):
         def go():
             for p in phones:
                 try:
-                    setup_chrome(p["serial"])
+                    setup_chrome(p["serial"], log_fn=self._log_write, offer_play_store=True)
                     self._log_write(f"  ✅ {p['name']}: Chrome ready\n")
                 except Exception as e:
                     self._log_write(f"  ⚠ {p['name']}: {e}\n")

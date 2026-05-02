@@ -122,6 +122,72 @@ FB = ("Segoe UI", 11)
 FG = ("Segoe UI", 13)
 FM = ("Consolas", 10)
 
+# Themed ttk scrollbars — style name used after `_style_scrollbars(root)` runs.
+CPharm_TSCROLL = "CPharm.Vertical.TScrollbar"
+
+
+def _style_scrollbars(root: tk.Misc) -> None:
+    """Configure ttk vertical scrollbars to match BG2 / BORDER / ACCENT. Idempotent."""
+    try:
+        style = ttk.Style(root)
+    except tk.TclError:
+        return
+    style.configure(
+        CPharm_TSCROLL,
+        background=BG2,
+        troughcolor=BG3,
+        bordercolor=BORDER,
+        arrowcolor=T2,
+        borderwidth=0,
+        relief="flat",
+        width=10,
+    )
+    style.map(
+        CPharm_TSCROLL,
+        background=[("active", BG3), ("pressed", BORDER)],
+        arrowcolor=[("active", ACCENT), ("pressed", ACCENT)],
+        troughcolor=[("active", BG3)],
+    )
+
+
+def _readonly_log_key(event: tk.Event) -> str | None:
+    """Block typing/edits; allow Ctrl+A/C, navigation, and selection."""
+    ks = event.keysym
+    if ks in (
+        "Shift_L", "Shift_R", "Control_L", "Control_R",
+        "Alt_L", "Alt_R", "Meta_L", "Meta_R", "Caps_Lock", "Num_Lock",
+    ):
+        return
+    # Ctrl shortcuts: select all, copy
+    if event.state & 0x0004:
+        kl = ks.lower()
+        if kl in ("a", "c"):
+            return
+        return "break"
+    if ks in (
+        "Left", "Right", "Up", "Down", "Home", "End",
+        "Prior", "Next", "Tab",
+    ):
+        return
+    if ks.startswith("KP_") and ks in (
+        "KP_Left", "KP_Right", "KP_Up", "KP_Down",
+        "KP_Prior", "KP_Next", "KP_Home", "KP_End",
+    ):
+        return
+    return "break"
+
+
+def _attach_readonly_log_text(w: tk.Text) -> None:
+    """Read-only log/status Text: selectable and Ctrl+A/C work; no typing or paste."""
+    w.configure(state="normal", cursor="arrow")
+    w.bind("<Key>", _readonly_log_key)
+    w.bind("<<Paste>>", lambda e: "break")
+    w.bind("<Control-v>", lambda e: "break")
+    w.bind("<Control-V>", lambda e: "break")
+    w.bind("<Control-x>", lambda e: "break")
+    w.bind("<Control-X>", lambda e: "break")
+
+
 STEP_ICONS = {
     "open_url":        "🌐",
     "tap":             "👆",
@@ -210,7 +276,8 @@ class PerPhoneSequenceEditor(tk.Toplevel):
         self._lb = tk.Listbox(fr, font=FM, bg=BG2, fg=T1,
                               selectbackground=ACCENT, relief="flat",
                               height=12, activestyle="none")
-        sb = tk.Scrollbar(fr, orient="vertical", command=self._lb.yview)
+        sb = ttk.Scrollbar(fr, orient="vertical", command=self._lb.yview,
+                           style=CPharm_TSCROLL)
         self._lb.configure(yscrollcommand=sb.set)
         self._lb.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
@@ -2189,8 +2256,10 @@ class PrerequisitesPage(PageBase):
         log_fr = tk.Frame(self, bg=BG2)
         log_fr.pack(fill="both", expand=True, pady=(6, 0))
         self._log_box = tk.Text(log_fr, height=5, font=FM, bg=BG2, fg=T1,
-                                relief="flat", state="disabled", wrap="word")
-        sb = tk.Scrollbar(log_fr, orient="vertical", command=self._log_box.yview)
+                                relief="flat", wrap="word")
+        _attach_readonly_log_text(self._log_box)
+        sb = ttk.Scrollbar(log_fr, orient="vertical", command=self._log_box.yview,
+                           style=CPharm_TSCROLL)
         self._log_box.configure(yscrollcommand=sb.set)
         self._log_box.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
@@ -2204,10 +2273,8 @@ class PrerequisitesPage(PageBase):
 
     def _log(self, text):
         def _do():
-            self._log_box.config(state="normal")
             self._log_box.insert("end", text if text.endswith("\n") else text + "\n")
             self._log_box.see("end")
-            self._log_box.config(state="disabled")
         self.after(0, _do)
 
     def _set_row(self, key, text, color=T2):
@@ -2691,8 +2758,10 @@ class AndroidStudioPage(PageBase):
         log_fr = tk.Frame(self, bg=BG2)
         log_fr.pack(fill="both", expand=True, pady=(6, 0))
         self._log_box = tk.Text(log_fr, height=7, font=FM, bg=BG2, fg=T1,
-                                relief="flat", state="disabled", wrap="word")
-        sb = tk.Scrollbar(log_fr, orient="vertical", command=self._log_box.yview)
+                                relief="flat", wrap="word")
+        _attach_readonly_log_text(self._log_box)
+        sb = ttk.Scrollbar(log_fr, orient="vertical", command=self._log_box.yview,
+                           style=CPharm_TSCROLL)
         self._log_box.configure(yscrollcommand=sb.set)
         self._log_box.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
@@ -2766,10 +2835,8 @@ class AndroidStudioPage(PageBase):
 
     def _log(self, text):
         def _do():
-            self._log_box.config(state="normal")
             self._log_box.insert("end", text if text.endswith("\n") else text + "\n")
             self._log_box.see("end")
-            self._log_box.config(state="disabled")
         self.after(0, _do)
 
     def _set_status(self, icon, text, detail="", color=T1):
@@ -3361,8 +3428,10 @@ class PhoneFarmPage(PageBase):
         log_fr = tk.Frame(self, bg=BG2)
         log_fr.pack(fill="both", expand=True, pady=(4, 0))
         self._log_box = tk.Text(log_fr, height=7, font=FM, bg=BG2, fg=T1,
-                                relief="flat", state="disabled", wrap="word")
-        sb = tk.Scrollbar(log_fr, orient="vertical", command=self._log_box.yview)
+                                relief="flat", wrap="word")
+        _attach_readonly_log_text(self._log_box)
+        sb = ttk.Scrollbar(log_fr, orient="vertical", command=self._log_box.yview,
+                           style=CPharm_TSCROLL)
         self._log_box.configure(yscrollcommand=sb.set)
         self._log_box.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
@@ -3543,10 +3612,8 @@ class PhoneFarmPage(PageBase):
 
     def _log_write(self, text):
         def _do():
-            self._log_box.config(state="normal")
             self._log_box.insert("end", text)
             self._log_box.see("end")
-            self._log_box.config(state="disabled")
         self.after(0, _do)
 
     def _delete_phones(self):
@@ -3743,7 +3810,8 @@ class BootPage(PageBase):
                  font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1,
                  anchor="w").pack(fill="x")
         self._summary = tk.Text(summary_outer, height=4, font=FM, bg=BG2, fg=T1,
-                                relief="flat", state="disabled", wrap="word")
+                                relief="flat", wrap="word")
+        _attach_readonly_log_text(self._summary)
         self._summary.pack(fill="x")
 
         # Server
@@ -3835,9 +3903,10 @@ class BootPage(PageBase):
         log_fr = tk.Frame(self, bg=BG2)
         log_fr.pack(fill="both", expand=True)
         self._log_box = tk.Text(log_fr, height=7, font=FM, bg=BG2, fg=T1,
-                                relief="flat", state="disabled", wrap="word")
-        log_sb = tk.Scrollbar(log_fr, orient="vertical",
-                              command=self._log_box.yview)
+                                relief="flat", wrap="word")
+        _attach_readonly_log_text(self._log_box)
+        log_sb = ttk.Scrollbar(log_fr, orient="vertical",
+                               command=self._log_box.yview, style=CPharm_TSCROLL)
         self._log_box.configure(yscrollcommand=log_sb.set)
         self._log_box.pack(side="left", fill="both", expand=True)
         log_sb.pack(side="right", fill="y")
@@ -4035,10 +4104,8 @@ class BootPage(PageBase):
 
     def _log_write(self, text):
         def _do():
-            self._log_box.config(state="normal")
             self._log_box.insert("end", text)
             self._log_box.see("end")
-            self._log_box.config(state="disabled")
         self.after(0, _do)
 
     def _save(self):
@@ -4545,7 +4612,8 @@ class PlayStorePage(PageBase):
         outer = tk.Frame(self, bg=BG)
         outer.pack(fill="both", expand=True)
         canvas = tk.Canvas(outer, bg=BG, highlightthickness=0)
-        sb     = tk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        sb     = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview,
+                               style=CPharm_TSCROLL)
         canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
@@ -4642,7 +4710,8 @@ class GroupsPage(PageBase):
         wrapper = tk.Frame(self, bg=BG)
         wrapper.pack(fill="both", expand=True)
         self._canvas = tk.Canvas(wrapper, bg=BG, highlightthickness=0)
-        sb = tk.Scrollbar(wrapper, orient="vertical", command=self._canvas.yview)
+        sb = ttk.Scrollbar(wrapper, orient="vertical", command=self._canvas.yview,
+                           style=CPharm_TSCROLL)
         self._canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self._canvas.pack(side="left", fill="both", expand=True)
@@ -4996,7 +5065,8 @@ class LaunchPage(PageBase):
                  font=("Segoe UI", 10, "bold"), bg=BG2, fg=T1,
                  anchor="w").pack(fill="x")
         self._summary = tk.Text(summary_outer, height=4, font=FM, bg=BG2, fg=T1,
-                                relief="flat", state="disabled", wrap="word")
+                                relief="flat", wrap="word")
+        _attach_readonly_log_text(self._summary)
         self._summary.pack(fill="x")
 
         # Server
@@ -5085,9 +5155,10 @@ class LaunchPage(PageBase):
         log_fr = tk.Frame(self, bg=BG2)
         log_fr.pack(fill="both", expand=True)
         self._log_box = tk.Text(log_fr, height=7, font=FM, bg=BG2, fg=T1,
-                                relief="flat", state="disabled", wrap="word")
-        log_sb = tk.Scrollbar(log_fr, orient="vertical",
-                              command=self._log_box.yview)
+                                relief="flat", wrap="word")
+        _attach_readonly_log_text(self._log_box)
+        log_sb = ttk.Scrollbar(log_fr, orient="vertical",
+                               command=self._log_box.yview, style=CPharm_TSCROLL)
         self._log_box.configure(yscrollcommand=log_sb.set)
         self._log_box.pack(side="left", fill="both", expand=True)
         log_sb.pack(side="right", fill="y")
@@ -5125,17 +5196,13 @@ class LaunchPage(PageBase):
             lines.append(
                 f"  {g['name']}  |  {len(names)} phone(s)  |  "
                 f"{len(next(iter(g['phones'].values()), {}).get('steps', []))} steps  |  stagger {g['stagger_secs']}s  |  {rep}")
-        self._summary.config(state="normal")
         self._summary.delete("1.0", "end")
         self._summary.insert("end", "\n".join(lines) or "  (no groups)")
-        self._summary.config(state="disabled")
 
     def _log(self, text):
         def _do():
-            self._log_box.config(state="normal")
             self._log_box.insert("end", text + "\n")
             self._log_box.see("end")
-            self._log_box.config(state="disabled")
         self.after(0, _do)
 
     _log_write = lambda self, t: self._log(t)
@@ -5359,6 +5426,7 @@ class CPharmWizard(tk.Tk):
 
     def __init__(self):
         super().__init__()
+        _style_scrollbars(self)
         self.title("CPharm Phone Farm Setup")
         self.geometry("820x880")
         self.minsize(760, 700)
@@ -5376,7 +5444,8 @@ class CPharmWizard(tk.Tk):
         for P in self.PAGES:
             outer = tk.Frame(self._content, bg=BG)
             canvas = tk.Canvas(outer, bg=BG, highlightthickness=0)
-            vsb = tk.Scrollbar(outer, orient="vertical", command=canvas.yview, width=8)
+            vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview,
+                                style=CPharm_TSCROLL)
             canvas.configure(yscrollcommand=vsb.set)
             vsb.pack(side="right", fill="y")
             canvas.pack(side="left", fill="both", expand=True)

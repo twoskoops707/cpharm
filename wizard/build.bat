@@ -34,6 +34,7 @@ echo.
 
 echo Step 3 of 3: Building CPharmSetup.exe ...
 cd /d "%~dp0"
+rem Produces a .exe matching this machine's Python (x64 on typical PCs; native ARM64 on Windows on ARM if Python is arm64).
 pyinstaller --onefile --windowed --name CPharmSetup --hidden-import wizard_theme --add-data "assets;assets" setup_wizard.py
 if errorlevel 1 (
     echo ERROR: Build failed. Read the error above.

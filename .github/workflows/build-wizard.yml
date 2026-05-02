@@ -11,6 +11,10 @@ permissions:
 
 jobs:
   build:
+    # GitHub-hosted windows-latest is x64 AMD64. PyInstaller output matches that runner's
+    # Python.exe architecture — typically x64. WoA (Snapdragon) users run that .exe under
+    # x64 emulation; a native ARM64 .exe would need a self-hosted windows-arm64 runner
+    # or a build on an ARM64 machine (see wizard/build.bat using local Python arch).
     runs-on: windows-latest
 
     steps:

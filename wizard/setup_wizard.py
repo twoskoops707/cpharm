@@ -464,6 +464,24 @@ def list_adb_devices():
     return devices
 
 
+def _adb_devices_tcp_ready_serials(devices_l_output: str):
+    """Parse ``adb devices -l`` for TCP serials (``host:port``) already in ``device`` state."""
+    lines = []
+    serials = []
+    for line in (devices_l_output or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("List of devices"):
+            continue
+        lines.append(line)
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        ser, st = parts[0], parts[1]
+        if ":" in ser and st == "device":
+            serials.append(ser)
+    return len(lines), serials
+
+
 def find_sdk():
     candidates = [
         os.environ.get("ANDROID_HOME", ""),
@@ -1187,14 +1205,26 @@ def _mumu_get_instances(mgr_path, log_fn=None):
     often works only on the legacy shell binary). Falls back to ``info -v <n>`` per VM.
     """
     mgr_path = Path(mgr_path)
-    exes: list[Path] = [mgr_path]
     fb = _mumu_shell_manager_fallback(mgr_path)
+    exes: list[Path] = [mgr_path]
     if fb and fb.resolve() != mgr_path.resolve():
         exes.append(fb)
 
+    if log_fn:
+        install_root = mgr_path.resolve().parent.parent
+        if fb is None:
+            log_fn(
+                "  Fallback not found: no shell\\MuMuManager.exe next to install "
+                f"under {install_root}\n"
+            )
+        elif fb.resolve() != mgr_path.resolve():
+            log_fn(f"  Shell fallback will run after primary if needed: {fb}\n")
+
     instances: list = []
 
-    for exe in exes:
+    for ei, exe in enumerate(exes):
+        if ei > 0 and log_fn:
+            log_fn(f"  Trying fallback: {exe}\n")
         tag = exe.name
         # 1) info -v all — try stdout, stderr, merge (nemux may spam GUI logs without JSON).
         ok, so, se = _mumu_run_capture(exe, "info", "-v", "all", timeout=18)
@@ -1273,11 +1303,30 @@ def _connect_mumu_phones(count=16, log_fn=None):
     # Fresh adb server avoids stale TCP state after emulator updates.
     adb("kill-server", timeout=5)
     adb("start-server", timeout=12)
+
+    devices_raw = adb("devices", "-l", timeout=12)
+    n_dev_lines, tcp_ready = _adb_devices_tcp_ready_serials(devices_raw)
+    if log_fn:
+        log_fn(
+            f"  adb devices -l: {n_dev_lines} device line(s), "
+            f"{len(tcp_ready)} TCP host:port in device state\n"
+        )
+
     _warn_arm64_x64_adb(log_fn)
 
     mgr = _find_mumu_manager()
     connected = []
     tried_serials = set()
+
+    for serial in tcp_ready:
+        if serial in tried_serials:
+            continue
+        tried_serials.add(serial)
+        check = adb("shell", "echo", "ok", serial=serial, timeout=6)
+        if check.strip() == "ok":
+            connected.append(serial)
+            if log_fn:
+                log_fn(f"  ✅ using listed TCP device: {serial}\n")
 
     if mgr:
         if log_fn:
@@ -1301,7 +1350,10 @@ def _connect_mumu_phones(count=16, log_fn=None):
         if log_fn:
             log_fn("  MuMu shell CLI not found — using port scan fallback\n")
 
-    # Port scan: MuMu 12 uses 16384 + n*32; some builds use other bases.
+    # Port scan: MuMu 12 uses 16384 + n*32; ARM / variant builds also use 7555 bands,
+    # 5555-class ports, and high ports such as 22471 (cap iterations per base ~48).
+    n_cap = min(48, max(count, 16))
+
     def _scan_ports(base_port, stride, n_iter):
         for i in range(n_iter):
             serial = f"127.0.0.1:{base_port + i * stride}"
@@ -1317,8 +1369,13 @@ def _connect_mumu_phones(count=16, log_fn=None):
                     if log_fn:
                         log_fn(f"  ✅ port scan: {serial}\n")
 
-    for base_port, stride in ((16384, 32), (7555, 2)):
-        _scan_ports(base_port, stride, count)
+    for base_port, stride, n_iter in (
+        (16384, 32, n_cap),
+        (7555, 2, n_cap),
+        (5555, 2, min(32, max(count, 8))),
+        (22471, 1, min(32, max(count, 8))),
+    ):
+        _scan_ports(base_port, stride, n_iter)
 
     return connected
 

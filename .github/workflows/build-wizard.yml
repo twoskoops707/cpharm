@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -38,3 +38,19 @@ jobs:
           name: CPharmSetup-exe-${{ github.sha }}
           path: wizard/dist/CPharmSetup.exe
           retention-days: 30
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: wizard-build-${{ github.run_number }}
+          name: CPharm Setup Wizard (build ${{ github.run_number }})
+          body: |
+            Windows installer build from CI.
+
+            - **Build number:** ${{ github.run_number }}
+            - **Commit:** [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+            - **Workflow run:** [actions/${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          draft: false
+          prerelease: false
+          files: wizard/dist/CPharmSetup.exe
+          fail_on_unmatched_files: true

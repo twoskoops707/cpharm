@@ -13,7 +13,7 @@ Intended journey (high level):
   9. Launch — start dashboard server, run groups, daily scheduler, open local dashboard URL.
 
 State keys `state[...]` hold install path, `use_mumu`, `sdk_path`, `avds`, `phones`, `groups`,
-`default_steps`, and merge install uses `_install_targets_live_tree` + `_merge_dir_into`.
+`default_steps`, and merge install uses `_install_targets_live_tree` + `_merge_zip_tree_safe` / `_merge_dir_into`.
 
 Build (one-file), from the ``wizard`` directory:
     pip install pyinstaller pillow
@@ -161,6 +161,67 @@ def _merge_dir_into(src: Path, dst: Path) -> None:
             shutil.copytree(s, d, dirs_exist_ok=True)
         else:
             shutil.copy2(s, d)
+
+
+def _merge_zip_tree_safe(src: Path, dst: Path) -> None:
+    """Merge GitHub ZIP extract into dst by walking **src** only.
+
+    Avoids ``shutil.copytree`` merges that can touch nested ``.git`` trees under *dst*
+    (WinError 5: Access denied on locked objects/*.git).
+    Skips any destination path whose parts contain ``.git`` or ``.svn``.
+    """
+    if not src.is_dir():
+        return
+    skip_names = {".git", ".svn", "__pycache__", ".venv", "node_modules"}
+    for root, dirs, files in os.walk(src):
+        dirs[:] = [d for d in dirs if d not in skip_names]
+        rel = Path(root).relative_to(src)
+        for fname in files:
+            if fname.endswith(".pyc"):
+                continue
+            sp = Path(root) / fname
+            dp = dst / rel / fname
+            if ".git" in dp.parts or ".svn" in dp.parts:
+                continue
+            try:
+                dp.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(sp, dp)
+            except OSError as e:
+                raise OSError(f"merge {sp} -> {dp}: {e}") from e
+
+
+def _git_repo_roots_for_pull(install_dir: Path) -> list[Path]:
+    """Prefer nested clone ``install_dir/cpharm`` if it has .git, else ``install_dir``."""
+    roots = []
+    nested = install_dir / "cpharm"
+    if (nested / ".git").is_dir():
+        roots.append(nested)
+    if (install_dir / ".git").is_dir() and install_dir not in roots:
+        roots.append(install_dir)
+    return roots
+
+
+def _try_git_pull_cpharm(install_dir: Path, log_fn) -> bool:
+    """If a git checkout exists, try ``git pull --ff-only`` so we never overwrite .git via ZIP."""
+    for repo in _git_repo_roots_for_pull(install_dir):
+        log_fn(f"  Git repo found at {repo} — trying git pull --ff-only…\n")
+        ok, out = run_cmd(
+            ["git", "-C", str(repo), "pull", "--ff-only"],
+            timeout=180,
+        )
+        if ok and (repo / "automation" / "dashboard.py").exists():
+            log_fn("  Updated from GitHub via git pull ✅\n")
+            return True
+        log_fn(f"  git pull failed or incomplete: {(out or '')[-500:]}\n")
+    return False
+
+
+def _find_cpharm_dashboard_root(install_dir: Path) -> Path | None:
+    """Directory containing ``automation/dashboard.py`` (top-level or nested ``cpharm/``)."""
+    for base in (install_dir, install_dir / "cpharm"):
+        if (base / "automation" / "dashboard.py").exists():
+            return base.resolve()
+    return None
 
 
 def _is_mumu_manager_cli_path(path: Path | str) -> bool:
@@ -2597,6 +2658,17 @@ class PrerequisitesPage(PageBase):
                 "Install folder is (or contains) the running CPharm checkout — "
                 "will merge updates without deleting the live tree.\n"
             )
+            self._log_write(
+                "If this path is a git repo, updating with git pull first "
+                "(ZIP files never overwrite .git — avoids Access denied on locked objects).\n"
+            )
+            if _try_git_pull_cpharm(install_dir, self._log_write):
+                root = _find_cpharm_dashboard_root(install_dir)
+                if root:
+                    state["cpharm_dir"] = str(root)
+                    self._set_row("cpharm", "✅  Done", GREEN)
+                    self._log_write(f"CPharm ready at {root} ✅\n")
+                    return
 
         self._set_row("cpharm", "⬇  Downloading…", ACCENT)
         self._log_write("Downloading CPharm files from GitHub…")
@@ -2623,10 +2695,9 @@ class PrerequisitesPage(PageBase):
                 src_root = inner if inner and inner.is_dir() else extract_tmp
                 if live_tree:
                     install_dir.mkdir(parents=True, exist_ok=True)
-                    _merge_dir_into(src_root, install_dir)
+                    _merge_zip_tree_safe(src_root, install_dir)
                     self._log_write(
-                        "Merged extracted files into the existing folder "
-                        "(running wizard was not deleted).\n"
+                        "Merged ZIP contents into the folder (safe merge — skipped .git / VCS dirs).\n"
                     )
                 else:
                     if install_dir.exists():
@@ -2639,10 +2710,11 @@ class PrerequisitesPage(PageBase):
                 zip_ok = False
                 shutil.rmtree(extract_tmp, ignore_errors=True)
 
-        if (install_dir / "automation" / "dashboard.py").exists():
-            state["cpharm_dir"] = str(install_dir)
+        root = _find_cpharm_dashboard_root(install_dir)
+        if root:
+            state["cpharm_dir"] = str(root)
             self._set_row("cpharm", "✅  Done", GREEN)
-            self._log_write(f"CPharm installed at {install_dir} ✅")
+            self._log_write(f"CPharm installed at {root} ✅")
             return
 
         self._log_write("  ZIP method failed — trying git clone fallback…")
@@ -2662,8 +2734,9 @@ class PrerequisitesPage(PageBase):
             ["git", "clone", REPO_URL, str(install_dir)],
             timeout=120,
         )
-        if ok or (install_dir / "automation" / "dashboard.py").exists():
-            state["cpharm_dir"] = str(install_dir)
+        root = _find_cpharm_dashboard_root(install_dir)
+        if root:
+            state["cpharm_dir"] = str(root)
             self._set_row("cpharm", "✅  Done", GREEN)
             self._log_write("CPharm installed via git clone ✅")
         else:

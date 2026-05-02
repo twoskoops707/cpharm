@@ -1966,10 +1966,14 @@ class WelcomePage(PageBase):
     def __init__(self, parent):
         super().__init__(parent)
 
-        tk.Label(self, text="CPharm", font=("Segoe UI", 28, "bold"),
-                 bg=BG, fg=T1).pack(pady=(18, 2))
-        tk.Label(self, text="Virtual phone farm for Windows",
-                 font=("Segoe UI", 13), bg=BG, fg=T2).pack(pady=(0, 14))
+        tk.Label(self, text="CPharm Phone Farm", font=("Segoe UI", 26, "bold"),
+                 bg=BG, fg=T1).pack(pady=(18, 4))
+        tk.Label(
+            self,
+            text="Virtual Android phones on your Windows laptop — Snapdragon ARM64 or Intel.\n"
+                 "The wizard sets everything up automatically; big green buttons do the heavy lifting.",
+            font=("Segoe UI", 12), bg=BG, fg=T2, justify="center",
+        ).pack(pady=(0, 8))
 
         steps = tk.Frame(self, bg=BG2, padx=20, pady=16,
                          highlightthickness=1, highlightbackground=BORDER)
@@ -1978,8 +1982,8 @@ class WelcomePage(PageBase):
                  font=("Segoe UI", 11, "bold"), bg=BG2, fg=T1, anchor="w").pack(fill="x")
         tk.Label(steps,
                  text="1. Install tools   →   2. Add phones   →   3. Start the dashboard\n\n"
-                      "Tap Next each time. Big green buttons do the real work.\n"
-                      "Snapdragon / ARM64 PCs use MuMu Player instead of Google emulators.",
+                      "Tap Next on each screen. Use Tor + groups for identity rotation and parallel runs.\n"
+                      "On Snapdragon / ARM64 Windows, MuMu Player replaces Google emulators (no ARM64 AVD).",
                  font=FS, bg=BG2, fg=T2, justify="left", anchor="w").pack(fill="x", pady=(8, 0))
 
         # Architecture diagram — canvas only; static content is packed below, NOT inside the callback
@@ -1989,10 +1993,14 @@ class WelcomePage(PageBase):
         c.bind("<Configure>", lambda e: self._draw_diagram(c))
 
         # Static "What you get:" section — built once here, never inside _draw_diagram
-        tk.Label(self, text="What you get:",
-                 font=("Segoe UI", 10, "bold"), bg=BG, fg=YELLOW,
+        tk.Label(self, text="What you get",
+                 font=("Segoe UI", 11, "bold"), bg=BG, fg=YELLOW,
                  anchor="w").pack(fill="x", padx=4)
-        f = tk.Frame(self, bg=BG2, padx=16, pady=12)
+        tk.Label(self, text="Session flows, groups, scheduling, and Play Store closed-testing paths "
+                                "stay available on later wizard pages.",
+                 font=FS, bg=BG, fg=T3, anchor="w").pack(fill="x", padx=4, pady=(0, 4))
+        f = tk.Frame(self, bg=BG2, padx=16, pady=14,
+                     highlightthickness=1, highlightbackground=BORDER)
         f.pack(fill="x", pady=(4, 0))
         items = [
             ("🤖", "Multiple isolated Android phones — each its own world"),
@@ -2480,15 +2488,16 @@ class PrerequisitesPage(PageBase):
                 inner = next(extract_tmp.iterdir(), None)
                 src_root = inner if inner and inner.is_dir() else extract_tmp
                 if live_tree:
+                    install_dir.mkdir(parents=True, exist_ok=True)
                     _merge_dir_into(src_root, install_dir)
                     self._log_write(
                         "Merged extracted files into the existing folder "
                         "(running wizard was not deleted).\n"
                     )
                 else:
-                    install_dir.mkdir(parents=True, exist_ok=True)
-                    if install_dir.exists() and any(install_dir.iterdir()):
+                    if install_dir.exists():
                         shutil.rmtree(install_dir)
+                    install_dir.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(src_root), str(install_dir))
                 shutil.rmtree(extract_tmp, ignore_errors=True)
             except Exception as e:

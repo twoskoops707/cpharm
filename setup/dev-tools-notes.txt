@@ -1,0 +1,17 @@
+Dev tooling notes (CPharm)
+
+Python (this machine)
+- Launcher: py -3
+- requirements.txt (pip install -r requirements.txt): websockets 16.0, psutil 7.2.2 (constraints: websockets>=12.0, psutil>=5.9.0).
+- Wizard build (wizard/build.bat uses PyInstaller + Pillow): pyinstaller 6.20.0, pillow 12.2.0. Transitive PyInstaller deps may include altgraph, pyinstaller-hooks-contrib, pywin32-ctypes, setuptools.
+- pip was upgraded with: py -3 -m pip install --upgrade pip
+- If pyinstaller is not on PATH, run: py -3 -m PyInstaller ... (pip may install scripts under Python Scripts).
+
+Recommended for this codebase / Android-style workflows
+- JDK (for SDK or tooling that expects Java)
+- MuMu Player ARM (if using that emulator in project docs)
+- Git
+
+Cursor skills / rules
+- Skills live as local SKILL.md files under user config; there is no built-in bulk download of all skills from the internet via CLI.
+- Optional: add Cursor rules or copy skills from your account's .cursor/skills-cursor (or similar paths), or clone skill repos you maintain yourself.

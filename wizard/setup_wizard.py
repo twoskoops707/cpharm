@@ -828,7 +828,7 @@ def _find_mumu_player():
 
 
 def _mumu_parse_json_output(out: str):
-    """MuMuManager sometimes prints banners; extract the JSON object or array."""
+    """MuMu shell CLI sometimes prints banners; extract the JSON object or array."""
     s = (out or "").strip()
     if not s:
         return None
@@ -939,7 +939,7 @@ def _connect_mumu_phones(count=16, log_fn=None):
     """Connect to MuMuPlayer instances via MuMu shell CLI + adb connect.
 
     Always tries both the manager CLI (for names/exact ports) AND the port
-    fallback scan — so phones are found even if MuMuManager lookup fails.
+    fallback scan — so phones are found even if the MuMu CLI lookup fails.
     Returns list of connected ADB serials.
     """
     exe = adb_executable()
@@ -4001,22 +4001,37 @@ class BootPage(PageBase):
             Path(os.environ.get("PROGRAMFILES", "C:\\")) / "Netease"
         )
         path = filedialog.askopenfilename(
-            title="Select MuMuManager.exe — look in the 'shell' subfolder of your MuMuPlayerARM install",
-            filetypes=[("MuMuManager CLI", "MuMuManager.exe"), ("All executables", "*.exe"), ("All files", "*.*")],
+            title="Select MuMu shell CLI — shell\\ or nx_main\\ under MuMuPlayerARM",
+            filetypes=[
+                ("MuMu CLI", "*.exe"),
+                ("nemux-shell-winui.Manager", "nemux-shell-winui.Manager.exe"),
+                ("MuMuManager (legacy)", "MuMuManager.exe"),
+                ("All executables", "*.exe"),
+                ("All files", "*.*"),
+            ],
             initialdir=default_dir,
         )
         if path:
             name = Path(path).name
-            if name.lower() != "mumumanager.exe":
-                self._log_write(
-                    f"⚠ '{name}' is not MuMuManager.exe.\n"
-                    "  The CLI tool is MuMuManager.exe in the 'shell' folder:\n"
-                    "  C:\\Program Files\\Netease\\MuMuPlayerARM\\shell\\MuMuManager.exe\n"
-                    "  (not nemux-shell-winui.Manager.exe — that is the GUI app)\n"
+            if _is_mumu_gui_path(path):
+                messagebox.showwarning(
+                    "Not the CLI",
+                    f"⚠ '{name}' looks like the MuMu Player GUI.\n"
+                    "  Pick nemux-shell-winui.Manager.exe or MuMuManager.exe in shell\\.",
                 )
+                return
+            if not _is_mumu_manager_cli_path(path):
+                messagebox.showwarning(
+                    "Not MuMu CLI",
+                    f"⚠ '{name}' is not the MuMu command-line manager.\n"
+                    "  Typical:\n"
+                    "  …\\shell\\nemux-shell-winui.Manager.exe\n"
+                    "  …\\shell\\MuMuManager.exe",
+                )
+                return
             state["mumu_mgr_path"] = path
             self._mumu_path_var.set(path)
-            self._log_write(f"MuMuManager set: {path}\n")
+            self._log_write(f"MuMu CLI set ({name}): {path}\n")
 
     def _log_write(self, text):
         def _do():
@@ -4143,7 +4158,8 @@ class BootPage(PageBase):
                 mgr = _find_mumu_manager()
                 if not mgr:
                     self._log_write(
-                        "❌ MuMuManager.exe not found.\n"
+                        "❌ MuMu shell CLI not found "
+                        "(nemux-shell-winui.Manager.exe or MuMuManager.exe in shell\\).\n"
                         f"   Install MuMuPlayer ARM from: {MUMU_DOWNLOAD_URL}\n"
                     )
                     self.after(0, lambda: (

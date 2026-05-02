@@ -1325,8 +1325,8 @@ def _connect_mumu_phones(count=16, log_fn=None):
             log_fn("  adb not found — downloading minimal platform-tools…\n")
         _ensure_minimal_platform_tools(log_fn=log_fn)
 
-    # Fresh adb server avoids stale TCP state after emulator updates.
-    adb("kill-server", timeout=5)
+    # Ensure the adb daemon is running. Do **not** call ``adb kill-server`` here — it
+    # tears down *all* adb TCP sessions on this PC (other terminals, IDE, etc.).
     adb("start-server", timeout=12)
 
     devices_raw = adb("devices", "-l", timeout=12)

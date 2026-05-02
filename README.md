@@ -66,14 +66,14 @@ Each phone gets its own Tor circuit so every session looks like a different pers
 **Option B — Expert Bundle (no browser)**
 1. Download the Tor Expert Bundle for Windows from **torproject.org/download**
 2. Unzip it and copy everything into `automation\tor\` inside the CPharm folder
-   - `tor.exe` should end up at `cpharm\automation\tor\tor.exe`
+   - `tor.exe` should end up at `automation\tor\tor.exe` under your clone folder
 
 ---
 
 ## Folder Layout
 
 ```
-cpharm/
+cpharm-clone/          ← your project folder (name may vary)
   automation/
     dashboard.py      ← Automation server — started by the wizard
     tor_manager.py    ← Tor identity rotation
@@ -93,10 +93,16 @@ cpharm/
 
 ## Running the Server Without the Wizard
 
+The automation server file is **`automation\dashboard.py`** (there is no file named `dash`).
+
+**Windows:** double-click **`automation\run_dashboard.bat`** or:
+
 ```bash
 cd automation
-python dashboard.py
+py -3 dashboard.py
 ```
+
+If `py` is not on your PATH, use `python dashboard.py` instead.
 
 ---
 

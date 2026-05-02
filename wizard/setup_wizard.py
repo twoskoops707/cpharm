@@ -1056,6 +1056,53 @@ def _mumu_parse_json_output(out: str):
                 return json.loads(s[i : j + 1])
             except Exception:
                 continue
+    # Nemux / newer builds often mix log lines ("info: g.gX…", "App … Redirect") with JSON.
+    for blob in _mumu_iter_json_blobs(s):
+        try:
+            return json.loads(blob)
+        except Exception:
+            continue
+    return None
+
+
+def _mumu_iter_json_blobs(text: str):
+    """Yield balanced `{…}` / `[…]` substrings — finds JSON embedded in noisy CLI logs."""
+    if not text:
+        return
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] not in "{[":
+            i += 1
+            continue
+        opener, closer = text[i], "}" if text[i] == "{" else "]"
+        depth = 0
+        start = i
+        for j in range(i, n):
+            c = text[j]
+            if c == opener:
+                depth += 1
+            elif c == closer:
+                depth -= 1
+                if depth == 0:
+                    yield text[start : j + 1]
+                    i = j + 1
+                    break
+        else:
+            i += 1
+
+
+def _mumu_shell_manager_fallback(nemux_path: Path) -> Path | None:
+    """MuMuPlayerARM often ships ``shell\\MuMuManager.exe`` — JSON ``info`` works there when nemux only logs GUI spam."""
+    root = nemux_path.resolve().parent.parent
+    for rel in (
+        Path("shell") / "MuMuManager.exe",
+        Path("shell") / MUMU_MANAGER_LEGACY,
+        Path("nx_main") / "MuMuManager.exe",
+    ):
+        p = root / rel
+        if p.is_file():
+            return p
     return None
 
 
@@ -1071,45 +1118,35 @@ def _mumu_adb_port(d: dict):
     return None
 
 
-def _mumu_run(mgr_path, *args, timeout=15):
-    """Run MuMu shell CLI (nemux-shell-winui.Manager.exe or MuMuManager.exe).
-
-    Returns (ok, combined_stdout_stderr). Uses cwd = folder containing the exe.
-    """
+def _mumu_run_capture(mgr_path, *args, timeout=15):
+    """Run MuMu CLI; return (ok, stdout, stderr). Nemux often puts JSON only on one stream."""
     mgr_path = Path(mgr_path)
     cwd = str(mgr_path.parent)
     flags = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
     try:
         r = subprocess.run(
             [str(mgr_path)] + list(args),
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
             creationflags=flags,
             cwd=cwd,
+            encoding="utf-8",
+            errors="replace",
         )
-        out = ((r.stdout or "") + (r.stderr or "")).strip()
-        return r.returncode == 0, out
+        return r.returncode == 0, (r.stdout or ""), (r.stderr or "")
     except Exception as e:
-        return False, str(e)
+        return False, "", str(e)
 
 
-def _mumu_get_instances(mgr_path, log_fn=None):
-    """Return list of dicts: {index, name, adb_serial, started}.
+def _mumu_run(mgr_path, *args, timeout=15):
+    """Run MuMu shell CLI — returns (ok, combined_stdout_stderr)."""
+    ok, out, err = _mumu_run_capture(mgr_path, *args, timeout=timeout)
+    return ok, (out + "\n" + err).strip()
 
-    Uses manager CLI: info -v all
-    JSON can be a single dict (one instance) or a dict-of-dicts keyed by index.
-    """
-    ok, out = _mumu_run(mgr_path, "info", "-v", "all", timeout=15)
-    if log_fn:
-        log_fn(
-            f"  Manager CLI ({Path(mgr_path).name}) rc={ok} out={repr(out[:280]) if out else '(empty)'}\n"
-        )
-    data = _mumu_parse_json_output(out)
-    if data is None:
-        if out and log_fn:
-            log_fn(f"  Could not parse JSON from manager output.\n")
-        return []
 
-    instances = []
+def _instances_append_from_info_json(data, instances: list) -> None:
+    """Parse MuMu ``info`` JSON into instance dicts (mutates ``instances``)."""
 
     def _parse_one(d):
         if not isinstance(d, dict):
@@ -1118,24 +1155,98 @@ def _mumu_get_instances(mgr_path, log_fn=None):
         port = _mumu_adb_port(d)
         if port is None:
             return
+        idx = d.get("index", 0)
+        try:
+            idx = int(idx)
+        except (TypeError, ValueError):
+            idx = 0
         instances.append({
-            "index":      d.get("index", 0),
-            "name":       d.get("name") or d.get("vm_name") or f"MuMu-{d.get('index', 0)}",
+            "index":      idx,
+            "name":       d.get("name") or d.get("vm_name") or f"MuMu-{idx}",
             "adb_serial": f"{ip}:{port}",
             "started":    bool(d.get("is_android_started") or d.get("started")),
         })
 
     if isinstance(data, dict):
-        if "index" in data or "adb_port" in data or _mumu_adb_port(data) is not None:
+        if any(k in data for k in ("index", "adb_port")) or _mumu_adb_port(data) is not None:
             _parse_one(data)
         else:
             for v in data.values():
-                _parse_one(v)
+                if isinstance(v, dict):
+                    _parse_one(v)
     elif isinstance(data, list):
         for item in data:
-            _parse_one(item)
+            if isinstance(item, dict):
+                _parse_one(item)
 
-    return sorted(instances, key=lambda x: x["index"])
+
+def _mumu_get_instances(mgr_path, log_fn=None):
+    """Return list of dicts: {index, name, adb_serial, started}.
+
+    Tries ``nemux-shell-winui.Manager.exe`` and ``shell\\MuMuManager.exe`` (JSON ``info``
+    often works only on the legacy shell binary). Falls back to ``info -v <n>`` per VM.
+    """
+    mgr_path = Path(mgr_path)
+    exes: list[Path] = [mgr_path]
+    fb = _mumu_shell_manager_fallback(mgr_path)
+    if fb and fb.resolve() != mgr_path.resolve():
+        exes.append(fb)
+
+    instances: list = []
+
+    for exe in exes:
+        tag = exe.name
+        # 1) info -v all — try stdout, stderr, merge (nemux may spam GUI logs without JSON).
+        ok, so, se = _mumu_run_capture(exe, "info", "-v", "all", timeout=18)
+        if log_fn:
+            comb = (so + "\n" + se).strip()
+            log_fn(
+                f"  Manager CLI ({tag}) rc={ok} out={repr(comb[:320]) if comb else '(empty)'}\n"
+            )
+        for blob in (so + "\n" + se, so, se):
+            data = _mumu_parse_json_output(blob)
+            if data is not None:
+                _instances_append_from_info_json(data, instances)
+        if instances:
+            if log_fn and exe != mgr_path:
+                log_fn(f"  Using JSON from fallback: {exe}\n")
+            break
+
+        # 2) Per-VM info -v 0 .. 15 (works when ``all`` returns log spam only).
+        if log_fn:
+            log_fn(f"  Trying per-VM info -v <n> via {tag}…\n")
+        for idx in range(16):
+            ok, so, se = _mumu_run_capture(exe, "info", "-v", str(idx), timeout=10)
+            blob = (so + "\n" + se).strip()
+            if not blob:
+                continue
+            data = _mumu_parse_json_output(blob)
+            if data is None:
+                continue
+            before = len(instances)
+            _instances_append_from_info_json(data, instances)
+            if len(instances) > before:
+                continue
+        if instances:
+            if log_fn and exe != mgr_path:
+                log_fn(f"  Instance list via fallback: {exe}\n")
+            break
+
+    if not instances and log_fn:
+        log_fn(
+            "  Could not parse JSON from manager output — "
+            "will rely on adb port scan.\n"
+        )
+
+    # Dedupe by adb_serial
+    seen = set()
+    uniq = []
+    for inst in sorted(instances, key=lambda x: x["index"]):
+        s = inst["adb_serial"]
+        if s not in seen:
+            seen.add(s)
+            uniq.append(inst)
+    return uniq
 
 
 def _mumu_launch(mgr_path, index, log_fn=None):
@@ -2038,22 +2149,153 @@ def _try_newnym(serial: str) -> bool:
         return False
 
 
-def _chrome_pkg_installed(serial: str) -> bool:
-    out = adb("shell", "pm", "path", "com.android.chrome", serial=serial, timeout=20)
+def _apk_pkg_installed(serial: str, pkg: str) -> bool:
+    out = adb("shell", "pm", "path", pkg, serial=serial, timeout=20)
     return "package:" in (out or "")
+
+
+def _chrome_pkg_installed(serial: str) -> bool:
+    return _apk_pkg_installed(serial, "com.android.chrome")
+
+
+# F-Droid browser packages (no APK shipped here). Optional files under ``wizard/bundled/``:
+# ``Fennec.apk``, ``Mull.apk``, or ``fennec_fdroid.apk`` — user obtains builds from F-Droid / upstream.
+FDROID_FENNEC_PKG = "org.mozilla.fennec_fdroid"
+FDROID_MULL_PKG = "us.spotco.fennec_dos"
+
+
+def _try_pm_install_existing_pkg(serial: str, pkg: str, log_fn=None) -> bool:
+    """Enable stub / recoverable system package via ``pm install-existing`` variants."""
+    if _apk_pkg_installed(serial, pkg):
+        return True
+    adb("shell", "pm", "enable", pkg, serial=serial, timeout=15)
+    if _apk_pkg_installed(serial, pkg):
+        return True
+    for args in (
+        ("shell", "cmd", "package", "install-existing", pkg),
+        ("shell", "cmd", "package", "install-existing", "--user", "0", pkg),
+        ("shell", "pm", "install-existing", pkg),
+        ("shell", "pm", "install-existing", "--user", "0", pkg),
+    ):
+        out = adb(*args, serial=serial, timeout=120)
+        if log_fn:
+            log_fn(f"    {' '.join(args[1:])} → {(out or '')[:160]}\n")
+        if _apk_pkg_installed(serial, pkg):
+            return True
+    return False
+
+
+def _try_bundled_fdroid_apk(serial: str, log_fn=None) -> str | None:
+    """Install optional bundled Fennec/Mull APKs; return package id if one becomes installed."""
+    here = Path(__file__).resolve().parent / "bundled"
+    candidates = (
+        ("Fennec.apk", FDROID_FENNEC_PKG),
+        ("fennec_fdroid.apk", FDROID_FENNEC_PKG),
+        ("Mull.apk", FDROID_MULL_PKG),
+    )
+    for fname, expect_pkg in candidates:
+        p = here / fname
+        if not p.is_file():
+            continue
+        if log_fn:
+            log_fn(f"    adb install (bundled {fname})…\n")
+        out = adb("install", "-r", str(p), serial=serial, timeout=300)
+        if log_fn and out:
+            log_fn(f"    → {(out or '')[:200]}\n")
+        if _apk_pkg_installed(serial, expect_pkg):
+            return expect_pkg
+    return None
+
+
+def ensure_fdroid_browser(serial: str, log_fn=None) -> str | None:
+    """Ensure Fennec or Mull is installed; return the package id or None.
+
+    Order: already installed → ``install-existing`` for Fennec then Mull → optional bundled APKs.
+    """
+    if _apk_pkg_installed(serial, FDROID_FENNEC_PKG):
+        return FDROID_FENNEC_PKG
+    if _apk_pkg_installed(serial, FDROID_MULL_PKG):
+        return FDROID_MULL_PKG
+    if _try_pm_install_existing_pkg(serial, FDROID_FENNEC_PKG, log_fn):
+        return FDROID_FENNEC_PKG
+    if _try_pm_install_existing_pkg(serial, FDROID_MULL_PKG, log_fn):
+        return FDROID_MULL_PKG
+    got = _try_bundled_fdroid_apk(serial, log_fn)
+    return got
+
+
+#
+# Chrome APK workflow (user supplies APK — do not redistribute Google Chrome APK in open source):
+# - Sign in to Play on **one** phone with your Google account, install Chrome there, then either
+#   sideload the same build to other devices via **Install APK on all phones**, or place
+#   ``ChromePublic.apk`` / ``chrome.apk`` under ``wizard/bundled/`` (wizard installs per device).
+# - Alternatively obtain a matching ARM APK from a trusted source once, then push to every serial
+#   with **Install APK on all phones** (``adb install -r`` per device).
+#
+
+
+def _install_apk_all_phones(apk_path: str | Path, serials, log_fn=None) -> dict:
+    """Run ``adb install -r`` on each serial. ``serials`` is an iterable of ADB serial strings."""
+    path = Path(apk_path)
+    results = []
+    if not path.is_file():
+        if log_fn:
+            log_fn(f"    APK not found or not a file: {path}\n")
+        return {"ok": False, "results": results}
+    resolved = str(path.resolve())
+    name = path.name
+    for serial in serials:
+        if log_fn:
+            log_fn(f"    [{serial}] adb install -r {name} …\n")
+        out = adb("install", "-r", resolved, serial=serial, timeout=600)
+        if log_fn and out:
+            log_fn(f"    → {(out or '')[:400]}\n")
+        o = out or ""
+        ok = ("Success" in o) and ("Failure" not in o)
+        results.append({"serial": serial, "ok": ok})
+    return {"ok": all(r["ok"] for r in results) if results else False, "results": results}
+
+
+def _bundled_chrome_apk_path():
+    """Optional APK in ``wizard/bundled/`` (not shipped by default)."""
+    here = Path(__file__).resolve().parent / "bundled"
+    for name in ("ChromePublic.apk", "chrome.apk"):
+        p = here / name
+        if p.is_file():
+            return p
+    return None
+
+
+def _try_install_bundled_chrome_apk(serial: str, log_fn) -> bool:
+    apk = _bundled_chrome_apk_path()
+    if not apk:
+        return False
+    if log_fn:
+        log_fn(f"    adb install (bundled {apk.name})…\n")
+    out = adb("install", "-r", str(apk), serial=serial, timeout=300)
+    if log_fn and out:
+        log_fn(f"    → {(out or '')[:200]}\n")
+    return _chrome_pkg_installed(serial)
 
 
 def ensure_android_chrome(
     serial: str,
     log_fn=None,
     *,
-    open_play_if_missing: bool = True,
+    open_play_if_missing: bool = False,
 ) -> bool:
-    """Ensure ``com.android.chrome`` exists (many MuMu / AVD images ship without Chrome)."""
+    """Ensure ``com.android.chrome`` exists (many MuMu / AVD images ship without Chrome).
+
+    Default path: enable stub if present, optional bundled APK under ``wizard/bundled/``,
+    then ``pm install-existing``. Opening the Play Store is opt-in only
+    (``open_play_if_missing=True``), e.g. user explicitly chose that flow.
+    """
     if _chrome_pkg_installed(serial):
         return True
     adb("shell", "pm", "enable", "com.android.chrome", serial=serial, timeout=15)
     if _chrome_pkg_installed(serial):
+        return True
+    if _try_install_bundled_chrome_apk(serial, log_fn):
         return True
     for args in (
         ("shell", "cmd", "package", "install-existing", "com.android.chrome"),
@@ -2069,8 +2311,8 @@ def ensure_android_chrome(
     if open_play_if_missing:
         if log_fn:
             log_fn(
-                "    Opening Play Store — install **Google Chrome**, wait until it finishes, "
-                "then tap “Setup Chrome on all phones” again.\n"
+                "    Opening Play Store listing for Chrome (optional — requires a Google account on "
+                "this device). Install Chrome if needed, then run **Configure Chrome** again.\n"
             )
         adb(
             "shell",
@@ -2084,11 +2326,15 @@ def ensure_android_chrome(
             timeout=20,
         )
     elif log_fn:
-        log_fn("    Chrome not pre-installed — use Setup Chrome after installing from Play Store.\n")
+        log_fn(
+            "    Chrome still missing — sideload an APK with ``adb install -r chrome.apk`` (no Google "
+            "account needed), or place ``ChromePublic.apk`` / ``chrome.apk`` under wizard/bundled/ "
+            "and try again.\n"
+        )
     return False
 
 
-def setup_chrome(serial, log_fn=None, *, offer_play_store: bool = True):
+def setup_chrome(serial, log_fn=None, *, offer_play_store: bool = False):
     """
     Kill Chrome first-run experience so URLs open immediately every time.
 
@@ -2096,8 +2342,8 @@ def setup_chrome(serial, log_fn=None, *, offer_play_store: bool = True):
     Writing the chrome-command-line flags file disables all of that.
     Works without root — shell user can write to /data/local/tmp.
 
-    If Chrome is not installed, tries ``pm install-existing`` and optionally opens Play Store
-    (only when ``offer_play_store`` is True — e.g. user tapped Setup Chrome).
+    If Chrome is not installed, tries bundled APK (if present), ``pm install-existing``, and
+    optionally opens Play Store only when ``offer_play_store`` is True (explicit user choice).
     """
     if not ensure_android_chrome(
         serial,
@@ -2107,7 +2353,8 @@ def setup_chrome(serial, log_fn=None, *, offer_play_store: bool = True):
         if offer_play_store:
             raise RuntimeError(
                 "Google Chrome is not on this device yet. "
-                "If the Play Store opened, install Chrome, wait for it to finish, then try again."
+                "If you used Play Store, finish installing Chrome (Google account required there), "
+                "then tap Configure Chrome again — or sideload an APK without Google."
             )
         return False
     flags = (
@@ -3987,20 +4234,66 @@ class BootPage(PageBase):
                  font=("Segoe UI", 10, "bold"), bg=BG3, fg=YELLOW,
                  anchor="w").pack(fill="x")
         tk.Label(chrome_box,
-                 text="Ensures the Chrome app is installed (MuMu often ships without it), "
-                      "then disables first-run / sync prompts so URLs open cleanly.",
+                 text="Default: enable / pm install-existing / optional bundled APK under wizard/bundled/ — "
+                      "no Google login. Use **Install APK on all phones** to push one Chrome APK to every "
+                      "serial, or try Fennec/Mull (F-Droid) as an alternative browser.",
                  font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 6))
         chrome_ctrl = tk.Frame(chrome_box, bg=BG3)
         chrome_ctrl.pack(fill="x")
         self._chrome_btn = tk.Button(chrome_ctrl,
-                                   text="Setup Chrome on all phones",
+                                   text="Configure Chrome on all phones",
                                    font=("Segoe UI", 10, "bold"),
                                    bg=YELLOW, fg=ON_ACCENT, relief="flat",
                                    cursor="hand2", command=self._setup_chrome_all,
                                    bd=0, highlightthickness=0)
         self._chrome_btn.pack(side="left", padx=(0, 10))
+        opt_ps = tk.Button(
+            chrome_ctrl,
+            text="Optional: Play Store install…",
+            font=FS,
+            bg=BG3,
+            fg=T2,
+            relief="flat",
+            cursor="hand2",
+            command=self._setup_chrome_via_play_store_all,
+            bd=0,
+            highlightthickness=0,
+        )
+        style_secondary_button(opt_ps)
+        opt_ps.pack(side="left", padx=(0, 10))
         self._chrome_lbl = tk.Label(chrome_ctrl, text="", font=FS, bg=BG3, fg=T2)
         self._chrome_lbl.pack(side="left")
+
+        chrome_extra = tk.Frame(chrome_box, bg=BG3)
+        chrome_extra.pack(fill="x", pady=(8, 0))
+        install_apk_btn = tk.Button(
+            chrome_extra,
+            text="Install APK on all phones…",
+            font=FS,
+            bg=BG3,
+            fg=ACCENT,
+            relief="flat",
+            cursor="hand2",
+            command=self._install_user_apk_all_phones,
+            bd=0,
+            highlightthickness=0,
+        )
+        style_secondary_button(install_apk_btn)
+        install_apk_btn.pack(side="left", padx=(0, 10))
+        fdroid_btn = tk.Button(
+            chrome_extra,
+            text="Try Fennec / Mull on all phones",
+            font=FS,
+            bg=BG3,
+            fg=T2,
+            relief="flat",
+            cursor="hand2",
+            command=self._setup_fdroid_browsers_all,
+            bd=0,
+            highlightthickness=0,
+        )
+        style_secondary_button(fdroid_btn)
+        fdroid_btn.pack(side="left")
         # Test URL row
         test_row = tk.Frame(chrome_box, bg=BG3)
         test_row.pack(fill="x", pady=(8, 0))
@@ -4325,7 +4618,7 @@ class BootPage(PageBase):
                             else:
                                 self._log_write(
                                     f"  ✅ {name}: {serial}  ID:{new_id[:8]}… "
-                                    "(Chrome missing — open Play Store on device or tap Setup Chrome below)\n"
+                                    "(Chrome missing — sideload APK, add bundled/chrome.apk, or optional Play Store)\n"
                                 )
                         except Exception as e:
                             self._log_write(f"  ⚠ {name}: {e}\n")
@@ -4518,8 +4811,39 @@ class BootPage(PageBase):
         if not phones:
             messagebox.showwarning("No phones", "Boot phones first.")
             return
-        self._chrome_btn.config(state="disabled", text="Setting up Chrome...")
+        self._chrome_btn.config(state="disabled", text="Configuring Chrome...")
         self._chrome_lbl.config(text="", fg=T2)
+        def go():
+            for p in phones:
+                try:
+                    setup_chrome(p["serial"], log_fn=self._log_write, offer_play_store=False)
+                    self._log_write(f"  ✅ {p['name']}: Chrome ready\n")
+                except Exception as e:
+                    self._log_write(f"  ⚠ {p['name']}: {e}\n")
+            def done_ui():
+                self._chrome_btn.config(state="normal", text="Configure Chrome on all phones")
+                self._log_write("Chrome configure pass finished (no Play Store).\n")
+
+            self.after(0, done_ui)
+        threading.Thread(target=go, daemon=True).start()
+
+    def _setup_chrome_via_play_store_all(self):
+        phones = state.get("phones", [])
+        if not phones:
+            messagebox.showwarning("No phones", "Boot phones first.")
+            return
+        if not messagebox.askokcancel(
+            "Play Store (optional)",
+            "This opens the Google Play Store for Chrome on each phone.\n"
+            "You need a Google account signed in on the device.\n\n"
+            "The recommended path stays sideload / pm install-existing / bundled APK — "
+            "no Google login.\n\n"
+            "Continue with Play Store?",
+        ):
+            return
+        self._chrome_btn.config(state="disabled")
+        self._chrome_lbl.config(text="", fg=T2)
+
         def go():
             for p in phones:
                 try:
@@ -4527,11 +4851,76 @@ class BootPage(PageBase):
                     self._log_write(f"  ✅ {p['name']}: Chrome ready\n")
                 except Exception as e:
                     self._log_write(f"  ⚠ {p['name']}: {e}\n")
+
             def done_ui():
-                self._chrome_btn.config(state="normal", text="Setup Chrome on all phones")
-                self._log_write("Chrome setup done on all phones.\n")
+                self._chrome_btn.config(state="normal")
+                self._log_write("Play Store Chrome pass finished.\n")
 
             self.after(0, done_ui)
+
+        threading.Thread(target=go, daemon=True).start()
+
+    def _install_user_apk_all_phones(self):
+        phones = state.get("phones", [])
+        if not phones:
+            messagebox.showwarning("No phones", "Boot phones first.")
+            return
+        path = filedialog.askopenfilename(
+            title="Choose APK to install on all connected phones",
+            filetypes=[("Android package", "*.apk"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        serials = [p["serial"] for p in phones]
+        self._log_write(
+            f"\nInstalling APK on {len(serials)} device(s): {Path(path).name}\n"
+            "(Obtain APK yourself — e.g. Chrome from Play on one device then reuse the build, "
+            "or a trusted mirror matching your ABI.)\n"
+        )
+
+        def go():
+            summary = _install_apk_all_phones(path, serials, log_fn=self._log_write)
+            for p in phones:
+                match = next(
+                    (r for r in summary["results"] if r["serial"] == p["serial"]),
+                    None,
+                )
+                st = "✅" if match and match["ok"] else "❌"
+                self._log_write(f"  {st} {p['name']}: {p['serial']}\n")
+            self._log_write(
+                "APK install pass finished.\n"
+                "If this was Chrome, tap **Configure Chrome on all phones** next.\n"
+            )
+
+        threading.Thread(target=go, daemon=True).start()
+
+    def _setup_fdroid_browsers_all(self):
+        phones = state.get("phones", [])
+        if not phones:
+            messagebox.showwarning("No phones", "Boot phones first.")
+            return
+        self._log_write(
+            "\nFennec / Mull: trying install-existing, then optional wizard/bundled/ "
+            "(Fennec.apk, Mull.apk). Packages: "
+            f"{FDROID_FENNEC_PKG}, {FDROID_MULL_PKG}\n"
+        )
+
+        def go():
+            for p in phones:
+                serial = p["serial"]
+                try:
+                    pkg = ensure_fdroid_browser(serial, log_fn=self._log_write)
+                    if pkg:
+                        self._log_write(f"  ✅ {p['name']}: {pkg}\n")
+                    else:
+                        self._log_write(
+                            f"  ⚠ {p['name']}: no Fennec/Mull — install from F-Droid app or add "
+                            f"bundled APK under wizard/bundled/\n"
+                        )
+                except Exception as e:
+                    self._log_write(f"  ⚠ {p['name']}: {e}\n")
+            self._log_write("Fennec/Mull pass finished.\n")
+
         threading.Thread(target=go, daemon=True).start()
 
 

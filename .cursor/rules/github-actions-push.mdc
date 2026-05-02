@@ -1,0 +1,10 @@
+---
+description: Commit and push so GitHub Actions CI runs on latest code
+alwaysApply: true
+---
+
+# GitHub Actions / CI
+
+After making code changes, **commit and push to GitHub** before assuming CI or workflow builds will run.
+
+Local edits alone do **not** trigger GitHub Actions—only commits that reach the remote do.

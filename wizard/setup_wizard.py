@@ -2285,13 +2285,19 @@ class PrerequisitesPage(PageBase):
         self.after(0, _do)
 
     def _set_row(self, key, text, color=T2):
-        lbl = self._rows.get(key)
-        if lbl:
-            lbl.config(text=text, fg=color)
+        def _do():
+            lbl = self._rows.get(key)
+            if lbl:
+                lbl.config(text=text, fg=color)
+
+        self.after(0, _do)
 
     def _set_progress(self, pct, label=""):
-        self._progress["value"] = pct
-        self._progress_lbl.config(text=label)
+        def _do():
+            self._progress["value"] = pct
+            self._progress_lbl.config(text=label)
+
+        self.after(0, _do)
 
     def _download(self, url, dest, label, start_pct, end_pct):
         def hook(block, bsize, total):
@@ -2408,7 +2414,7 @@ class PrerequisitesPage(PageBase):
             self._log_write(f"  Install failed ({label}): {out[-200:]}")
         self._set_row("java", "❌  Failed", RED)
         self._log_write("Java install failed on both ARM64 and x64 installers.")
-        self._show_java_manual_btn()
+        self.after(0, self._show_java_manual_btn)
 
     def _install_python(self):
         for label, url, fname in [
@@ -2659,14 +2665,14 @@ class PrerequisitesPage(PageBase):
             self._set_progress(100, "Done!")
             self._log_write("\n✅  All done. Click Next → to continue.")
             self._ready = True
-            self._install_btn.config(
+            self.after(0, lambda: self._install_btn.config(
                 state="normal",
                 text="✅  Ready — click Next →",
                 bg=GREEN,
-            )
+            ))
         except Exception as exc:
             self._log_write(f"\n❌  Error: {exc}")
-            self._install_btn.config(state="normal", text="Try again")
+            self.after(0, lambda: self._install_btn.config(state="normal", text="Try again"))
         finally:
             self._working = False
 
@@ -2679,10 +2685,10 @@ class PrerequisitesPage(PageBase):
         all_ok = self._check_all()
         if all_ok:
             self._set_progress(100, "All tools already installed!")
-            self._install_btn.config(
+            self.after(0, lambda: self._install_btn.config(
                 text="✅  Everything Ready — click Next →",
                 bg=GREEN,
-            )
+            ))
             self._ready = True
         else:
             self._set_progress(0, "")
@@ -2848,13 +2854,19 @@ class AndroidStudioPage(PageBase):
         self.after(0, _do)
 
     def _set_status(self, icon, text, detail="", color=T1):
-        self._icon_lbl.config(text=icon)
-        self._status_lbl.config(text=text, fg=color)
-        self._detail_lbl.config(text=detail)
+        def _do():
+            self._icon_lbl.config(text=icon)
+            self._status_lbl.config(text=text, fg=color)
+            self._detail_lbl.config(text=detail)
+
+        self.after(0, _do)
 
     def _set_progress(self, pct, label=""):
-        self._progress["value"] = pct
-        self._progress_lbl.config(text=label)
+        def _do():
+            self._progress["value"] = pct
+            self._progress_lbl.config(text=label)
+
+        self.after(0, _do)
 
     def _has_java(self):
         # Delegate to the shared helper which checks JBR, all common locations, etc.
@@ -2878,8 +2890,8 @@ class AndroidStudioPage(PageBase):
         finally:
             self._working = False
             if not self._ready:
-                self._install_btn.config(state="normal",
-                                         text="Try Again")
+                self.after(0, lambda: self._install_btn.config(state="normal",
+                                                              text="Try Again"))
 
     def _do_install(self):
         sdk_path = Path(SDK_DEFAULT_PATH)
@@ -2914,7 +2926,8 @@ class AndroidStudioPage(PageBase):
             self._set_progress(0, "")
             self.after(0, self._show_java_button)
             self._working = False
-            self._install_btn.config(state="normal", text="Try Again  (after installing Java)")
+            self.after(0, lambda: self._install_btn.config(
+                state="normal", text="Try Again  (after installing Java)"))
             return
         self._log_write("Java found ✅")
 
@@ -3058,7 +3071,7 @@ class AndroidStudioPage(PageBase):
                 self._log_write("    Your network is blocking dl.google.com entirely.")
                 self._set_status("❌", "Network blocked — see options below", color=RED)
                 self._set_progress(0, "")
-                self._install_btn.config(state="normal", text="Try Again")
+                self.after(0, lambda: self._install_btn.config(state="normal", text="Try Again"))
                 self.after(0, self._show_firewall_btn)
                 return
 
@@ -3169,11 +3182,11 @@ class AndroidStudioPage(PageBase):
         self._set_progress(100, "Done!")
         self._log_write(f"\n✅  All good. Click Next → to continue.")
         self._ready = True
-        self._install_btn.config(
+        self.after(0, lambda: self._install_btn.config(
             state="normal",
             text="✅  SDK Ready — click Next →",
             bg=GREEN,
-        )
+        ))
 
     def _show_firewall_btn(self):
         if hasattr(self, "_fw_btn"):
@@ -3971,7 +3984,7 @@ class BootPage(PageBase):
         self.after(0, _do)
 
     def _boot_all(self):
-        # ── MuMuPlayer mode ────────────────────────���──────────────────────────
+        # ── MuMuPlayer mode ───────────────────────────────────────────────────
         if state.get("use_mumu"):
             self._boot_btn.config(state="disabled", text="Connecting…")
             self._log_write("MuMuPlayer mode — launching and connecting instances…\n")
@@ -4069,7 +4082,7 @@ class BootPage(PageBase):
             threading.Thread(target=go_mumu, daemon=True).start()
             return
 
-        # ── AVD emulator mode ─────────────────────��───────────────────────────
+        # ── AVD emulator mode ───────────────────────────────────────────────────
         avds = state.get("avds", [])
 
         # Also include any physical USB phones already attached
@@ -4247,8 +4260,11 @@ class BootPage(PageBase):
                     self._log_write(f"  ✅ {p['name']}: Chrome ready\n")
                 except Exception as e:
                     self._log_write(f"  ⚠ {p['name']}: {e}\n")
-            self._chrome_btn.config(state="normal", text="Setup Chrome on all phones")
-            self._log_write("Chrome setup done on all phones.\n")
+            def done_ui():
+                self._chrome_btn.config(state="normal", text="Setup Chrome on all phones")
+                self._log_write("Chrome setup done on all phones.\n")
+
+            self.after(0, done_ui)
         threading.Thread(target=go, daemon=True).start()
 
 
@@ -5160,23 +5176,35 @@ class LaunchPage(PageBase):
         def go():
             result = self._api("/api/groups/run", {"groups": state["groups"]})
             if "error" in result:
-                self._log_write(f"❌  {result['error']}")
-                self._btn_run.config(state="normal")
-                self._btn_stop_grp.config(state="disabled")
+
+                def err_ui():
+                    self._log_write(f"❌  {result['error']}")
+                    self._btn_run.config(state="normal")
+                    self._btn_stop_grp.config(state="disabled")
+
+                self.after(0, err_ui)
             else:
                 n = result.get("groups", len(state["groups"]))
-                self._log_write(f"✅  {n} group(s) running in parallel!")
-                self._run_lbl.config(text=f"{n} running", fg=GREEN)
+
+                def ok_ui():
+                    self._log_write(f"✅  {n} group(s) running in parallel!")
+                    self._run_lbl.config(text=f"{n} running", fg=GREEN)
+
+                self.after(0, ok_ui)
 
         threading.Thread(target=go, daemon=True).start()
 
     def _stop_groups(self):
         def go():
             self._api("/api/groups/stop", {})
-            self._log_write("All groups stopped.")
-            self._run_lbl.config(text="", fg=T2)
-            self._btn_run.config(state="normal")
-            self._btn_stop_grp.config(state="disabled")
+
+            def done_ui():
+                self._log_write("All groups stopped.")
+                self._run_lbl.config(text="", fg=T2)
+                self._btn_run.config(state="normal")
+                self._btn_stop_grp.config(state="disabled")
+
+            self.after(0, done_ui)
 
         threading.Thread(target=go, daemon=True).start()
 
@@ -5190,7 +5218,8 @@ class LaunchPage(PageBase):
             return
         serials = [p["serial"] for p in phones]
         _groups = state.get("groups") or []
-        steps = next(iter(_groups[0]["phones"].values()), {}).get("steps", []) if _groups else []
+        first_phones = (_groups[0].get("phones") if _groups else None) or {}
+        steps = next(iter(first_phones.values()), {}).get("steps", []) if first_phones else []
         try:
             import urllib.request
             url = f"http://localhost:{DASHBOARD_PORT}/api/scheduler/start"

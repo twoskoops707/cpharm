@@ -100,9 +100,7 @@ def _is_mumu_gui_path(path: Path | str) -> bool:
     n = Path(path).name.lower()
     if _is_mumu_manager_cli_path(path):
         return False
-    return n in ("mumuplayer.exe", "mumunxmain.exe") or (
-        "mumu" in n and "player" in n
-    )
+    return n in ("mumuplayer.exe", "mumunxmain.exe")
 
 
 BG     = "#0d1117"
@@ -2646,8 +2644,9 @@ class AndroidStudioPage(PageBase):
 
         self.header(
             "Step 1 — Install Android SDK",
-            "One button does everything. The wizard downloads and sets up the SDK for you.\n"
-            "No Android Studio needed. No terminal. Just click the big button below."
+            "One button does everything. The wizard downloads command-line tools, platform-tools, "
+            "and the emulator — licenses accepted automatically.\n"
+            "No Android Studio UI. No terminal. ARM64 hosts can use MuMuPlayer instead (card below)."
         )
 
         # ── status card ───────────────────────────────────────────────────────
@@ -3283,8 +3282,9 @@ class PhoneFarmPage(PageBase):
         self._done = False
         self.header(
             "Step 2 — Create Virtual Phones",
-            "The wizard downloads Android 14 and creates your virtual phones automatically.\n"
-            "One-time setup. Each phone uses ~2 GB RAM + ~4 GB disk."
+            "Google emulators: the wizard downloads Android 14 and creates Pixel 6 AVDs.\n"
+            "MuMu mode: create instances in MuMuPlayer — automation sequences below still apply.\n"
+            "One-time setup. Each emulator uses ~2 GB RAM + ~4 GB disk."
         )
 
         # Phone name prefix
@@ -4621,8 +4621,17 @@ class GroupsPage(PageBase):
         super().__init__(parent)
         self.header(
             "Step 5 — Groups & Sequences",
-            "Split phones into groups. Each group does something different at the same time."
+            "Split phones into groups. Each group runs its own sequence — stagger, repeat, "
+            "and per-phone overrides stay available below."
         )
+
+        intro = tk.Frame(self, bg=BG2, padx=14, pady=10,
+                         highlightthickness=1, highlightbackground=BORDER)
+        intro.pack(fill="x", pady=(0, 10))
+        tk.Label(intro,
+                 text="Assign phones with checkboxes, edit per-phone sequences, clone from Phone 1, "
+                      "and tune timing — nothing was removed; styling only tightened elsewhere.",
+                 font=FS, bg=BG2, fg=T2, justify="left", anchor="w").pack(fill="x")
 
         ctrl = tk.Frame(self, bg=BG)
         ctrl.pack(fill="x", pady=(0, 8))
@@ -5017,8 +5026,32 @@ class LaunchPage(PageBase):
                                   font=FS, bg=BG3, fg=T2)
         self._srv_lbl.pack(side="left", padx=10)
 
-    
-        # Schedule
+        # Groups (B — after server)
+        grp = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        grp.pack(fill="x", pady=(0, 8))
+        tk.Label(grp, text="B — Run Groups",
+                 font=("Segoe UI", 11, "bold"), bg=BG3,
+                 fg=GREEN, anchor="w").pack(fill="x")
+        tk.Label(grp,
+                 text="Starts all groups at the same time. Each group runs on its assigned phones.",
+                 font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 8))
+        grp_row = tk.Frame(grp, bg=BG3)
+        grp_row.pack(fill="x")
+        self._btn_run = tk.Button(grp_row, text="▶  Run All Groups",
+                                  font=("Segoe UI", 10, "bold"),
+                                  bg=GREEN, fg=BG, relief="flat",
+                                  cursor="hand2", command=self._run_groups)
+        self._btn_run.pack(side="left", padx=(0, 8))
+        self._btn_stop_grp = tk.Button(grp_row, text="■  Stop All Groups",
+                                       font=("Segoe UI", 10, "bold"),
+                                       bg=RED, fg=BG, relief="flat",
+                                       cursor="hand2", state="disabled",
+                                       command=self._stop_groups)
+        self._btn_stop_grp.pack(side="left")
+        self._run_lbl = tk.Label(grp_row, text="", font=FS, bg=BG3, fg=T2)
+        self._run_lbl.pack(side="left", padx=10)
+
+        # Schedule (C)
         sched = tk.Frame(self, bg=BG3, padx=14, pady=12)
         sched.pack(fill="x", pady=(0, 8))
         tk.Label(sched, text="C — Daily Schedule",
@@ -5045,33 +5078,6 @@ class LaunchPage(PageBase):
         self._sched_btn.pack(side="left", padx=(8, 0))
         self._sched_lbl = tk.Label(sched_row, text="", font=FS, bg=BG3, fg=T2)
         self._sched_lbl.pack(side="left", padx=8)
-
-
-
-    # Groups
-        grp = tk.Frame(self, bg=BG3, padx=14, pady=12)
-        grp.pack(fill="x", pady=(0, 8))
-        tk.Label(grp, text="B — Run Groups",
-                 font=("Segoe UI", 11, "bold"), bg=BG3,
-                 fg=GREEN, anchor="w").pack(fill="x")
-        tk.Label(grp,
-                 text="Starts all groups at the same time. Each group runs on its assigned phones.",
-                 font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 8))
-        grp_row = tk.Frame(grp, bg=BG3)
-        grp_row.pack(fill="x")
-        self._btn_run = tk.Button(grp_row, text="▶  Run All Groups",
-                                  font=("Segoe UI", 10, "bold"),
-                                  bg=GREEN, fg=BG, relief="flat",
-                                  cursor="hand2", command=self._run_groups)
-        self._btn_run.pack(side="left", padx=(0, 8))
-        self._btn_stop_grp = tk.Button(grp_row, text="■  Stop All Groups",
-                                       font=("Segoe UI", 10, "bold"),
-                                       bg=RED, fg=BG, relief="flat",
-                                       cursor="hand2", state="disabled",
-                                       command=self._stop_groups)
-        self._btn_stop_grp.pack(side="left")
-        self._run_lbl = tk.Label(grp_row, text="", font=FS, bg=BG3, fg=T2)
-        self._run_lbl.pack(side="left", padx=10)
 
         # Log
         tk.Label(self, text="Live log:", font=("Segoe UI", 9, "bold"),

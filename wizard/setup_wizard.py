@@ -74,12 +74,6 @@ from wizard_theme import (
     style_secondary_button,
 )
 
-try:
-    from PIL import Image, ImageTk
-    HAS_PIL = True
-except ImportError:
-    HAS_PIL = False
-
 REPO_URL            = "https://github.com/twoskoops707/cpharm.git"
 DASHBOARD_PORT      = 8080
 IS_WIN              = platform.system() == "Windows"

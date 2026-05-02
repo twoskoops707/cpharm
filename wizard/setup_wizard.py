@@ -2735,7 +2735,7 @@ class AndroidStudioPage(PageBase):
                       ).pack(side="left")
             tk.Button(
                 mumu_btn_row,
-                text="Locate MuMuManager.exe…",
+                text="Locate MuMu CLI…",
                 font=FS, bg=BG3, fg=T1,
                 relief="flat", cursor="hand2", padx=8, pady=6,
                 command=self._browse_mumu_early,
@@ -3227,21 +3227,31 @@ class AndroidStudioPage(PageBase):
 
     def _browse_mumu_early(self):
         path = filedialog.askopenfilename(
-            title="Select MuMuManager.exe (often in the shell folder)",
+            title="Select MuMu shell CLI (shell or nx_main folder)",
             filetypes=[
-                ("MuMuManager", "MuMuManager.exe"),
-                ("Executables", "*.exe"),
+                ("MuMu CLI", "*.exe"),
+                ("nemux-shell-winui.Manager", "nemux-shell-winui.Manager.exe"),
+                ("MuMuManager (legacy)", "MuMuManager.exe"),
                 ("All files", "*.*"),
             ],
         )
         if not path:
             return
-        if Path(path).name.lower() != "mumumanager.exe":
+        if _is_mumu_gui_path(path):
             messagebox.showwarning(
                 "Wrong file",
-                "Please select MuMuManager.exe.\n\n"
-                "Typical path:\n"
-                "C:\\Program Files\\Netease\\MuMuPlayerARM\\shell\\MuMuManager.exe",
+                "That looks like the MuMu Player app, not the command-line manager.\n\n"
+                "Pick nemux-shell-winui.Manager.exe or MuMuManager.exe in shell\\ or nx_main\\:\n"
+                "  …\\MuMuPlayerARM\\shell\\nemux-shell-winui.Manager.exe",
+            )
+            return
+        if not _is_mumu_manager_cli_path(path):
+            messagebox.showwarning(
+                "Wrong file",
+                "Please select nemux-shell-winui.Manager.exe or MuMuManager.exe.\n\n"
+                "Typical:\n"
+                "  …\\MuMuPlayerARM\\shell\\nemux-shell-winui.Manager.exe\n"
+                "  …\\MuMuPlayerARM\\shell\\MuMuManager.exe",
             )
             return
         state["mumu_mgr_path"] = path
@@ -3676,7 +3686,7 @@ class BootPage(PageBase):
         self._overall_lbl.pack(side="left", padx=10)
 
         self._mumu_cfg_row = tk.Frame(phone_ctrl, bg=BG3)
-        tk.Label(self._mumu_cfg_row, text="MuMuManager.exe  (shell\\ folder):",
+        tk.Label(self._mumu_cfg_row, text="MuMu CLI  (nemux…Manager.exe or MuMuManager.exe):",
                  font=FS, bg=BG3, fg=T2).pack(side="left")
         self._mumu_path_var = tk.StringVar(value="")
         self._mumu_path_entry = tk.Entry(
@@ -3689,7 +3699,7 @@ class BootPage(PageBase):
                   font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
                   command=self._browse_mumu_mgr).pack(side="left")
         self._mumu_hint = tk.Label(phone_ctrl,
-                 text="Hint: C:\\Program Files\\Netease\\MuMuPlayerARM\\shell\\MuMuManager.exe",
+                 text="Hint: …\\MuMuPlayerARM\\shell\\nemux-shell-winui.Manager.exe  (or MuMuManager.exe)",
                  font=("Segoe UI", 9), bg=BG3, fg=T3, anchor="w")
 
         # Chrome setup + URL test

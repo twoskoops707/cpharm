@@ -795,6 +795,14 @@ def _warn_arm64_x64_adb(log_fn) -> None:
 
 MUMU_DOWNLOAD_URL = "https://www.mumuplayer.com/windows-arm.html"
 
+# MuMu only forwards ADB from the host after it is enabled *per instance* (settings / device info).
+MUMU_ADB_PER_INSTANCE_HINT = (
+    "In each running instance: open that phone’s menu (≡) or Settings → enable ADB / "
+    "USB or network debugging (wording varies; sometimes under “Other” or “Device information”). "
+    "Without this, the PC never sees a host port to scan. On Windows use "
+    "adb connect 127.0.0.1:<port> if MuMu shows a port."
+)
+
 
 def _mumu_install_root(mgr_path) -> Path:
     """Directory that contains MuMuPlayer.exe (parent of shell/nx_main)."""
@@ -4055,8 +4063,10 @@ class PhoneFarmPage(PageBase):
                       "  1. Open MuMuPlayer (it's in your Start menu or taskbar)\n"
                       "  2. Click the multi-window icon at the top-right\n"
                       "  3. Click '+ New Instance' for each phone you want\n"
-                      "  4. Leave MuMuPlayer running\n"
-                      "  5. Click Next below — the wizard connects automatically",
+                      "  4. In each instance open Settings (≡ or gear) and turn ON ADB / "
+                      "debugging — otherwise this PC cannot connect\n"
+                      "  5. Leave MuMuPlayer running\n"
+                      "  6. Click Next below — the wizard connects automatically",
                  font=FS, bg="#1a2a1a", fg=T2,
                  anchor="w", justify="left").pack(fill="x", pady=(6, 10))
         tk.Button(self._mumu_panel,
@@ -4092,8 +4102,11 @@ class PhoneFarmPage(PageBase):
     def on_enter(self):
         if state.get("use_mumu"):
             self._mumu_panel.pack(fill="x", pady=(6, 0))
-            self._log_write("MuMuPlayer ARM64 mode — no AVD creation needed.\n"
-                            "Open MuMuPlayer, create instances, then click Next →\n")
+            self._log_write(
+                "MuMuPlayer ARM64 mode — no AVD creation needed.\n"
+                "Open MuMuPlayer, create instances, enable ADB in each instance’s settings, "
+                "then click Next →\n"
+            )
 
             def _prep_adb():
                 _ensure_minimal_platform_tools(log_fn=self._log_write)
@@ -4437,7 +4450,7 @@ class BootPage(PageBase):
                             self.after(0, lambda lbl=row_lbl: lbl.config(text="✅  Running", fg=GREEN))
                 else:
                     self.after(0, lambda: self._overall_lbl.config(
-                        text="No MuMu phones found — open MuMuPlayer and start your instances first",
+                        text="No MuMu phones found — start instances, enable ADB in each instance’s settings, retry",
                         fg=YELLOW))
             threading.Thread(target=_mumu_scan, daemon=True).start()
             return
@@ -4618,6 +4631,8 @@ class BootPage(PageBase):
                 if not instances:
                     self._log_write(
                         "  Manager CLI returned no instances — trying ADB port scan fallback…\n"
+                        "  If this keeps finding nothing, enable ADB in each instance’s "
+                        "Settings (see final message below).\n"
                     )
                     connected = _connect_mumu_phones(count=12, log_fn=self._log_write)
                     if connected:
@@ -4635,6 +4650,7 @@ class BootPage(PageBase):
                     self._log_write(
                         "❌ No MuMuPlayer instances found via CLI or port scan.\n"
                         "   Make sure MuMuPlayer is open and instances are running.\n"
+                        f"   {MUMU_ADB_PER_INSTANCE_HINT}\n"
                         "   Open MuMuPlayer → click ⧉ (multi-window icon) → '+ New Instance'\n"
                     )
                     self.after(0, lambda: (

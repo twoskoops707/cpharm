@@ -1119,16 +1119,33 @@ def _mumu_iter_json_blobs(text: str):
 
 
 def _mumu_shell_manager_fallback(nemux_path: Path) -> Path | None:
-    """MuMuPlayerARM often ships ``shell\\MuMuManager.exe`` — JSON ``info`` works there when nemux only logs GUI spam."""
-    root = nemux_path.resolve().parent.parent
-    for rel in (
-        Path("shell") / "MuMuManager.exe",
-        Path("shell") / MUMU_MANAGER_LEGACY,
-        Path("nx_main") / "MuMuManager.exe",
-    ):
-        p = root / rel
+    """Locate legacy ``MuMuManager.exe`` when ``nemux-shell-winui.Manager.exe`` prints log spam only.
+
+    Layout differs by MuMu build: ``shell\\``, ``nx_main\\``, ``manager\\``, or alongside nemux.
+    """
+    nemux_path = nemux_path.resolve()
+    root = nemux_path.parent.parent
+    managers = ("MuMuManager.exe", MUMU_MANAGER_LEGACY)
+
+    for mid in ("shell", "nx_main", "manager"):
+        for name in managers:
+            p = root / mid / name
+            if p.is_file():
+                return p
+
+    for name in managers:
+        p = nemux_path.parent / name
         if p.is_file():
             return p
+
+    # Last resort: shallow search (some installs nest extras under locale or version dirs).
+    try:
+        for p in root.rglob("MuMuManager.exe"):
+            if p.is_file() and p.stat().st_size > 10_000:
+                return p
+    except OSError:
+        pass
+
     return None
 
 
@@ -1222,8 +1239,8 @@ def _mumu_get_instances(mgr_path, log_fn=None):
         install_root = mgr_path.resolve().parent.parent
         if fb is None:
             log_fn(
-                "  Fallback not found: no shell\\MuMuManager.exe next to install "
-                f"under {install_root}\n"
+                "  Fallback not found: no MuMuManager.exe under shell\\, nx_main\\, or manager\\ "
+                f"(install root {install_root}). JSON-only discovery needs legacy CLI or working ADB ports.\n"
             )
         elif fb.resolve() != mgr_path.resolve():
             log_fn(f"  Shell fallback will run after primary if needed: {fb}\n")

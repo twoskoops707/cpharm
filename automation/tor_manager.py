@@ -6,6 +6,7 @@ Works with any ADB-connected device (real phone, AVD, BlueStacks, etc.).
 
 import os
 import random
+import re
 import socket
 import subprocess
 import tempfile
@@ -15,7 +16,25 @@ from pathlib import Path
 from config import TOR_DIR
 
 BASE_PORT = 9050
+TOR_BROWSER_SOCKS = 9150
+TOR_BROWSER_CONTROL = 9151
 _tor_procs: dict[int, subprocess.Popen] = {}
+
+# Set during /api/proxy/setup — aligns Tor ports with dashboard.enumerate order (fixes USB idx=0 bug).
+_serial_tor_slot: dict[str, int] = {}
+
+
+def register_tor_slot(serial: str, slot: int) -> None:
+    """Bind this device serial to Tor SOCKS/control ports for ``slot``."""
+    _serial_tor_slot[str(serial)] = int(slot)
+
+
+def clear_tor_slots() -> None:
+    _serial_tor_slot.clear()
+
+
+def tor_slot_for_serial(serial: str, fallback_idx: int) -> int:
+    return _serial_tor_slot.get(serial, fallback_idx)
 
 
 def _tor_exe() -> str:
@@ -42,10 +61,113 @@ def _random_imei() -> str:
 def _tor_browser_running() -> bool:
     """Check if Tor Browser's Tor is already running on 9150."""
     try:
-        with socket.create_connection(("127.0.0.1", 9150), timeout=1):
+        with socket.create_connection(("127.0.0.1", TOR_BROWSER_SOCKS), timeout=1):
             return True
     except OSError:
         return False
+
+
+def socks_port_for_slot(slot: int) -> int:
+    """SOCKS port that matches ``start_tor_for_phone(slot)``."""
+    if _tor_browser_running():
+        return TOR_BROWSER_SOCKS
+    return BASE_PORT + slot
+
+
+def control_port_for_slot(slot: int) -> int:
+    """Tor control port for NEWNYM / auth."""
+    if _tor_browser_running():
+        return TOR_BROWSER_CONTROL
+    return BASE_PORT + 1000 + slot
+
+
+def _control_cookie_path(slot: int) -> Path:
+    """Cookie file for Tor control authentication."""
+    if _tor_browser_running():
+        local = Path(os.environ.get("LOCALAPPDATA", ""))
+        tb = local / "TorBrowser" / "Data" / "Tor" / "control_auth_cookie"
+        if tb.exists():
+            return tb
+    return TOR_DIR / f"data_{slot}" / "control_auth_cookie"
+
+
+def _proxy_host_for_serial(serial: str) -> str:
+    """
+    Target address *as seen from the Android device* for the PC's Tor SOCKS port.
+
+    - AVD / most emulators: 10.0.2.2 maps to host loopback (127.0.0.1 on PC).
+    - adb TCP to 127.0.0.1 (MuMu etc.): same loopback alias as AVD.
+    - Wireless debugging (ip:port): use this PC's LAN address so the phone can route to Tor.
+    - USB: use 127.0.0.1 together with ``adb reverse`` (see ``_ensure_usb_reverse``).
+    """
+    if serial.startswith("emulator-"):
+        return "10.0.2.2"
+    m = re.match(r"^([\d.]+):(\d+)$", serial)
+    if m:
+        ip = m.group(1)
+        if ip == "127.0.0.1":
+            return "10.0.2.2"
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            lan = s.getsockname()[0]
+            s.close()
+            return lan
+        except OSError:
+            return ip
+    return "127.0.0.1"
+
+
+def _needs_usb_reverse(serial: str) -> bool:
+    if serial.startswith("emulator-"):
+        return False
+    if re.match(r"^[\d.]+:\d+$", serial):
+        return False
+    return True
+
+
+def _ensure_usb_reverse(serial: str, port: int) -> None:
+    """Forward host Tor port to device localhost (USB debugging)."""
+    if not _needs_usb_reverse(serial):
+        return
+    try:
+        subprocess.run(
+            ["adb", "-s", serial, "reverse", f"tcp:{port}", f"tcp:{port}"],
+            capture_output=True,
+            timeout=12,
+        )
+    except Exception:
+        pass
+
+
+def _adb_clear_global_proxy(serial: str) -> None:
+    """Remove broken proxy settings so the browser works without Tor."""
+    try:
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "settings", "delete", "global", "http_proxy"],
+            capture_output=True,
+            timeout=10,
+        )
+    except Exception:
+        pass
+    try:
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "settings", "put", "global", "global_http_proxy_host", ""],
+            capture_output=True,
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
+def clear_proxy_adb(serial: str) -> None:
+    """Clear Android global HTTP proxy on one device."""
+    _adb_clear_global_proxy(serial)
+
+
+def clear_all_proxies_on_devices(serials: list[str]) -> None:
+    for s in serials:
+        clear_proxy_adb(s)
 
 
 def start_tor_for_phone(phone_idx: int) -> int:
@@ -55,10 +177,10 @@ def start_tor_for_phone(phone_idx: int) -> int:
     Otherwise start a standalone Tor process per phone.
     """
     if _tor_browser_running():
-        return 9150
+        return TOR_BROWSER_SOCKS
 
     socks_port = BASE_PORT + phone_idx
-    ctrl_port  = BASE_PORT + 1000 + phone_idx
+    ctrl_port = BASE_PORT + 1000 + phone_idx
 
     if phone_idx in _tor_procs and _tor_procs[phone_idx].poll() is None:
         return socks_port
@@ -91,14 +213,14 @@ def start_tor_for_phone(phone_idx: int) -> int:
     return socks_port
 
 
-def _send_tor_newnym(ctrl_port: int) -> bool:
-    """Send NEWNYM signal to Tor control port to get a fresh circuit."""
-    phone_idx = ctrl_port - BASE_PORT - 1000
-    cookie_path = TOR_DIR / f"data_{phone_idx}" / "control_auth_cookie"
+def send_newnym(slot: int) -> bool:
+    """Send NEWNYM to the Tor control port for this slot (Tor Browser or standalone)."""
+    ctrl_port = control_port_for_slot(slot)
+    cookie_path = _control_cookie_path(slot)
     try:
         cookie = cookie_path.read_bytes() if cookie_path.exists() else b""
         with socket.create_connection(("127.0.0.1", ctrl_port), timeout=3) as s:
-            auth = b'AUTHENTICATE ' + cookie.hex().encode() + b'\r\n'
+            auth = b"AUTHENTICATE " + cookie.hex().encode() + b"\r\n"
             s.sendall(auth)
             s.recv(256)
             s.sendall(b"SIGNAL NEWNYM\r\n")
@@ -110,30 +232,34 @@ def _send_tor_newnym(ctrl_port: int) -> bool:
 
 def apply_identity_adb(serial: str, phone_idx: int) -> dict:
     """
-    Route this phone's traffic through its Tor SOCKS5 port via Android global proxy.
-    Note: Android global proxy only covers HTTP/HTTPS traffic.
+    Route this phone's traffic through its Tor SOCKS port via Android global proxy.
+    Note: Android global proxy only covers HTTP/HTTPS traffic for many apps.
     Full SOCKS5 routing requires the app to support proxies natively.
     """
-    port = BASE_PORT + phone_idx
+    slot = tor_slot_for_serial(serial, phone_idx)
+    port = socks_port_for_slot(slot)
+    host = _proxy_host_for_serial(serial)
+    _ensure_usb_reverse(serial, port)
     try:
         subprocess.run(
             ["adb", "-s", serial, "shell", "settings", "put", "global",
-             "http_proxy", f"127.0.0.1:{port}"],
-            capture_output=True, timeout=10
+             "http_proxy", f"{host}:{port}"],
+            capture_output=True,
+            timeout=10,
         )
     except Exception:
         pass
-    return {"socks_port": port}
+    return {"socks_port": port, "proxy_host": host, "slot": slot}
 
 
 def rotate_identity_adb(serial: str, phone_idx: int) -> dict:
     """
     Rotate this phone's identity:
     1. Request a new Tor circuit (new exit IP).
-    2. Clear and re-apply the proxy so Android picks up the new circuit.
+    2. Re-apply the proxy so Android picks up the new circuit.
     """
-    ctrl_port = BASE_PORT + 1000 + phone_idx
-    rotated   = _send_tor_newnym(ctrl_port)
+    slot = tor_slot_for_serial(serial, phone_idx)
+    rotated = send_newnym(slot)
     time.sleep(1)
     result = apply_identity_adb(serial, phone_idx)
     result["circuit_rotated"] = rotated
@@ -141,7 +267,7 @@ def rotate_identity_adb(serial: str, phone_idx: int) -> dict:
 
 
 def wait_for_tor(phone_idx: int, timeout: int = 30) -> bool:
-    port     = BASE_PORT + phone_idx
+    port = socks_port_for_slot(phone_idx)
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -207,21 +333,17 @@ def full_identity_reset(serial: str, phone_idx: int) -> dict:
     3. New MAC address
     4. Clear browser cookies / app data
     """
-    # 1. Rotate Tor circuit
-    ctrl_port = BASE_PORT + 1000 + phone_idx
-    tor_rotated = _send_tor_newnym(ctrl_port)
+    slot = tor_slot_for_serial(serial, phone_idx)
+    tor_rotated = send_newnym(slot)
     time.sleep(0.5)
 
-    # 2. Re-apply proxy to pick up new Tor circuit
+    # Re-apply proxy to pick up new Tor circuit (same host:port; fresh circuit).
     apply_identity_adb(serial, phone_idx)
 
-    # 3. New Android ID
     new_android_id = randomize_android_id_adb(serial)
 
-    # 4. New MAC (best-effort, requires root)
     mac_result = randomize_mac_adb(serial)
 
-    # 5. Clear Chrome data (forces new fingerprint session)
     try:
         subprocess.run(
             ["adb", "-s", serial, "shell", "pm", "clear", "com.android.chrome"],

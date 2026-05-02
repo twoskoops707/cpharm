@@ -53,9 +53,7 @@ from wizard_theme import (
     FM,
     FS,
     FONT_CAPTION,
-    FONT_HERO,
     FONT_H2,
-    FONT_LEAD,
     GREEN,
     ON_ACCENT,
     PURPLE,
@@ -881,7 +879,8 @@ def _warn_arm64_x64_adb(log_fn) -> None:
     )
 
 
-MUMU_DOWNLOAD_URL = "https://www.mumuplayer.com/windows-arm.html"
+# Official downloads hub (pick Windows vs Windows ARM); windows-arm.html previously 404'd.
+MUMU_DOWNLOAD_URL = "https://www.mumuplayer.com/download/"
 
 # MuMu only forwards ADB from the host after it is enabled *per instance* (settings / device info).
 MUMU_ADB_PER_INSTANCE_HINT = (
@@ -2583,9 +2582,29 @@ def describe_step(step):
         return "Clear cookies"
     if t == "rotate_identity":
         return "Rotate IP + Android ID"
+    if t == "full_reset":
+        return "Full identity reset"
     if t == "type_text":
         return f"Type  →  \"{step.get('text', '')}\""
     return f"Step  →  {t}" if t else "Step"
+
+
+def _normalize_sequence_steps(steps: list) -> list:
+    """Coerce MuMu/CPharm sequence JSON (e.g. string wait.seconds) before storing in state."""
+    root = _cpharm_install_root()
+    auto_path = root / "automation"
+    mod = auto_path / "sequence_normalize.py"
+    if not mod.exists():
+        return list(steps)
+    ap = str(auto_path)
+    if ap not in sys.path:
+        sys.path.insert(0, ap)
+    try:
+        from sequence_normalize import normalize_automation_steps
+
+        return normalize_automation_steps(steps)
+    except Exception:
+        return list(steps)
 
 
 def execute_steps(steps, serial):
@@ -2595,8 +2614,28 @@ def execute_steps(steps, serial):
             chrome_open_url(serial, step.get("url", ""))
             time.sleep(0.8)
         elif t == "tap":
-            adb("shell", "input", "tap",
-                str(step.get("x", 0)), str(step.get("y", 0)), serial=serial)
+            pre_ms = float(step.get("pre_wait_ms", 0) or 0)
+            if pre_ms > 0:
+                time.sleep(min(pre_ms / 1000.0, 10.0))
+            try:
+                retries = int(step.get("retries", 1) or 1)
+            except (TypeError, ValueError):
+                retries = 1
+            retries = max(1, min(retries, 8))
+            try:
+                jitter = int(step.get("jitter", 0) or 0)
+            except (TypeError, ValueError):
+                jitter = 0
+            jitter = max(0, min(jitter, 120))
+            bx = int(step.get("x", 0))
+            by = int(step.get("y", 0))
+            for r in range(retries):
+                jx = bx + (random.randint(-jitter, jitter) if jitter else 0)
+                jy = by + (random.randint(-jitter, jitter) if jitter else 0)
+                adb("shell", "input", "tap",
+                    str(max(0, jx)), str(max(0, jy)), serial=serial)
+                if r + 1 < retries:
+                    time.sleep(random.uniform(0.08, 0.22))
         elif t == "wait":
             time.sleep(float(step.get("seconds", 1)))
         elif t == "swipe":
@@ -2685,14 +2724,13 @@ class WelcomePage(PageBase):
         top = self.winfo_toplevel()
         self._welcome_images: list[tk.PhotoImage] = []
 
-        tk.Label(self, text="CPharm Phone Farm", font=FONT_HERO,
-                 bg=BG, fg=T1).pack(pady=(18, 4))
-        tk.Label(
-            self,
-            text="Virtual Android phones on your Windows laptop — Snapdragon ARM64 or Intel.\n"
-                 "This wizard installs and wires everything; primary actions use the accent controls below.",
-            font=FONT_LEAD, bg=BG, fg=T2, justify="center",
-        ).pack(pady=(0, 8))
+        self.header(
+            "Welcome",
+            "Virtual Android phones on your Windows laptop — Snapdragon ARM64 or Intel.\n"
+            "This wizard installs and wires everything; primary actions use the footer controls below.",
+        )
+        tk.Label(self, text="CPharm Phone Farm", font=FONT_H2,
+                 bg=BG, fg=ACCENT).pack(pady=(2, 10))
 
         steps = tk.Frame(self, bg=BG2, padx=20, pady=16,
                          highlightthickness=1, highlightbackground=BORDER)
@@ -2855,8 +2893,8 @@ class PrerequisitesPage(PageBase):
         self._rows    = {}
 
         self.header(
-            "Install tools & CPharm files",
-            "The wizard downloads and installs all tools automatically.\n"
+            "Install tools",
+            "Downloads and installs Java, Python, packages, optional Tor, and CPharm files.\n"
             "Click the big button and wait — everything will be ready."
         )
 
@@ -3410,10 +3448,10 @@ class AndroidStudioPage(PageBase):
         self._working  = False
 
         self.header(
-            "Android SDK & runtime choice",
-            "One button does everything. The wizard downloads command-line tools, platform-tools, "
-            "and the emulator — licenses accepted automatically.\n"
-            "No Android Studio UI. No terminal. ARM64 hosts can use MuMuPlayer instead (card below)."
+            "Android runtime",
+            "One button installs command-line tools, platform-tools, and the emulator — "
+            "licenses accepted automatically. No Android Studio UI.\n"
+            "ARM64 Windows can use MuMuPlayer instead of the Google emulator (card below)."
         )
 
         # ── status card ───────────────────────────────────────────────────────
@@ -4056,7 +4094,7 @@ class PhoneFarmPage(PageBase):
         super().__init__(parent)
         self._done = False
         self.header(
-            "Create virtual phones",
+            "Create phones",
             "Google path: wizard downloads Android 14 and creates Pixel 6 AVDs.\n"
             "MuMu path: create instances in MuMuPlayer — automation comes after phones boot.\n"
             "One-time setup. Each emulator uses ~2 GB RAM + ~4 GB disk."
@@ -4163,8 +4201,18 @@ class PhoneFarmPage(PageBase):
                  font=("Segoe UI", 12, "bold"), bg="#1a2a1a", fg=GREEN,
                  anchor="w").pack(fill="x")
         tk.Label(self._mumu_panel,
-                 text="MuMuPlayer handles phone creation through its own interface.\n\n"
-                      "How to create phones:\n"
+                 text="Before you start\n"
+                      "  • PC: on x86 Windows, turn on VT/CPU virtualization in BIOS and verify in MuMu "
+                      "(Help / device diagnostics). Poor VT = slow instances.\n"
+                      "  • Right installer: use “Windows ARM” from mumuplayer.com/download on Snapdragon PCs; "
+                      "do not mix installers.\n"
+                      "  • Apps: prefer arm64-v8a APKs; MuMu Mac only installs 64-bit ARM apps (no 32-bit).\n"
+                      "  • Network / proxy: campus firewalls and broken DNS can block the emulator; if you "
+                      "used VPN or “accelerator” tools in MuMu, stale global HTTP proxy settings can linger "
+                      "(MuMu’s network FAQ documents clearing them).\n"
+                      "  • Multi-instance: each phone has its own ADB port — enable ADB per instance and use "
+                      "distinct instance names so shortcuts don’t overwrite.\n\n"
+                      "How to create phones\n"
                       "  1. Open MuMuPlayer (it's in your Start menu or taskbar)\n"
                       "  2. Click the multi-window icon at the top-right\n"
                       "  3. Click '+ New Instance' for each phone you want\n"
@@ -4355,7 +4403,7 @@ class BootPage(PageBase):
         super().__init__(parent)
         self._boot_row_images: list[tk.PhotoImage] = []
         self.header(
-            "Connect & verify — boot phones",
+            "Connect & boot",
             "Boot MuMu instances or AVDs, confirm ADB, optional Chrome check. "
             "Automation server and scheduler run from the Launch step."
         )
@@ -5130,9 +5178,12 @@ class AutomationPage(PageBase):
         super().__init__(parent)
         self._seq_steps: list = []
         self.header(
-            "Automation — default sequence",
-            "Optional template applied when assigning phones to groups. "
-            "Per-phone overrides stay on the Groups step."
+            "Automation",
+            "Default sequence — optional template when assigning phones to groups. "
+            "Per-phone overrides stay on the Groups step. "
+            "MuMu Player's manager\\default_sequence*.json files use the same step shape as CPharm — "
+            "use Load sequence and pick that file (or run automation/sequence_normalize.py); "
+            "keep editing sequences in CPharm because MuMu does not read groups_config.json."
         )
 
         intro = tk.Frame(self, bg=BG2, padx=SP["card"], pady=SP["sm"],
@@ -5233,6 +5284,7 @@ class AutomationPage(PageBase):
         if not isinstance(data, list):
             messagebox.showerror("Invalid file", "File must contain a JSON array of steps.")
             return
+        data = _normalize_sequence_steps(data)
         self._seq_steps.clear()
         self._seq_steps.extend(data)
         state["default_steps"] = list(self._seq_steps)
@@ -5250,8 +5302,8 @@ class PlayStorePage(PageBase):
     def __init__(self, parent):
         super().__init__(parent)
         self.header(
-            "Google Play closed testing",
-            "How to use your virtual phones to get your app into the Play Store."
+            "Play Console",
+            "Closed testing — how to use your virtual phones to get your app into the Play Store."
         )
 
         # Canvas scrolled area
@@ -5334,7 +5386,7 @@ class GroupsPage(PageBase):
     def __init__(self, parent):
         super().__init__(parent)
         self.header(
-            "Groups & sequences",
+            "Groups",
             "Split phones into groups. Each group runs its own sequence — stagger, repeat, "
             "and per-phone overrides stay available below."
         )
@@ -5344,8 +5396,12 @@ class GroupsPage(PageBase):
         intro.pack(fill="x", pady=(0, 10))
         tk.Label(intro,
                  text="Assign phones with checkboxes, set hits/day per phone for the daily scheduler, "
-                      "edit each phone's sequence, and copy the master (Phone 1) sequence to all phones.",
+                      "edit each phone's sequence, and copy the master (Phone 1) sequence to all phones. "
+                      "A phone can only be in one group — checking it here removes it from other groups. "
+                      "Use Out to clear a phone from this group.",
                  font=FS, bg=BG2, fg=T2, justify="left", anchor="w").pack(fill="x")
+        self._grp_status = tk.Label(intro, text="", font=FS, bg=BG2, fg=GREEN, anchor="w")
+        self._grp_status.pack(fill="x", pady=(4, 0))
 
         ctrl = tk.Frame(self, bg=BG)
         ctrl.pack(fill="x", pady=(0, 8))
@@ -5532,23 +5588,39 @@ class GroupsPage(PageBase):
                 # Toggle
                 var = tk.BooleanVar(value=serial in phone_map)
 
-                def toggle(v=var, s=serial, ref=[psteps], hv=hits_var):
+                def toggle(v=var, s=serial, ref=[psteps], hv=hits_var, g=group):
                     if v.get():
-                        if s not in group["phones"]:
+                        for other in state["groups"]:
+                            if other is g:
+                                continue
+                            if s in (other.get("phones") or {}):
+                                other["phones"].pop(s, None)
+                        if s not in g["phones"]:
                             try:
                                 h = max(0, min(int(hv.get()), 1440))
                             except (tk.TclError, TypeError, ValueError):
                                 h = DEFAULT_HITS_PER_DAY
-                            group["phones"][s] = {
+                            g["phones"][s] = {
                                 "steps": list(ref[0]),
                                 "hits_per_day": h,
                             }
+                        self._rebuild()
                     else:
-                        group["phones"].pop(s, None)
+                        g["phones"].pop(s, None)
+
+                def remove_from_group(s=serial, v=var, g=group):
+                    g["phones"].pop(s, None)
+                    v.set(False)
+                    self._rebuild()
 
                 tk.Checkbutton(row, text="", variable=var, onvalue=True, offvalue=False,
                                command=toggle, font=FB, bg=BG3, fg=T1, selectcolor=GREEN,
                                activebackground=BG3).pack(side="right")
+                ou = tk.Button(row, text="Out", font=FS, bg=BG4, fg=T1, relief="flat",
+                               cursor="hand2", padx=6, pady=2, bd=0,
+                               command=remove_from_group)
+                style_secondary_button(ou)
+                ou.pack(side="right", padx=(4, 4))
 
             # ── Clone master button ───────────────────────────────────────────
             if state["phones"] and len(state["phones"]) > 1:
@@ -5557,27 +5629,31 @@ class GroupsPage(PageBase):
                 master_serial = state["phones"][0]["serial"]
                 master_steps = (phone_map.get(master_serial, {}) or {}).get("steps", [])
 
-                def clone_all(i=idx, ms=master_serial, msteps=master_steps):
+                def clone_all(ms=master_serial, msteps=master_steps, g=group):
                     # Clone Phone 1's sequence to every phone's own editable copy (steps only).
                     for phone in state["phones"]:
                         s = phone["serial"]
-                        if s in group["phones"]:
-                            ent = group["phones"][s]
+                        for other in state["groups"]:
+                            if other is g:
+                                continue
+                            other["phones"].pop(s, None)
+                        if s in g["phones"]:
+                            ent = g["phones"][s]
                             if not isinstance(ent, dict):
                                 ent = {"steps": list(msteps),
                                        "hits_per_day": DEFAULT_HITS_PER_DAY}
-                                group["phones"][s] = ent
+                                g["phones"][s] = ent
                             else:
                                 prev_h = ent.get("hits_per_day", DEFAULT_HITS_PER_DAY)
                                 ent["steps"] = list(msteps)
                                 ent["hits_per_day"] = prev_h
                         else:
-                            group["phones"][s] = {
+                            g["phones"][s] = {
                                 "steps": list(msteps),
                                 "hits_per_day": DEFAULT_HITS_PER_DAY,
                             }
                     self._rebuild()
-                    self._log_write(f"[{state['groups'][i]['name']}] Master sequence copied to all phones.")
+                    self._log_write(f"[{g['name']}] Master sequence copied to all phones.")
 
                 cl_img = load_icon("icon_clone", self.winfo_toplevel())
                 cb_kw = dict(
@@ -5629,8 +5705,8 @@ class GroupsPage(PageBase):
 
 
     def _log_write(self, text: str):
-        self._count_lbl.config(text=text, fg=GREEN)
-        self.after(3000, self._rebuild)
+        self._grp_status.config(text=text, fg=GREEN)
+        self.after(6000, lambda: self._grp_status.config(text=""))
 
     def can_advance(self):
         for g in state["groups"]:
@@ -5717,8 +5793,11 @@ class AddStepDialog(tk.Toplevel):
             field("Website URL:", "url", "https://example.com", 36)
         elif t == "tap":
             field("X (left ↔ right):", "x", 540)
-            field("Y (top ↕ bottom):", "y", 960)
-            tip("Screen is 1080×2400. Center = 540, 1200")
+            field("Y (top ↕ bottom):", "y", 1280)
+            field("Retries:", "retries", 2)
+            field("Jitter ±px:", "jitter", 24)
+            field("Pre-wait ms:", "pre_wait_ms", 0)
+            tip("Retries + jitter help flaky buttons. Typical phone 1080×2400 — adjust Y for your UI.")
         elif t == "wait":
             field("Seconds:", "seconds", 5)
         elif t == "swipe":
@@ -5744,6 +5823,14 @@ class AddStepDialog(tk.Toplevel):
         step = {"type": t}
         for key, var in self._fields.items():
             v = var.get().strip()
+            if v == "":
+                continue
+            if t == "tap" and key == "pre_wait_ms":
+                try:
+                    step[key] = float(v)
+                except ValueError:
+                    step[key] = v
+                continue
             try:
                 step[key] = int(v)
             except ValueError:
@@ -5762,8 +5849,9 @@ class LaunchPage(PageBase):
         super().__init__(parent)
         self._server_proc = None
         self.header(
-            "Launch — server, groups, scheduler",
-            "Start the dashboard API, run groups, optional daily schedule, open the web UI."
+            "Launch",
+            "Server, groups, scheduler — start the dashboard API, run groups, optional daily schedule, "
+            "open the web UI."
         )
 
         # Summary
@@ -5866,6 +5954,36 @@ class LaunchPage(PageBase):
         self._sched_btn.pack(side="left", padx=(8, 0))
         self._sched_lbl = tk.Label(sched_row, text="", font=FS, bg=BG3, fg=T2)
         self._sched_lbl.pack(side="left", padx=8)
+
+        # True-up (daily scheduler — swap steps without restarting threads)
+        tu = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        tu.pack(fill="x", pady=(0, 8))
+        tk.Label(tu, text="D — True-up daily schedule",
+                 font=("Segoe UI", 11, "bold"), bg=BG3,
+                 fg=ACCENT, anchor="w").pack(fill="x")
+        tk.Label(tu,
+                 text="While the daily schedule is running: paste a JSON array of automation steps for one "
+                      "phone. The next scheduler fires use this list; the scheduler thread keeps running.",
+                 font=FS, bg=BG3, fg=T2, anchor="w", wraplength=640).pack(
+                     fill="x", pady=(2, 8))
+        tu_row = tk.Frame(tu, bg=BG3)
+        tu_row.pack(fill="x")
+        tk.Label(tu_row, text="ADB serial:", font=FS, bg=BG3, fg=T2).pack(side="left")
+        self._true_up_serial = tk.Entry(tu_row, font=FM, bg=BG2, fg=T1,
+                                        insertbackground=T1, relief="flat", width=24)
+        self._true_up_serial.pack(side="left", padx=6)
+        tub = tk.Button(tu_row, text="Apply true-up",
+                        font=("Segoe UI", 10, "bold"),
+                        bg=ACCENT, fg=ON_ACCENT, relief="flat",
+                        cursor="hand2", command=self._true_up_schedule,
+                        bd=0, highlightthickness=0)
+        style_primary_button(tub)
+        tub.pack(side="left", padx=(8, 0))
+        self._true_up_lbl = tk.Label(tu_row, text="", font=FS, bg=BG3, fg=T2)
+        self._true_up_lbl.pack(side="left", padx=8)
+        self._true_up_json = tk.Text(tu, height=4, font=FM, bg=BG2, fg=T1,
+                                     relief="flat", wrap="word")
+        self._true_up_json.pack(fill="x", pady=(8, 0))
 
         # Log
         tk.Label(self, text="Live log:", font=("Segoe UI", 9, "bold"),
@@ -6156,6 +6274,38 @@ class LaunchPage(PageBase):
         except Exception as e:
             self._sched_lbl.config(text=f"Error: {e}", fg=RED)
 
+    def _true_up_schedule(self):
+        serial = self._true_up_serial.get().strip()
+        raw = self._true_up_json.get("1.0", "end").strip()
+        if not serial:
+            messagebox.showwarning("Serial required",
+                                   "Enter the device ADB serial (shown on Connect & boot).")
+            return
+        try:
+            steps = json.loads(raw) if raw else []
+        except json.JSONDecodeError as e:
+            messagebox.showerror("Invalid JSON", str(e))
+            return
+        if not isinstance(steps, list):
+            messagebox.showerror("Invalid format", "JSON root must be an array of step objects.")
+            return
+
+        def go():
+            result = self._api("/api/scheduler/true_up", {"serial": serial, "steps": steps})
+
+            def ui():
+                if result.get("ok"):
+                    self._true_up_lbl.config(text="Saved ✓", fg=GREEN)
+                    self._log_write(f"True-up: {serial} → {len(steps)} steps (next fires).\n")
+                else:
+                    err = result.get("error", result)
+                    self._true_up_lbl.config(text=str(err)[:96], fg=RED)
+                    self._log_write(f"True-up failed: {err}\n")
+
+            self.after(0, ui)
+
+        threading.Thread(target=go, daemon=True).start()
+
 
 # ─── main wizard ──────────────────────────────────────────────────────────────
 
@@ -6299,6 +6449,14 @@ class CPharmWizard(tk.Tk):
                        highlightbackground=BORDER_STRONG)
         ftr.pack(fill="x")
         ftr.pack_propagate(False)
+        self._cancel_btn = tk.Button(
+            ftr, text="Cancel",
+            font=("Segoe UI", 11),
+            command=self.destroy,
+            padx=SP["md"], pady=SP["sm"],
+        )
+        style_secondary_button(self._cancel_btn)
+        self._cancel_btn.pack(side="left", padx=SP["lg"], pady=SP["sm"])
         self._next_btn = tk.Button(ftr, text="Next",
                                    font=("Segoe UI", 11, "bold"),
                                    command=self._next,

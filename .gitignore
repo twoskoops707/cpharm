@@ -10,6 +10,9 @@ build/
 venv/
 .env
 
+# PyInstaller — CLI builds emit a spec next to setup_wizard.py
+wizard/CPharmSetup.spec
+
 # APKs (too large for git)
 apks/*.apk
 

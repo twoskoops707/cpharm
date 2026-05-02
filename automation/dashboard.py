@@ -32,6 +32,8 @@ import tor_manager
 import teach as teach_mod
 import playstore as ps_mod
 from config import PORT, WS_PORT, APK_DIR, REC_DIR, EMULATOR_PORTS
+from sequence_normalize import normalize_automation_steps
+import human_variation as _hv
 
 logging.basicConfig(level=logging.INFO, format="  %(message)s")
 log = logging.getLogger("cpharm")
@@ -213,6 +215,112 @@ def _phone_idx_from_serial(serial: str) -> int:
         return 0
     except (IndexError, ValueError):
         return 0
+
+
+_SEQUENCE_STEP_TYPES = frozenset({
+    "open_url", "tap", "wait", "swipe", "keyevent",
+    "close_app", "clear_cookies", "type_text",
+    "rotate_identity", "full_reset",
+})
+_PKG_STEP_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.]*$")
+_KEY_STEP_RE = re.compile(r"^[A-Z0-9_]+$")
+
+
+def run_sequence_step(serial: str, step: dict, interrupt_check=None, hv_rng=None) -> None:
+    """Execute one automation step. Used by groups runner and the daily scheduler.
+
+    ``hv_rng``: per-run :class:`random.Random` from ``human_variation.rng_for_run(serial, cycle)``
+    when human-like variance is enabled (see ``config.HUMAN_VARIATION``).
+    """
+    if interrupt_check is not None and not interrupt_check():
+        return
+    t = step.get("type", "")
+    if t not in _SEQUENCE_STEP_TYPES:
+        return
+    if t == "open_url":
+        url = str(step.get("url", "https://google.com"))
+        try:
+            _p = urllib.parse.urlparse(url)
+            if _p.scheme not in ("http", "https") or not _p.netloc or " " in url:
+                return
+        except Exception:
+            return
+        _adb(serial, "shell", "am", "start",
+             "-a", "android.intent.action.VIEW", "-d", url,
+             "-n", "com.android.chrome/com.google.android.apps.chrome.Main",
+             "--ez", "create_new_tab", "true")
+    elif t == "tap":
+        pre_ms = float(step.get("pre_wait_ms", 0) or 0)
+        if _hv.enabled() and hv_rng is not None and pre_ms > 0:
+            pre_ms = _hv.scaled_pre_wait_ms(pre_ms, hv_rng)
+        if pre_ms > 0:
+            time.sleep(min(pre_ms / 1000.0, 10.0))
+        try:
+            retries = int(step.get("retries", 1) or 1)
+        except (TypeError, ValueError):
+            retries = 1
+        retries = max(1, min(retries, 8))
+        try:
+            jitter = int(step.get("jitter", 0) or 0)
+        except (TypeError, ValueError):
+            jitter = 0
+        jitter = max(0, min(jitter, 120))
+        ej = _hv.effective_tap_jitter(jitter, hv_rng)
+        bx = int(step.get("x", 0))
+        by = int(step.get("y", 0))
+        for r in range(retries):
+            if interrupt_check is not None and not interrupt_check():
+                return
+            jx = bx + (hv_rng.randint(-ej, ej) if hv_rng else random.randint(-ej, ej))
+            jy = by + (hv_rng.randint(-ej, ej) if hv_rng else random.randint(-ej, ej))
+            _adb(serial, "shell", "input", "tap",
+                 str(max(0, jx)), str(max(0, jy)))
+            if r + 1 < retries:
+                if hv_rng is not None:
+                    time.sleep(hv_rng.uniform(0.08, 0.22))
+                else:
+                    time.sleep(random.uniform(0.08, 0.22))
+    elif t == "wait":
+        secs = min(float(step.get("seconds", 1)), 300)
+        if _hv.enabled() and hv_rng is not None:
+            secs = min(300.0, _hv.scaled_wait_seconds(secs, hv_rng))
+        deadline = time.time() + secs
+        while time.time() < deadline:
+            if interrupt_check is not None and not interrupt_check():
+                return
+            time.sleep(min(0.25, max(0.0, deadline - time.time())))
+    elif t == "swipe":
+        _adb(serial, "shell", "input", "swipe",
+             str(int(step.get("x1", 0))), str(int(step.get("y1", 0))),
+             str(int(step.get("x2", 0))), str(int(step.get("y2", 0))),
+             str(min(int(step.get("ms", 400)), 5000)))
+    elif t == "keyevent":
+        key = str(step.get("key", "BACK"))
+        if not _KEY_STEP_RE.match(key):
+            return
+        _adb(serial, "shell", "input", "keyevent", key)
+    elif t == "close_app":
+        pkg = str(step.get("package", "com.android.chrome"))
+        if not _PKG_STEP_RE.match(pkg):
+            return
+        _adb(serial, "shell", "am", "force-stop", pkg)
+    elif t == "rotate_identity":
+        idx = _phone_idx_from_serial(serial)
+        tor_manager.rotate_identity_adb(serial, idx)
+    elif t == "clear_cookies":
+        pkg = str(step.get("package", "com.android.chrome"))
+        if not _PKG_STEP_RE.match(pkg):
+            return
+        _adb(serial, "shell", "pm", "clear", pkg)
+        _adb(serial, "shell", "am", "force-stop", pkg)
+    elif t == "type_text":
+        raw_text = step.get("text", "")
+        text = urllib.parse.quote(raw_text, safe="").replace("%20", "%s")
+        _adb(serial, "shell", "input", "text", text)
+    elif t == "full_reset":
+        idx = _phone_idx_from_serial(serial)
+        tor_manager.full_identity_reset(serial, idx)
+
 
 def _get_resources() -> dict:
     try:
@@ -542,6 +650,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
             _adb(p["serial"], "shell", "am", "force-stop", "com.android.browser")
             _adb(p["serial"], "shell", "am", "force-stop", "com.chrome.beta")
             _adb(p["serial"], "shell", "am", "force-stop", "com.android.chrome")
+            tor_manager.register_tor_slot(p["serial"], idx)
             result = tor_manager.rotate_identity_adb(p["serial"], idx)
             msg = (f"{p['name']}: identity rotated · "
                    f"new Tor circuit={'yes' if result.get('circuit_rotated') else 'no'}")
@@ -620,7 +729,9 @@ async def handle_post(path: str, body: bytes) -> bytes:
         loop   = asyncio.get_running_loop()
 
         def setup():
+            tor_manager.clear_tor_slots()
             for i, p in enumerate(phones):
+                tor_manager.register_tor_slot(p["serial"], i)
                 socks_port = tor_manager.start_tor_for_phone(i)
                 tor_manager.apply_identity_adb(p["serial"], i)
                 ok = tor_manager.wait_for_tor(i, timeout=30)
@@ -639,6 +750,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
 
         def rotate_all():
             for i, p in enumerate(phones):
+                tor_manager.register_tor_slot(p["serial"], i)
                 result = tor_manager.rotate_identity_adb(p["serial"], i)
                 msg = (f"{p['name']}: rotated · "
                        f"Tor={'yes' if result.get('circuit_rotated') else 'no'}")
@@ -651,8 +763,12 @@ async def handle_post(path: str, body: bytes) -> bytes:
         return json_ok({"ok": True})
 
     if path == "/api/proxy/teardown":
+        phones = [p["serial"] for p in list_phones() if p["running"]]
+        tor_manager.clear_all_proxies_on_devices(phones)
+        tor_manager.clear_tor_slots()
         tor_manager.stop_all()
-        await broadcast({"type": "log", "msg": "Tor turned off — phones using normal connection"})
+        await broadcast({"type": "log",
+                          "msg": "Tor stopped — global HTTP proxy cleared on phones"})
         return json_ok({"ok": True})
 
     # ── Groups: run different sequences on different phone sets in parallel ──
@@ -699,75 +815,18 @@ async def handle_post(path: str, body: bytes) -> bytes:
         loop = asyncio.get_running_loop()
         _running_groups.clear()
 
-        _ALLOWED_STEP_TYPES = frozenset({
-            "open_url", "tap", "wait", "swipe", "keyevent",
-            "close_app", "clear_cookies", "type_text",
-            "rotate_identity", "full_reset",
-        })
-        _PKG_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9_.]*$')
-        _KEY_RE = re.compile(r'^[A-Z0-9_]+$')
-
-        def _run_steps_adb(steps: list, serial: str, group_name: str):
+        def _run_steps_adb(steps: list, serial: str, group_name: str, iteration: int):
+            ic = lambda: _running_groups.get(group_name, True)
+            cycle = iteration * 1_000_003 + (_hv.stable_seed(serial, 0) & 0xFFFFF)
+            rng = _hv.rng_for_run(serial, cycle) if _hv.enabled() else None
             for step in steps:
-                if not _running_groups.get(group_name, True):
+                if not ic():
                     break
-                t = step.get("type", "")
-                if t not in _ALLOWED_STEP_TYPES:
-                    continue
-                if t == "open_url":
-                    url = str(step.get("url", ""))
-                    try:
-                        _p = urllib.parse.urlparse(url)
-                        if _p.scheme not in ("http", "https") or not _p.netloc or " " in url:
-                            continue
-                    except Exception:
-                        continue
-                    _adb(serial, "shell", "am", "start",
-                         "-a", "android.intent.action.VIEW", "-d", url)
-                elif t == "tap":
-                    _adb(serial, "shell", "input", "tap",
-                         str(int(step.get("x", 0))), str(int(step.get("y", 0))))
-                elif t == "wait":
-                    secs = min(float(step.get("seconds", 1)), 300)
-                    deadline = time.time() + secs
-                    while time.time() < deadline:
-                        if not _running_groups.get(group_name, True):
-                            break
-                        time.sleep(0.25)
-                elif t == "swipe":
-                    _adb(serial, "shell", "input", "swipe",
-                         str(int(step.get("x1", 0))), str(int(step.get("y1", 0))),
-                         str(int(step.get("x2", 0))), str(int(step.get("y2", 0))),
-                         str(min(int(step.get("ms", 400)), 5000)))
-                elif t == "keyevent":
-                    key = str(step.get("key", "BACK"))
-                    if not _KEY_RE.match(key):
-                        continue
-                    _adb(serial, "shell", "input", "keyevent", key)
-                elif t == "close_app":
-                    pkg = str(step.get("package", "com.android.chrome"))
-                    if not _PKG_RE.match(pkg):
-                        continue
-                    _adb(serial, "shell", "am", "force-stop", pkg)
-                elif t == "clear_cookies":
-                    pkg = str(step.get("package", "com.android.chrome"))
-                    if not _PKG_RE.match(pkg):
-                        continue
-                    _adb(serial, "shell", "pm", "clear", pkg)
-                elif t == "type_text":
-                    raw_text = step.get("text", "")
-                    text = urllib.parse.quote(raw_text, safe="").replace("%20", "%s")
-                    _adb(serial, "shell", "input", "text", text)
-                elif t == "rotate_identity":
-                    idx = _phone_idx_from_serial(serial)
-                    tor_manager.rotate_identity_adb(serial, idx)
-                elif t == "full_reset":
-                    idx = _phone_idx_from_serial(serial)
-                    result = tor_manager.full_identity_reset(serial, idx)
-                    log.info("full_reset %s: tor=%s android_id=%s mac=%s",
-                             serial, result["tor_circuit_rotated"],
-                             result["new_android_id"], result["new_mac"])
-                time.sleep(0.3)
+                run_sequence_step(serial, step, interrupt_check=ic, hv_rng=rng)
+                if rng is not None:
+                    time.sleep(_hv.step_gap_seconds(rng))
+                else:
+                    time.sleep(0.3)
 
         def _run_group(group: dict):
             name    = group.get("name", "Group")
@@ -794,7 +853,7 @@ async def handle_post(path: str, body: bytes) -> bytes:
                 asyncio.run_coroutine_threadsafe(
                     broadcast({"type": "log",
                                "msg": f"[{name}] Running [{iteration+1}] on {phone_name}"}), loop)
-                _run_steps_adb(phone_steps, serial, name)
+                _run_steps_adb(phone_steps, serial, name, iteration)
                 if phone_steps:
                     idx = _phone_idx_from_serial(serial)
                     asyncio.run_coroutine_threadsafe(
@@ -917,12 +976,17 @@ async def handle_post(path: str, body: bytes) -> bytes:
                     # Update steps for this phone
                     if serial not in phone_map:
                         phone_map[serial] = {}
+                    steps_to_save = (
+                        normalize_automation_steps(new_steps)
+                        if isinstance(new_steps, list)
+                        else new_steps
+                    )
                     if isinstance(phone_map[serial], dict):
-                        phone_map[serial]["steps"] = new_steps
+                        phone_map[serial]["steps"] = steps_to_save
                     else:
-                        phone_map[serial] = {"steps": new_steps}
+                        phone_map[serial] = {"steps": steps_to_save}
                     GROUPS_CFG.write_text(json.dumps(cfg, indent=2))
-                    return json_ok({"ok": True, "serial": serial, "steps": new_steps})
+                    return json_ok({"ok": True, "serial": serial, "steps": steps_to_save})
                 else:
                     # Return current steps for this phone
                     steps = (phone_map.get(serial) or {}).get("steps", []) if isinstance(phone_map.get(serial), dict) else []

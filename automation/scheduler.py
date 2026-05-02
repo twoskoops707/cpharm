@@ -11,13 +11,14 @@ import random
 import sys
 import threading
 import time as _time
-import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 import dashboard
+import human_variation as hv
 import tor_manager
+from sequence_normalize import normalize_automation_steps
 
 log = logging.getLogger("scheduler")
 
@@ -26,6 +27,8 @@ DEFAULT_HITS_PER_DAY = 720
 
 PHONE_SCHED = {}    # serial -> {"hits": N, "times": [epoch], "idx": N}
 RUNNING = {}         # serial -> bool
+# Per-serial sequence replacement while scheduler is running ("true up").
+SCHEDULER_STEP_OVERRIDE = {}  # serial -> list of steps
 _main_loop = None    # event loop captured from async context
 _sched_lock = threading.Lock()
 
@@ -48,64 +51,27 @@ _ALLOWED_STEP_TYPES = frozenset({
     "close_app", "clear_cookies", "type_text",
     "rotate_identity", "full_reset",
 })
-_PKG_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9_.]*$')
-_KEY_RE = re.compile(r'^[A-Z0-9_]+$')
 
 
-def _run_steps(serial: str, steps: list):
-    for step in (steps or []):
+def _effective_steps(serial: str, initial: list) -> list:
+    with _sched_lock:
+        if serial in SCHEDULER_STEP_OVERRIDE:
+            return list(SCHEDULER_STEP_OVERRIDE[serial])
+    return list(initial or [])
+
+
+def _run_steps(serial: str, steps: list, variation_cycle: int = 0):
+    eff = _effective_steps(serial, steps)
+    rng = hv.rng_for_run(serial, variation_cycle) if hv.enabled() else None
+    for step in eff:
         t = step.get("type", "")
         if t not in _ALLOWED_STEP_TYPES:
             continue
-        if t == "open_url":
-            url = str(step.get("url", "https://google.com"))
-            try:
-                _p = urllib.parse.urlparse(url)
-                if _p.scheme not in ("http", "https") or not _p.netloc or " " in url:
-                    continue
-            except Exception:
-                continue
-            dashboard._adb(serial, "shell", "am", "start",
-                "-a", "android.intent.action.VIEW", "-d", url,
-                "-n", "com.android.chrome/com.google.android.apps.chrome.Main",
-                "--ez", "create_new_tab", "true")
-        elif t == "tap":
-            dashboard._adb(serial, "shell", "input", "tap",
-                str(int(step.get("x", 0))), str(int(step.get("y", 0))))
-        elif t == "wait":
-            _time.sleep(min(float(step.get("seconds", 1)), 300))
-        elif t == "swipe":
-            dashboard._adb(serial, "shell", "input", "swipe",
-                str(int(step.get("x1", 0))), str(int(step.get("y1", 0))),
-                str(int(step.get("x2", 0))), str(int(step.get("y2", 0))),
-                str(min(int(step.get("ms", 400)), 5000)))
-        elif t == "keyevent":
-            key = str(step.get("key", "BACK"))
-            if not _KEY_RE.match(key):
-                continue
-            dashboard._adb(serial, "shell", "input", "keyevent", key)
-        elif t == "close_app":
-            pkg = str(step.get("package", "com.android.chrome"))
-            if not _PKG_RE.match(pkg):
-                continue
-            dashboard._adb(serial, "shell", "am", "force-stop", pkg)
-        elif t == "rotate_identity":
-            idx = dashboard._phone_idx_from_serial(serial)
-            tor_manager.rotate_identity_adb(serial, idx)
-        elif t == "clear_cookies":
-            pkg = str(step.get("package", "com.android.chrome"))
-            if not _PKG_RE.match(pkg):
-                continue
-            dashboard._adb(serial, "shell", "pm", "clear", pkg)
-            dashboard._adb(serial, "shell", "am", "force-stop", pkg)
-        elif t == "type_text":
-            raw_text = step.get("text", "")
-            text = urllib.parse.quote(raw_text, safe="").replace("%20", "%s")
-            dashboard._adb(serial, "shell", "input", "text", text)
-        elif t == "full_reset":
-            idx = dashboard._phone_idx_from_serial(serial)
-            tor_manager.full_identity_reset(serial, idx)
-        _time.sleep(random.uniform(0.35, 0.55))
+        dashboard.run_sequence_step(serial, step, hv_rng=rng)
+        if rng is not None:
+            _time.sleep(hv.step_gap_seconds(rng))
+        else:
+            _time.sleep(random.uniform(0.35, 0.55))
 
 
 def _broadcast_from_thread(msg: dict):
@@ -150,7 +116,9 @@ def _sched_loop(serial: str, steps: list, hits_per_day: int):
         _broadcast_from_thread({
             "type": "scheduler_tick", "serial": serial,
             "count": idx + 1, "total": len(times)})
-        _run_steps(serial, steps)
+        day_o = int(_time.time() // 86400)
+        cycle = day_o * 100_000 + idx
+        _run_steps(serial, steps, variation_cycle=cycle)
         with _sched_lock:
             if serial in PHONE_SCHED:
                 PHONE_SCHED[serial]["idx"] = idx + 1
@@ -158,6 +126,7 @@ def _sched_loop(serial: str, steps: list, hits_per_day: int):
 
     with _sched_lock:
         RUNNING.pop(serial, None)
+        SCHEDULER_STEP_OVERRIDE.pop(serial, None)
     log.info("[scheduler] %s stopped", _name(serial))
 
 
@@ -220,7 +189,23 @@ async def handle_scheduler(path: str, body_bytes: bytes, method: str = "POST"):
         with _sched_lock:
             for k in list(RUNNING):
                 RUNNING[k] = False
+            SCHEDULER_STEP_OVERRIDE.clear()
         return dashboard.json_ok({"ok": True})
+
+    if path == "/api/scheduler/true_up":
+        serial = str(data.get("serial", "")).strip()
+        new_steps = data.get("steps")
+        if not serial or not _SERIAL_RE.match(serial):
+            return dashboard.json_err("serial required")
+        if not isinstance(new_steps, list):
+            return dashboard.json_err("steps must be a JSON array")
+        norm = normalize_automation_steps(new_steps)
+        with _sched_lock:
+            if not RUNNING.get(serial, False):
+                return dashboard.json_err(
+                    "scheduler is not running for this phone — start the daily schedule first")
+            SCHEDULER_STEP_OVERRIDE[serial] = norm
+        return dashboard.json_ok({"ok": True, "serial": serial, "steps_n": len(norm)})
 
     if path == "/api/scheduler/status":
         with _sched_lock:

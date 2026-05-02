@@ -54,6 +54,7 @@ from wizard_theme import (
     FS,
     FONT_CAPTION,
     FONT_DISPLAY,
+    FONT_EYEBROW,
     FONT_H2,
     GREEN,
     RADIUS,
@@ -2900,11 +2901,26 @@ class PrerequisitesPage(PageBase):
             "Click the big button and wait — everything will be ready."
         )
 
+        tk.Label(
+            self,
+            text="WORKSPACE",
+            font=FONT_EYEBROW,
+            bg=BG,
+            fg=ACCENT_DIM,
+        ).pack(anchor="w", padx=6, pady=(4, 0))
+
         # ── install path row ──────────────────────────────────────────────────
-        path_card = tk.Frame(self, bg=BG3, padx=14, pady=10)
-        path_card.pack(fill="x", pady=(0, 10))
+        path_card = tk.Frame(
+            self,
+            bg=BG4,
+            padx=SP["lg"],
+            pady=SP["md"],
+            highlightthickness=1,
+            highlightbackground=BORDER_STRONG,
+        )
+        path_card.pack(fill="x", pady=(6, 10))
         tk.Label(path_card, text="Install CPharm to:",
-                 font=("Segoe UI", 10, "bold"), bg=BG3, fg=T1).pack(side="left")
+                 font=("Segoe UI", 10, "bold"), bg=BG4, fg=T1).pack(side="left")
         self._install_dir = tk.StringVar(value=CPHARM_DEFAULT)
         tk.Entry(path_card, textvariable=self._install_dir, font=FM,
                  bg=BG2, fg=T1, insertbackground=T1, relief="flat",
@@ -2913,9 +2929,23 @@ class PrerequisitesPage(PageBase):
                   relief="flat", cursor="hand2", padx=8, pady=4,
                   command=self._browse_dir).pack(side="left")
 
+        tk.Label(
+            self,
+            text="REQUIREMENTS",
+            font=FONT_EYEBROW,
+            bg=BG,
+            fg=ACCENT_DIM,
+        ).pack(anchor="w", padx=6, pady=(0, 4))
+
         # ── prerequisite list ─────────────────────────────────────────────────
-        list_card = tk.Frame(self, bg=BG2, padx=14, pady=12,
-                             highlightthickness=1, highlightbackground=BORDER)
+        list_card = tk.Frame(
+            self,
+            bg=BG3,
+            padx=SP["lg"],
+            pady=SP["card"],
+            highlightthickness=1,
+            highlightbackground=BORDER_STRONG,
+        )
         list_card.pack(fill="x", pady=(0, 10))
 
         self._prereq_icons: list[tk.PhotoImage] = []

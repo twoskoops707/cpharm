@@ -13,16 +13,16 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
-# --- palette v2 (ink slate + teal accent; aligned with automation/dashboard tokens) ---
-BG = "#060910"
-BG2 = "#0c121c"
-BG3 = "#141c2a"
-BG4 = "#1c2738"
-BORDER = "#2a3a50"
-BORDER_STRONG = "#3d5166"
+# --- palette v3 (deep slate/zinc + teal–cyan — aligned with automation/dashboard.html) ---
+BG = "#030712"
+BG2 = "#0a101a"
+BG3 = "#0f1724"
+BG4 = "#151f2e"
+BORDER = "#2a3f55"
+BORDER_STRONG = "#3d5670"
 
 ACCENT = "#34e4d0"
-ACCENT_DIM = "#26b8a8"
+ACCENT_DIM = "#22d3ee"
 ACCENT_GLOW = "#6af0e0"
 ACCENT_MUTED = "#143d38"
 
@@ -44,15 +44,16 @@ SP = {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "card": 14}
 # corner radius (px) — canvas cards / parity with dashboard --rad
 RADIUS = {"sm": 6, "md": 10, "lg": 14, "xl": 18}
 
-# Typography — Segoe UI / Variable; keep legacy aliases used by setup_wizard
+# Typography — Segoe UI family (Tk bundles); weights evoke dashboard Plus Jakarta / DM Sans scale
 FONT_HERO = ("Segoe UI", 24, "bold")
 FONT_H1 = ("Segoe UI", 20, "bold")
 FONT_H2 = ("Segoe UI", 12, "bold")
-FONT_DISPLAY = ("Segoe UI", 26, "bold")
+FONT_DISPLAY = ("Segoe UI", 28, "bold")
 FONT_LEAD = ("Segoe UI", 11)
 FONT_BODY = ("Segoe UI", 10)
 FONT_UI = ("Segoe UI", 11)
 FONT_CAPTION = ("Segoe UI", 9)
+FONT_EYEBROW = ("Segoe UI", 8, "bold")
 FONT_MONO = ("Consolas", 10)
 
 FH = FONT_H1

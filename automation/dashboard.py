@@ -506,6 +506,15 @@ async def handle_get(path: str) -> bytes:
         return json_ok(teach_mod.list_recordings())
     if path == "/api/resources":
         return json_ok(_get_resources())
+    # Dashboard dashboard.html loads groups with GET; POST also accepted in handle_post.
+    if path == "/api/groups/load":
+        if GROUPS_CFG.exists():
+            try:
+                cfg = json.loads(GROUPS_CFG.read_text())
+            except (json.JSONDecodeError, OSError):
+                return json_err("corrupt groups_config.json")
+            return json_ok(cfg)
+        return json_err("no groups_config.json found — run the Setup Wizard first")
     return _http(404, "text/plain", b"Not Found")
 
 

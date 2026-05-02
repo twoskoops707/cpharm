@@ -5194,6 +5194,17 @@ class AutomationPage(PageBase):
             text="Tor rotation and Play flows stay supported — same step types as before.",
             font=FS, bg=BG2, fg=T2, justify="left", anchor="w",
         ).pack(fill="x")
+        tk.Label(
+            intro,
+            text="Optional human-like variance: set CPHARM_HUMAN_VARIATION=1 before starting the "
+                 "dashboard server (Launch step). Same JSON; varied taps/timing per phone.",
+            font=FONT_CAPTION,
+            bg=BG2,
+            fg=T3,
+            justify="left",
+            anchor="w",
+            wraplength=640,
+        ).pack(fill="x", pady=(6, 0))
 
         seq_row = tk.Frame(self, bg=BG)
         seq_row.pack(fill="x", pady=(SP["sm"], 0))
@@ -5875,6 +5886,18 @@ class LaunchPage(PageBase):
                  text="Starts the background automation server. Keep this running while groups are active.",
                  font=FS, bg=BG3, fg=T2, anchor="w", wraplength=640).pack(
                      fill="x", pady=(2, 8))
+        tk.Label(
+            srv,
+            text="Optional: per-device timing/tap variance — set environment variable "
+                 "CPHARM_HUMAN_VARIATION=1 before Start server (or HUMAN_VARIATION_FORCE in "
+                 "automation/config.py). Restart the server after changing it.",
+            font=FONT_CAPTION,
+            bg=BG3,
+            fg=T3,
+            anchor="w",
+            wraplength=640,
+            justify="left",
+        ).pack(fill="x", pady=(0, 6))
         srv_row = tk.Frame(srv, bg=BG3)
         srv_row.pack(fill="x")
         self._btn_srv_start = tk.Button(srv_row, text="Start server",
@@ -5952,13 +5975,120 @@ class LaunchPage(PageBase):
                                    bd=0, highlightthickness=0)
         self._sched_btn.configure(activebackground="#8b5cf6", activeforeground=ON_ACCENT)
         self._sched_btn.pack(side="left", padx=(8, 0))
+        self._sched_stop_btn = tk.Button(
+            sched_row,
+            text="Stop schedule",
+            font=("Segoe UI", 10, "bold"),
+            bg=BG4,
+            fg=T1,
+            relief="flat",
+            cursor="hand2",
+            command=self._stop_schedule,
+            bd=0,
+            highlightthickness=0,
+        )
+        style_secondary_button(self._sched_stop_btn)
+        self._sched_stop_btn.pack(side="left", padx=(8, 0))
         self._sched_lbl = tk.Label(sched_row, text="", font=FS, bg=BG3, fg=T2)
         self._sched_lbl.pack(side="left", padx=8)
+
+        # Same POST route the dashboard uses for "Load Groups Config" (in-browser fetch uses POST body).
+        grp_reload = tk.Frame(self, bg=BG3, padx=14, pady=10)
+        grp_reload.pack(fill="x", pady=(0, 8))
+        tk.Label(
+            grp_reload,
+            text="D — Reload saved groups into the server",
+            font=("Segoe UI", 11, "bold"),
+            bg=BG3,
+            fg=T1,
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            grp_reload,
+            text="After Save groups config (or hand-editing recordings/groups_config.json), reload so "
+                 "the dashboard “Run All Groups” uses the latest file — same as Load Groups Config on the web UI.",
+            font=FS,
+            bg=BG3,
+            fg=T2,
+            anchor="w",
+            wraplength=640,
+        ).pack(fill="x", pady=(2, 8))
+        gr_row = tk.Frame(grp_reload, bg=BG3)
+        gr_row.pack(fill="x")
+        self._btn_reload_groups = tk.Button(
+            gr_row,
+            text="Reload groups file",
+            font=("Segoe UI", 10, "bold"),
+            bg=ACCENT,
+            fg=ON_ACCENT,
+            relief="flat",
+            cursor="hand2",
+            command=self._reload_groups_on_server,
+            bd=0,
+            highlightthickness=0,
+        )
+        style_primary_button(self._btn_reload_groups)
+        self._btn_reload_groups.pack(side="left")
+        self._reload_groups_lbl = tk.Label(gr_row, text="", font=FS, bg=BG3, fg=T2)
+        self._reload_groups_lbl.pack(side="left", padx=10)
+
+        tor_fr = tk.Frame(self, bg=BG3, padx=14, pady=12)
+        tor_fr.pack(fill="x", pady=(0, 8))
+        tk.Label(
+            tor_fr,
+            text="E — Location proxy (Tor)",
+            font=("Segoe UI", 11, "bold"),
+            bg=BG3,
+            fg=GREEN,
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            tor_fr,
+            text="Different IP per phone (matches “Make Each Phone Look Different” on the dashboard). "
+                 "Requires Tor; may take a minute.",
+            font=FS,
+            bg=BG3,
+            fg=T2,
+            anchor="w",
+            wraplength=640,
+        ).pack(fill="x", pady=(2, 8))
+        tor_row = tk.Frame(tor_fr, bg=BG3)
+        tor_row.pack(fill="x")
+        self._btn_tor = tk.Button(
+            tor_row,
+            text="Set up Tor",
+            font=("Segoe UI", 10, "bold"),
+            bg=GREEN,
+            fg=ON_ACCENT,
+            relief="flat",
+            cursor="hand2",
+            command=self._tor_setup,
+            bd=0,
+            highlightthickness=0,
+        )
+        self._btn_tor.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+        self._btn_tor.pack(side="left", padx=(0, 8))
+        self._btn_tor_off = tk.Button(
+            tor_row,
+            text="Turn off Tor",
+            font=FS,
+            bg=BG4,
+            fg=T1,
+            relief="flat",
+            cursor="hand2",
+            command=self._tor_teardown,
+            bd=0,
+            highlightthickness=0,
+        )
+        style_secondary_button(self._btn_tor_off)
+        self._btn_tor_off.pack(side="left")
+        self._tor_lbl = tk.Label(tor_row, text="", font=FS, bg=BG3, fg=T2)
+        self._tor_lbl.pack(side="left", padx=10)
 
         # True-up (daily scheduler — swap steps without restarting threads)
         tu = tk.Frame(self, bg=BG3, padx=14, pady=12)
         tu.pack(fill="x", pady=(0, 8))
-        tk.Label(tu, text="D — True-up daily schedule",
+        tk.Label(tu, text="F — True-up daily schedule",
                  font=("Segoe UI", 11, "bold"), bg=BG3,
                  fg=ACCENT, anchor="w").pack(fill="x")
         tk.Label(tu,
@@ -5999,12 +6129,32 @@ class LaunchPage(PageBase):
         self._log_box.pack(side="left", fill="both", expand=True)
         log_sb.pack(side="right", fill="y")
 
+        # APK install, Teach recording, and “open URL on all phones” are full web flows; open the dashboard
+        # instead of re-implementing them in Tk (see buttons below).
         misc = tk.Frame(self, bg=BG)
         misc.pack(fill="x", pady=SP["sm"])
-        tk.Button(misc, text="Open dashboard in browser",
-                  font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
-                  command=lambda: webbrowser.open(
-                      f"http://localhost:{DASHBOARD_PORT}")).pack(side="left", padx=(0, SP["sm"]))
+        tk.Button(
+            misc,
+            text="Open dashboard",
+            font=FS,
+            bg=BG3,
+            fg=T1,
+            relief="flat",
+            cursor="hand2",
+            command=lambda: webbrowser.open(f"http://127.0.0.1:{DASHBOARD_PORT}/"),
+        ).pack(side="left", padx=(0, SP["sm"]))
+        tk.Button(
+            misc,
+            text="Open App Tester",
+            font=FS,
+            bg=BG3,
+            fg=T1,
+            relief="flat",
+            cursor="hand2",
+            command=lambda: webbrowser.open(
+                f"http://127.0.0.1:{DASHBOARD_PORT}/playstore"
+            ),
+        ).pack(side="left", padx=(0, SP["sm"]))
         tk.Button(misc, text="Save groups config",
                   font=FS, bg=BG3, fg=T1, relief="flat", cursor="hand2",
                   command=self._save).pack(side="left")
@@ -6155,6 +6305,7 @@ class LaunchPage(PageBase):
 
     def _stop_server(self):
         self._stop_groups()
+        self._api("/api/scheduler/stop", {})
         if self._server_proc:
             self._server_proc.terminate()
             self._server_proc = None
@@ -6273,6 +6424,90 @@ class LaunchPage(PageBase):
                 self._sched_lbl.config(text="Failed: " + str(result), fg=RED)
         except Exception as e:
             self._sched_lbl.config(text=f"Error: {e}", fg=RED)
+
+    def _stop_schedule(self):
+        """POST /api/scheduler/stop — mirrors dashboard scheduler API (no dedicated web button)."""
+
+        def go():
+            result = self._api("/api/scheduler/stop", {})
+
+            def ui():
+                if result.get("ok"):
+                    self._sched_lbl.config(text="Schedule stopped", fg=YELLOW)
+                    self._log_write("Daily scheduler stopped.\n")
+                else:
+                    err = result.get("error", result)
+                    self._sched_lbl.config(text=str(err)[:96], fg=RED)
+                    self._log_write(f"Stop schedule: {err}\n")
+
+            self.after(0, ui)
+
+        threading.Thread(target=go, daemon=True).start()
+
+    def _reload_groups_on_server(self):
+        """POST /api/groups/load — same data path as dashboard “Load Groups Config”."""
+
+        def go():
+            result = self._api("/api/groups/load", {})
+
+            def ui():
+                err = result.get("error")
+                if err:
+                    self._reload_groups_lbl.config(text=str(err)[:120], fg=RED)
+                    self._log_write(f"Reload groups failed: {err}\n")
+                    return
+                groups = result.get("groups")
+                if not isinstance(groups, list):
+                    self._reload_groups_lbl.config(text="Unexpected response", fg=RED)
+                    return
+                n = len(groups)
+                self._reload_groups_lbl.config(text=f"Loaded {n} group(s)", fg=GREEN)
+                self._log_write(
+                    f"Server reloaded recordings/groups_config.json ({n} group(s)).\n"
+                )
+
+            self.after(0, ui)
+
+        threading.Thread(target=go, daemon=True).start()
+
+    def _tor_setup(self):
+        self._btn_tor.config(state="disabled")
+        self._tor_lbl.config(text="Starting…", fg=YELLOW)
+
+        def go():
+            result = self._api("/api/proxy/setup", {})
+
+            def ui():
+                self._btn_tor.config(state="normal")
+                err = result.get("error")
+                if err:
+                    self._tor_lbl.config(text=str(err)[:96], fg=RED)
+                    self._log_write(f"Tor setup error: {err}\n")
+                else:
+                    self._tor_lbl.config(text="Running — see dashboard Activity Log", fg=GREEN)
+                    self._log_write("Tor / proxy setup started on server (background).\n")
+
+            self.after(0, ui)
+
+        threading.Thread(target=go, daemon=True).start()
+
+    def _tor_teardown(self):
+
+        def go():
+            result = self._api("/api/proxy/teardown", {})
+
+            def ui():
+                err = result.get("error")
+                if err:
+                    self._tor_lbl.config(text=str(err)[:96], fg=RED)
+                    self._log_write(f"Tor teardown error: {err}\n")
+                else:
+                    self._tor_lbl.config(text="Tor stopped", fg=GREEN)
+                    self._log_write("Tor stopped on devices (dashboard API).\n")
+
+            self.after(0, ui)
+
+        threading.Thread(target=go, daemon=True).start()
 
     def _true_up_schedule(self):
         serial = self._true_up_serial.get().strip()

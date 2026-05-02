@@ -7,9 +7,9 @@ MuMu Player ARM ships examples under Program Files, e.g.
 Optional tap fields ``retries``, ``jitter``, ``pre_wait_ms`` are CPharm-only hints (defaults apply if omitted).
 MuMu's manager reads its own JSON path — use CPharm for groups, scheduler, and Tor; import MuMu files via Automation → Load sequence.
 
-Configured target for samples: https://getdabflow.app (DabFlow marketing / PWA shell — timer UI, themes, bottom navigation). Edit ``open_url`` if you use a different site.
+Configured target for samples: the bundled examples assume your target site is a PWA-style app with timer UI, themes, and bottom navigation. Edit ``open_url`` to point at the URL you want.
 
-Intended flow on getdabflow.app
+Intended flow on the target site
   1. Open the URL in Chrome (``open_url``).
   2. Wait for fonts, Chart.js, and app scripts (``wait``).
   3. Vertical ``swipe`` (finger drag upward) to scroll the main column so the timer / controls and fixed bottom bar are in view; the live page also loads third-party assets (e.g. ad slots), so a scroll keeps taps off the initial hero fold when needed.

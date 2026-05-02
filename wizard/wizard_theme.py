@@ -183,26 +183,62 @@ def draw_round_rect(
 
 
 def _style_scrollbars(root: tk.Misc) -> None:
-    """Configure ttk vertical scrollbars to match surfaces / accent. Idempotent."""
+    """Themed ttk scrollbars: flat rail, no arrow chrome, thumb hover/press (Windows vista+)."""
     try:
         style = ttk.Style(root)
     except tk.TclError:
         return
+
+    # Rail + thumb only — reads like a modern overlay scrollbar (no up/down triangles).
+    # Element names match Vertical.TScrollbar on Windows ``vista`` / classic Tk.
+    try:
+        style.layout(
+            CPharm_TSCROLL,
+            [
+                (
+                    "Vertical.Scrollbar.trough",
+                    {
+                        "sticky": "ns",
+                        "children": [
+                            (
+                                "Vertical.Scrollbar.thumb",
+                                {"expand": "1", "sticky": "nswe"},
+                            )
+                        ],
+                    },
+                )
+            ],
+        )
+    except tk.TclError:
+        pass
+
+    # Dedicated scrollbar ramp so lists/logs feel intentional, not default gray.
+    sc_trough = "#06080d"
+    sc_thumb = "#3f526b"
+    sc_thumb_hi = "#546d8f"
+    sc_thumb_press = ACCENT_DIM
+
     style.configure(
         CPharm_TSCROLL,
-        background=BG3,
-        troughcolor=BG4,
-        bordercolor=BORDER,
-        arrowcolor=T2,
+        background=sc_thumb,
+        troughcolor=sc_trough,
+        bordercolor=sc_trough,
+        lightcolor=sc_thumb,
+        darkcolor=sc_thumb,
+        arrowcolor=T3,
+        arrowsize=0,
         borderwidth=0,
         relief="flat",
-        width=10,
+        width=11,
     )
     style.map(
         CPharm_TSCROLL,
-        background=[("active", BG4), ("pressed", BORDER_STRONG)],
-        arrowcolor=[("active", ACCENT), ("pressed", ACCENT)],
-        troughcolor=[("active", BG4)],
+        background=[
+            ("pressed !disabled", sc_thumb_press),
+            ("active !disabled", sc_thumb_hi),
+            ("disabled", BG4),
+        ],
+        troughcolor=[("readonly", sc_trough)],
     )
 
 

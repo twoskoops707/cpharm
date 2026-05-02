@@ -15,9 +15,10 @@ Intended journey (high level):
 State keys `state[...]` hold install path, `use_mumu`, `sdk_path`, `avds`, `phones`, `groups`,
 `default_steps`, and merge install uses `_install_targets_live_tree` + `_merge_dir_into`.
 
-Build (one-file):
+Build (one-file), from the ``wizard`` directory:
     pip install pyinstaller pillow
-    pyinstaller --onefile --windowed --name CPharmSetup --hidden-import wizard_theme setup_wizard.py
+    pyinstaller --onefile --windowed --name CPharmSetup --hidden-import wizard_theme ^
+      --add-data "assets;assets" setup_wizard.py
 """
 
 import json
@@ -43,13 +44,20 @@ from wizard_theme import (
     BG,
     BG2,
     BG3,
+    BG4,
     BORDER,
+    BORDER_STRONG,
     CPharm_TSCROLL,
     FB,
     FH,
     FM,
     FS,
+    FONT_CAPTION,
+    FONT_HERO,
+    FONT_H2,
+    FONT_LEAD,
     GREEN,
+    ON_ACCENT,
     PURPLE,
     RED,
     SP,
@@ -59,6 +67,11 @@ from wizard_theme import (
     YELLOW,
     _attach_readonly_log_text,
     _style_scrollbars,
+    draw_round_rect,
+    load_icon,
+    style_danger_button,
+    style_primary_button,
+    style_secondary_button,
 )
 
 try:
@@ -137,17 +150,6 @@ def _is_mumu_gui_path(path: Path | str) -> bool:
     return n in ("mumuplayer.exe", "mumunxmain.exe")
 
 
-STEP_ICONS = {
-    "open_url":        "🌐",
-    "tap":             "👆",
-    "wait":            "⏳",
-    "swipe":           "↕",
-    "keyevent":        "⌨",
-    "close_app":       "❌",
-    "clear_cookies":   "🧹",
-    "rotate_identity": "🔄",
-    "type_text":       "✏",
-}
 STEP_LABELS = {
     "open_url":        "Open a website in Chrome",
     "tap":             "Tap the screen at a spot",
@@ -211,14 +213,21 @@ class PerPhoneSequenceEditor(tk.Toplevel):
         for text, cmd, color in [
             ("+ Add Step",  self._add,    GREEN),
             ("Remove",      self._remove, RED),
-            ("▲ Up",        self._up,     BG3),
-            ("▼ Down",      self._dn,     BG3),
+            ("Move up",     self._up,     BG3),
+            ("Move down",   self._dn,     BG3),
         ]:
-            tk.Button(ctrl, text=text, command=cmd,
-                      bg=color, fg=BG if color not in (BG3,) else T1,
-                      font=("Segoe UI", 10, "bold"),
-                      relief="flat", cursor="hand2",
-                      padx=10, pady=6).pack(side="left", padx=(0, 6))
+            b = tk.Button(ctrl, text=text, command=cmd,
+                          bg=color, fg=ON_ACCENT if color != BG3 else T1,
+                          font=("Segoe UI", 10, "bold"),
+                          relief="flat", cursor="hand2",
+                          padx=10, pady=6, bd=0, highlightthickness=0)
+            if color == GREEN:
+                b.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+            elif color == RED:
+                style_danger_button(b)
+            else:
+                style_secondary_button(b)
+            b.pack(side="left", padx=(0, 6))
 
         fr = tk.Frame(self, bg=BG2)
         fr.pack(fill="both", expand=True, padx=16, pady=8)
@@ -233,11 +242,13 @@ class PerPhoneSequenceEditor(tk.Toplevel):
 
         bottom = tk.Frame(self, bg=BG)
         bottom.pack(fill="x", padx=16, pady=10)
-        tk.Button(bottom, text="Done ✓",
-                  font=("Segoe UI", 11, "bold"),
-                  bg=GREEN, fg=BG, relief="flat",
-                  cursor="hand2", command=self.destroy,
-                  padx=16, pady=8).pack(side="right")
+        done = tk.Button(bottom, text="Done",
+                         font=("Segoe UI", 11, "bold"),
+                         bg=GREEN, fg=ON_ACCENT, relief="flat",
+                         cursor="hand2", command=self.destroy,
+                         padx=16, pady=8, bd=0, highlightthickness=0)
+        done.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+        done.pack(side="right")
 
         self._refresh()
 
@@ -1886,19 +1897,27 @@ def chrome_open_url(serial, url):
 
 
 def describe_step(step):
-    t    = step.get("type", "")
-    icon = STEP_ICONS.get(t, "•")
-    if t == "open_url":        return f"{icon}  Open  → {step.get('url', '')}"
-    if t == "tap":             return f"{icon}  Tap   → ({step.get('x', 0)}, {step.get('y', 0)})"
-    if t == "wait":            return f"{icon}  Wait  → {step.get('seconds', 1)}s"
-    if t == "swipe":           return (f"{icon}  Swipe → ({step.get('x1',0)},{step.get('y1',0)})"
-                                       f" → ({step.get('x2',0)},{step.get('y2',0)})")
-    if t == "keyevent":        return f"{icon}  Key   → {step.get('key', 'BACK')}"
-    if t == "close_app":       return f"{icon}  Close → {step.get('package', 'Chrome')}"
-    if t == "clear_cookies":   return f"{icon}  Clear cookies"
-    if t == "rotate_identity": return f"{icon}  Rotate IP + Android ID"
-    if t == "type_text":       return f"{icon}  Type  → \"{step.get('text', '')}\""
-    return f"• {t}"
+    t = step.get("type", "")
+    if t == "open_url":
+        return f"Open URL  →  {step.get('url', '')}"
+    if t == "tap":
+        return f"Tap  →  ({step.get('x', 0)}, {step.get('y', 0)})"
+    if t == "wait":
+        return f"Wait  →  {step.get('seconds', 1)}s"
+    if t == "swipe":
+        return (f"Swipe  →  ({step.get('x1', 0)},{step.get('y1', 0)})"
+                f"  →  ({step.get('x2', 0)},{step.get('y2', 0)})")
+    if t == "keyevent":
+        return f"Key  →  {step.get('key', 'BACK')}"
+    if t == "close_app":
+        return f"Close app  →  {step.get('package', 'Chrome')}"
+    if t == "clear_cookies":
+        return "Clear cookies"
+    if t == "rotate_identity":
+        return "Rotate IP + Android ID"
+    if t == "type_text":
+        return f"Type  →  \"{step.get('text', '')}\""
+    return f"Step  →  {t}" if t else "Step"
 
 
 def execute_steps(steps, serial):
@@ -1953,13 +1972,29 @@ class PageBase(tk.Frame):
     def btn(self, parent, text, cmd, color=ACCENT, width=None, side="left", pady=7):
         kw = dict(
             text=text, command=cmd,
-            bg=color, fg=BG if color not in (BG3, T3) else T1,
             font=("Segoe UI", 10, "bold"),
             relief="flat", cursor="hand2", pady=pady, padx=14, bd=0,
+            highlightthickness=0,
         )
         if width:
             kw["width"] = width
+        if color in (ACCENT, GREEN, RED, PURPLE):
+            kw["bg"], kw["fg"] = color, ON_ACCENT
+        elif color in (BG3, BG4):
+            kw["bg"], kw["fg"] = color, T1
+        else:
+            kw["bg"], kw["fg"] = color, T1
         b = tk.Button(parent, **kw)
+        if color == ACCENT:
+            style_primary_button(b)
+        elif color in (BG3, BG4):
+            style_secondary_button(b)
+        elif color == RED:
+            style_danger_button(b)
+        elif color == GREEN:
+            b.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+        elif color == PURPLE:
+            b.configure(activebackground="#8b5cf6", activeforeground=ON_ACCENT)
         b.pack(side=side, padx=(0, 8))
         return b
 
@@ -1979,36 +2014,38 @@ class PageBase(tk.Frame):
 class WelcomePage(PageBase):
     def __init__(self, parent):
         super().__init__(parent)
+        top = self.winfo_toplevel()
+        self._welcome_images: list[tk.PhotoImage] = []
 
-        tk.Label(self, text="CPharm Phone Farm", font=("Segoe UI", 26, "bold"),
+        tk.Label(self, text="CPharm Phone Farm", font=FONT_HERO,
                  bg=BG, fg=T1).pack(pady=(18, 4))
         tk.Label(
             self,
             text="Virtual Android phones on your Windows laptop — Snapdragon ARM64 or Intel.\n"
-                 "The wizard sets everything up automatically; big green buttons do the heavy lifting.",
-            font=("Segoe UI", 12), bg=BG, fg=T2, justify="center",
+                 "This wizard installs and wires everything; primary actions use the accent controls below.",
+            font=FONT_LEAD, bg=BG, fg=T2, justify="center",
         ).pack(pady=(0, 8))
 
         steps = tk.Frame(self, bg=BG2, padx=20, pady=16,
                          highlightthickness=1, highlightbackground=BORDER)
         steps.pack(fill="x", pady=(0, 14))
         tk.Label(steps, text="Flow overview",
-                 font=("Segoe UI", 11, "bold"), bg=BG2, fg=T1, anchor="w").pack(fill="x")
+                 font=FONT_H2, bg=BG2, fg=T1, anchor="w").pack(fill="x")
         tk.Label(steps,
                  text="Setup → devices → automation & Play checklist → launch dashboard.\n\n"
-                      "Tap Next on each screen. Tor, groups, and scheduling stay on later steps.\n"
+                      "Use Next on each screen. Tor, groups, and scheduling appear on later steps.\n"
                       "On Snapdragon / ARM64 Windows, MuMu replaces Google emulators (no ARM64 AVD).",
                  font=FS, bg=BG2, fg=T2, justify="left", anchor="w").pack(fill="x", pady=(8, 0))
 
         # Architecture diagram — canvas only; static content is packed below, NOT inside the callback
-        c = tk.Canvas(self, bg=BG2, height=140,
-                      highlightthickness=1, highlightbackground=BORDER)
+        c = tk.Canvas(self, bg=BG3, height=152,
+                      highlightthickness=1, highlightbackground=BORDER_STRONG)
         c.pack(fill="x", padx=16, pady=(0, 14))
         c.bind("<Configure>", lambda e: self._draw_diagram(c))
 
         # Static "What you get:" section — built once here, never inside _draw_diagram
         tk.Label(self, text="What you get",
-                 font=("Segoe UI", 11, "bold"), bg=BG, fg=YELLOW,
+                 font=FONT_H2, bg=BG, fg=ACCENT,
                  anchor="w").pack(fill="x", padx=4)
         tk.Label(self, text="Session flows, groups, scheduling, and Play Store closed-testing paths "
                                 "stay available on later wizard pages.",
@@ -2016,19 +2053,31 @@ class WelcomePage(PageBase):
         f = tk.Frame(self, bg=BG2, padx=16, pady=14,
                      highlightthickness=1, highlightbackground=BORDER)
         f.pack(fill="x", pady=(4, 0))
+        feat_icons = (
+            "feat_phones",
+            "feat_network",
+            "feat_identity",
+            "feat_play",
+            "feat_parallel",
+            "feat_arm",
+        )
         items = [
-            ("🤖", "Multiple isolated Android phones — each its own world"),
-            ("🌐", "Each phone browses, taps, scrolls, installs apps via ADB"),
-            ("🔄", "New Android ID + different IP (Tor) on every session"),
-            ("📱", "Google Play closed testing — phones act like real registered devices"),
-            ("⚡", "Parallel groups — 5 phones test your app while 5 browse your site"),
-            ("🎯", "Works on Snapdragon ARM — uses Windows Hypervisor, no Intel needed"),
+            ("Multiple isolated Android phones — each its own world"),
+            ("Each phone browses, taps, scrolls, installs apps via ADB"),
+            ("New Android ID + different IP (Tor) on every session"),
+            ("Google Play closed testing — phones act like real registered devices"),
+            ("Parallel groups — several phones test your app while others browse your site"),
+            ("Works on Snapdragon ARM — uses Windows Hypervisor, no Intel required"),
         ]
-        for icon, text in items:
+        for stem, text in zip(feat_icons, items):
             row = tk.Frame(f, bg=BG2)
-            row.pack(fill="x", pady=2)
-            tk.Label(row, text=icon, font=("Segoe UI", 12), bg=BG2,
-                     width=3).pack(side="left")
+            row.pack(fill="x", pady=4)
+            img = load_icon(stem, top)
+            if img:
+                self._welcome_images.append(img)
+                tk.Label(row, image=img, bg=BG2).pack(side="left", padx=(0, 10))
+            else:
+                tk.Label(row, text="·", font=FB, bg=BG2, fg=T3, width=2).pack(side="left")
             tk.Label(row, text=text, font=FB, bg=BG2, fg=T1,
                      anchor="w").pack(side="left")
 
@@ -2036,21 +2085,21 @@ class WelcomePage(PageBase):
         c.delete("all")
         w = c.winfo_width() or 700
         boxes = [
-            (ACCENT,  "Android\nSDK Tools"),
-            (GREEN,   "Virtual Phones\n(AVD Emulators)"),
-            (YELLOW,  "CPharm\nDashboard"),
-            (PURPLE,  "Wizard\nControl"),
+            (ACCENT, "Android\nSDK tools"),
+            (GREEN, "Virtual phones\n(AVD / MuMu)"),
+            (YELLOW, "CPharm\ndashboard"),
+            (PURPLE, "Wizard\ncontrol"),
         ]
-        bw = 130
-        gap = (w - len(boxes) * bw) // (len(boxes) + 1)
-        y1, y2 = 25, 100
+        bw = 128
+        gap = max(8, (w - len(boxes) * bw) // (len(boxes) + 1))
+        y1, y2 = 22, 102
+        rr = 12
         positions = []
         for i, (col, label) in enumerate(boxes):
             x1 = gap + i * (bw + gap)
             x2 = x1 + bw
             mx, my = (x1 + x2) // 2, (y1 + y2) // 2
-            c.create_rectangle(x1, y1, x2, y2, fill=col + "22",
-                                outline=col, width=2, tags="box")
+            draw_round_rect(c, x1, y1, x2, y2, rr, fill=BG4, outline=col, width=2)
             c.create_text(mx, my, text=label, fill=T1,
                           font=("Segoe UI", 9, "bold"), justify="center")
             positions.append((x1, x2, y1, y2))
@@ -2061,9 +2110,11 @@ class WelcomePage(PageBase):
             mid_y = (y1 + y2) // 2
             c.create_line(rx, mid_y, lx, mid_y, fill=T3, width=2, arrow="last")
 
-        c.create_text(w // 2, 125,
-                      text="All on your Snapdragon Windows laptop  —  no extra hardware",
-                      fill=T2, font=("Segoe UI", 9))
+        c.create_text(
+            w // 2, 132,
+            text="Runs on your Windows laptop — no extra hardware",
+            fill=T2, font=("Segoe UI", 9),
+        )
 
 
 # ─── page 2: prerequisites auto-install ──────────────────────────────────────
@@ -2159,18 +2210,24 @@ class PrerequisitesPage(PageBase):
                              highlightthickness=1, highlightbackground=BORDER)
         list_card.pack(fill="x", pady=(0, 10))
 
+        self._prereq_icons: list[tk.PhotoImage] = []
+        top = self.winfo_toplevel()
         items = [
-            ("java",     "☕", "Java JDK 21",             "Needed to run the Android SDK tools",        True),
-            ("python",   "🐍", "Python 3.13",             "Needed to run CPharm automation scripts",    True),
-            ("packages", "📦", "Python packages",         "websockets + psutil for the dashboard",      True),
-            ("tor",      "🧅", "Tor",                     "IP rotation between sessions  (optional)",   False),
-            ("cpharm",   "⚡", "CPharm automation files", "The bot scripts and dashboard",              True),
+            ("java",     "prereq_java", "Java JDK 21",             "Needed to run the Android SDK tools",        True),
+            ("python",   "prereq_python", "Python 3.13",             "Needed to run CPharm automation scripts",    True),
+            ("packages", "prereq_packages", "Python packages",         "websockets + psutil for the dashboard",      True),
+            ("tor",      "prereq_tor", "Tor",                     "IP rotation between sessions  (optional)",   False),
+            ("cpharm",   "prereq_cpharm", "CPharm automation files", "The bot scripts and dashboard",              True),
         ]
-        for key, icon, name, desc, required in items:
+        for key, icon_stem, name, desc, required in items:
             row = tk.Frame(list_card, bg=BG2, pady=5)
             row.pack(fill="x")
-            tk.Label(row, text=icon, font=("Segoe UI", 15), bg=BG2,
-                     width=3).pack(side="left")
+            pic = load_icon(icon_stem, top)
+            if pic:
+                self._prereq_icons.append(pic)
+                tk.Label(row, image=pic, bg=BG2).pack(side="left", padx=(0, 6))
+            else:
+                tk.Label(row, text="·", font=FB, bg=BG2, fg=T3, width=2).pack(side="left")
             info = tk.Frame(row, bg=BG2)
             info.pack(side="left", fill="x", expand=True)
             tk.Label(info, text=name + ("" if required else "  (optional)"),
@@ -2184,15 +2241,22 @@ class PrerequisitesPage(PageBase):
             self._rows[key] = status_lbl
 
         # ── big install button ────────────────────────────────────────────────
-        self._install_btn = tk.Button(
-            self,
-            text="⬇   Install Everything  —  Click Here",
+        dl_icon = load_icon("icon_download", top)
+        if dl_icon:
+            self._prereq_icons.append(dl_icon)
+        ib_kw = dict(
+            text="Install everything",
             font=("Segoe UI", 14, "bold"),
-            bg=GREEN, fg="#000000",
+            bg=GREEN, fg=ON_ACCENT,
             relief="flat", cursor="hand2",
-            padx=24, pady=14,
+            padx=24, pady=14, bd=0, highlightthickness=0,
             command=self._install_all,
         )
+        if dl_icon:
+            ib_kw["image"] = dl_icon
+            ib_kw["compound"] = "left"
+        self._install_btn = tk.Button(self, **ib_kw)
+        self._install_btn.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
         self._install_btn.pack(fill="x", pady=(0, 8))
 
         # ── progress ──────────────────────────────────────────────────────────
@@ -2608,7 +2672,7 @@ class PrerequisitesPage(PageBase):
             )
         except Exception as exc:
             self._log_write(f"\n❌  Error: {exc}")
-            self._install_btn.config(state="normal", text="⬇   Try Again")
+            self._install_btn.config(state="normal", text="Try again")
         finally:
             self._working = False
 
@@ -2688,7 +2752,7 @@ class AndroidStudioPage(PageBase):
         # ── big install button ────────────────────────────────────────────────
         self._install_btn = tk.Button(
             self,
-            text="⬇   Install Android SDK — Click Here",
+            text="Install Android SDK",
             font=("Segoe UI", 14, "bold"),
             bg=GREEN, fg="#000000",
             relief="flat", cursor="hand2",
@@ -2723,7 +2787,7 @@ class AndroidStudioPage(PageBase):
                                  highlightthickness=1, highlightbackground=GREEN)
             mumu_card.pack(fill="x", pady=(0, 8))
             tk.Label(mumu_card,
-                     text="🎮  ARM64 Windows: Use MuMuPlayer instead of Android SDK",
+                     text="ARM64 Windows: use MuMuPlayer instead of Android SDK",
                      font=("Segoe UI", 11, "bold"), bg="#1a2a1a", fg=GREEN,
                      anchor="w").pack(fill="x")
             tk.Label(mumu_card,
@@ -2736,13 +2800,14 @@ class AndroidStudioPage(PageBase):
             mumu_btn_row.pack(fill="x")
             self._mumu_mode_btn = tk.Button(
                 mumu_btn_row,
-                text="✅  Use MuMuPlayer ARM64  (skip SDK)",
+                text="Use MuMuPlayer ARM64 (skip SDK)",
                 font=("Segoe UI", 11, "bold"),
-                bg=GREEN, fg="#000000",
+                bg=GREEN, fg=ON_ACCENT,
                 relief="flat", cursor="hand2",
-                padx=16, pady=8,
+                padx=16, pady=8, bd=0, highlightthickness=0,
                 command=self._activate_mumu_mode,
             )
+            self._mumu_mode_btn.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
             self._mumu_mode_btn.pack(side="left", padx=(0, 10))
             tk.Button(mumu_btn_row,
                       text="Download MuMuPlayer ARM",
@@ -3334,7 +3399,7 @@ class PhoneFarmPage(PageBase):
             b = tk.Button(picker, text=str(n), width=4,
                           font=("Segoe UI", 12, "bold"),
                           bg=ACCENT if n == 3 else BG2,
-                          fg=BG if n == 3 else T1,
+                          fg=ON_ACCENT if n == 3 else T1,
                           relief="flat", cursor="hand2",
                           command=lambda v=n: self._pick_count(v))
             b.pack(side="left", padx=3)
@@ -3360,16 +3425,27 @@ class PhoneFarmPage(PageBase):
         create_row = tk.Frame(self, bg=BG)
         create_row.pack(fill="x", pady=(0, 8))
         self._create_btn = tk.Button(create_row,
-                                     text="  ▶  Create Phone Farm  ",
+                                     text="Create phone farm",
                                      font=("Segoe UI", 12, "bold"),
-                                     bg=GREEN, fg=BG, relief="flat",
+                                     bg=GREEN, fg=ON_ACCENT, relief="flat",
                                      cursor="hand2", command=self._create,
-                                     padx=20, pady=10)
+                                     padx=20, pady=10, bd=0, highlightthickness=0)
+        self._create_btn.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
         self._create_btn.pack(side="left", padx=(0, 10))
-        tk.Button(create_row, text="🗑 Delete All CPharm Phones",
-                  font=FS, bg=RED, fg=BG, relief="flat",
-                  cursor="hand2", command=self._delete_phones,
-                  padx=10, pady=8).pack(side="left", padx=(0, 10))
+        top_pf = self.winfo_toplevel()
+        trash = load_icon("icon_trash", top_pf)
+        del_kw = dict(
+            text="Delete all CPharm phones",
+            font=FS, bg=RED, fg=ON_ACCENT, relief="flat",
+            cursor="hand2", command=self._delete_phones,
+            padx=10, pady=8, bd=0, highlightthickness=0,
+        )
+        if trash:
+            del_kw["image"] = trash
+            del_kw["compound"] = "left"
+        del_btn = tk.Button(create_row, **del_kw)
+        style_danger_button(del_btn)
+        del_btn.pack(side="left", padx=(0, 10))
         self._progress_lbl = tk.Label(create_row, text="", font=FS, bg=BG, fg=T2)
         self._progress_lbl.pack(side="left")
 
@@ -3389,17 +3465,17 @@ class PhoneFarmPage(PageBase):
         self._mumu_panel = tk.Frame(self, bg="#1a2a1a", padx=14, pady=12,
                                     highlightthickness=1, highlightbackground=GREEN)
         tk.Label(self._mumu_panel,
-                 text="🎮  MuMuPlayer ARM64 Mode",
+                 text="MuMuPlayer ARM64 mode",
                  font=("Segoe UI", 12, "bold"), bg="#1a2a1a", fg=GREEN,
                  anchor="w").pack(fill="x")
         tk.Label(self._mumu_panel,
                  text="MuMuPlayer handles phone creation through its own interface.\n\n"
                       "How to create phones:\n"
                       "  1. Open MuMuPlayer (it's in your Start menu or taskbar)\n"
-                      "  2. Click the multi-window icon (⧉) at the top-right\n"
+                      "  2. Click the multi-window icon at the top-right\n"
                       "  3. Click '+ New Instance' for each phone you want\n"
                       "  4. Leave MuMuPlayer running\n"
-                      "  5. Click Next → below — the wizard connects automatically",
+                      "  5. Click Next below — the wizard connects automatically",
                  font=FS, bg="#1a2a1a", fg=T2,
                  anchor="w", justify="left").pack(fill="x", pady=(6, 10))
         tk.Button(self._mumu_panel,
@@ -3435,7 +3511,7 @@ class PhoneFarmPage(PageBase):
         state["num_phones"] = n
         for num, btn in self._count_btns.items():
             btn.config(bg=ACCENT if num == n else BG2,
-                       fg=BG    if num == n else T1)
+                       fg=ON_ACCENT    if num == n else T1)
         ram  = n * 2
         disk = n * 4
         self._count_lbl.config(
@@ -3551,7 +3627,7 @@ class PhoneFarmPage(PageBase):
                 self.after(0, lambda: self._progress_lbl.config(
                     text="❌  Failed — check log", fg=RED))
 
-            btn_txt = "✅  Phones Created!" if created else "  ▶  Try Again  "
+            btn_txt = "Phones created" if created else "Try again"
             self.after(0, lambda t=btn_txt: self._create_btn.config(state="normal", text=t))
 
         threading.Thread(target=go, daemon=True).start()
@@ -3582,6 +3658,7 @@ class PhoneFarmPage(PageBase):
 class BootPage(PageBase):
     def __init__(self, parent):
         super().__init__(parent)
+        self._boot_row_images: list[tk.PhotoImage] = []
         self.header(
             "Connect & verify — boot phones",
             "Boot MuMu instances or AVDs, confirm ADB, optional Chrome check. "
@@ -3599,16 +3676,19 @@ class BootPage(PageBase):
                  font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 8))
         phone_row = tk.Frame(phone_ctrl, bg=BG3)
         phone_row.pack(fill="x", pady=(4, 8))
-        self._boot_btn = tk.Button(phone_row, text="▶  Start All Phones",
+        self._boot_btn = tk.Button(phone_row, text="Start all phones",
                                   font=("Segoe UI", 10, "bold"),
-                                  bg=GREEN, fg=BG, relief="flat",
-                                  cursor="hand2", command=self._boot_all)
+                                  bg=GREEN, fg=ON_ACCENT, relief="flat",
+                                  cursor="hand2", command=self._boot_all,
+                                  bd=0, highlightthickness=0)
+        self._boot_btn.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
         self._boot_btn.pack(side="left", padx=(0, 8))
-        self._stop_btn = tk.Button(phone_row, text="■  Stop All",
+        self._stop_btn = tk.Button(phone_row, text="Stop all",
                                   font=("Segoe UI", 10, "bold"),
-                                  bg=RED, fg=BG, relief="flat",
+                                  bg=RED, fg=ON_ACCENT, relief="flat",
                                   cursor="hand2", command=self._stop_all,
-                                  state="disabled")
+                                  state="disabled", bd=0, highlightthickness=0)
+        style_danger_button(self._stop_btn)
         self._stop_btn.pack(side="left")
         self._overall_lbl = tk.Label(phone_row, text="",
                                      font=FS, bg=BG3, fg=T2)
@@ -3644,10 +3724,11 @@ class BootPage(PageBase):
         chrome_ctrl = tk.Frame(chrome_box, bg=BG3)
         chrome_ctrl.pack(fill="x")
         self._chrome_btn = tk.Button(chrome_ctrl,
-                                   text="🔧  Setup Chrome on All Phones",
+                                   text="Setup Chrome on all phones",
                                    font=("Segoe UI", 10, "bold"),
-                                   bg=YELLOW, fg=BG, relief="flat",
-                                   cursor="hand2", command=self._setup_chrome_all)
+                                   bg=YELLOW, fg=ON_ACCENT, relief="flat",
+                                   cursor="hand2", command=self._setup_chrome_all,
+                                   bd=0, highlightthickness=0)
         self._chrome_btn.pack(side="left", padx=(0, 10))
         self._chrome_lbl = tk.Label(chrome_ctrl, text="", font=FS, bg=BG3, fg=T2)
         self._chrome_lbl.pack(side="left")
@@ -3660,10 +3741,11 @@ class BootPage(PageBase):
         tk.Entry(test_row, textvariable=self._test_url_var, font=FM,
                  bg=BG2, fg=T1, insertbackground=T1, relief="flat",
                  width=34).pack(side="left", padx=6)
-        tk.Button(test_row, text="▶ Open",
+        ob = tk.Button(test_row, text="Open",
                   font=("Segoe UI", 10, "bold"),
-                  bg=ACCENT, fg=BG, relief="flat", cursor="hand2",
-                  command=self._test_url).pack(side="left")
+                  command=self._test_url)
+        style_primary_button(ob)
+        ob.pack(side="left")
 
         # Summary
         summary_outer = tk.Frame(self, bg=BG2, padx=12, pady=10)
@@ -3776,6 +3858,8 @@ class BootPage(PageBase):
         for w in self._status_frame.winfo_children():
             w.destroy()
         self._status_rows.clear()
+        self._boot_row_images.clear()
+        top = self.winfo_toplevel()
 
         if state.get("use_mumu"):
             mgr = _find_mumu_manager()
@@ -3786,8 +3870,13 @@ class BootPage(PageBase):
                     row = tk.Frame(self._status_frame, bg=BG2, padx=12, pady=7,
                                    highlightthickness=1, highlightbackground=BORDER)
                     row.pack(fill="x", pady=2)
-                    tk.Label(row, text="🎮", font=("Segoe UI", 14),
-                             bg=BG2).pack(side="left")
+                    im = load_icon("row_mumu", top)
+                    if im:
+                        self._boot_row_images.append(im)
+                        tk.Label(row, image=im, bg=BG2).pack(side="left", padx=(0, 6))
+                    else:
+                        tk.Label(row, text="MuMu", font=FONT_CAPTION, bg=BG2, fg=T3
+                                 ).pack(side="left", padx=(0, 6))
                     tk.Label(row, text=inst["name"], font=FB, bg=BG2, fg=T1,
                              width=26, anchor="w").pack(side="left")
                     tk.Label(row, text=f"ADB: {key}", font=FM, bg=BG2,
@@ -3804,8 +3893,13 @@ class BootPage(PageBase):
             row    = tk.Frame(self._status_frame, bg=BG2, padx=12, pady=7,
                               highlightthickness=1, highlightbackground=BORDER)
             row.pack(fill="x", pady=2)
-            tk.Label(row, text="📱", font=("Segoe UI", 14),
-                     bg=BG2).pack(side="left")
+            im = load_icon("row_avd", top)
+            if im:
+                self._boot_row_images.append(im)
+                tk.Label(row, image=im, bg=BG2).pack(side="left", padx=(0, 6))
+            else:
+                tk.Label(row, text="AVD", font=FONT_CAPTION, bg=BG2, fg=T3
+                         ).pack(side="left", padx=(0, 6))
             tk.Label(row, text=avd, font=FB, bg=BG2, fg=T1,
                      width=26, anchor="w").pack(side="left")
             tk.Label(row, text=f"ADB: {serial}", font=FM, bg=BG2,
@@ -3823,13 +3917,18 @@ class BootPage(PageBase):
             row = tk.Frame(self._status_frame, bg=BG2, padx=12, pady=7,
                            highlightthickness=1, highlightbackground=BORDER)
             row.pack(fill="x", pady=2)
-            tk.Label(row, text="📲", font=("Segoe UI", 14),
-                     bg=BG2).pack(side="left")
+            im = load_icon("row_usb", top)
+            if im:
+                self._boot_row_images.append(im)
+                tk.Label(row, image=im, bg=BG2).pack(side="left", padx=(0, 6))
+            else:
+                tk.Label(row, text="USB", font=FONT_CAPTION, bg=BG2, fg=T3
+                         ).pack(side="left", padx=(0, 6))
             tk.Label(row, text=d["name"], font=FB, bg=BG2, fg=T1,
                      width=26, anchor="w").pack(side="left")
             tk.Label(row, text=f"USB: {s}", font=FM, bg=BG2,
                      fg=T3, width=20, anchor="w").pack(side="left")
-            lbl = tk.Label(row, text="✅  Connected", font=FS, bg=BG2, fg=GREEN)
+            lbl = tk.Label(row, text="Connected", font=FS, bg=BG2, fg=GREEN)
             lbl.pack(side="left", padx=6)
             self._status_rows[s] = lbl
 
@@ -3891,7 +3990,7 @@ class BootPage(PageBase):
                         f"   Install MuMuPlayer ARM from: {MUMU_DOWNLOAD_URL}\n"
                     )
                     self.after(0, lambda: (
-                        self._boot_btn.config(state="normal", text="▶  Start All Phones"),
+                        self._boot_btn.config(state="normal", text="Start all phones"),
                         self._overall_lbl.config(text="❌ MuMuPlayer not installed", fg=RED),
                     ))
                     return
@@ -3908,7 +4007,7 @@ class BootPage(PageBase):
                         state["_emu_procs"] = []
                         n = len(phones_from_scan)
                         self.after(0, lambda: (
-                            self._boot_btn.config(state="normal", text="▶  Start All Phones"),
+                            self._boot_btn.config(state="normal", text="Start all phones"),
                             self._stop_btn.config(state="normal"),
                             self._overall_lbl.config(text=f"✅ {n} MuMu phone(s) ready (port scan)", fg=GREEN),
                         ))
@@ -3920,7 +4019,7 @@ class BootPage(PageBase):
                         "   Open MuMuPlayer → click ⧉ (multi-window icon) → '+ New Instance'\n"
                     )
                     self.after(0, lambda: (
-                        self._boot_btn.config(state="normal", text="▶  Start All Phones"),
+                        self._boot_btn.config(state="normal", text="Start all phones"),
                         self._overall_lbl.config(text="❌ No MuMu instances", fg=RED),
                     ))
                     return
@@ -3966,7 +4065,7 @@ class BootPage(PageBase):
                 state["_emu_procs"]  = []
                 n = len(phones)
                 self.after(0, lambda: (
-                    self._boot_btn.config(state="normal", text="▶  Start All Phones"),
+                    self._boot_btn.config(state="normal", text="Start all phones"),
                     self._stop_btn.config(state="disabled" if not phones else "normal"),
                     self._overall_lbl.config(
                         text=f"✅ {n} MuMuPlayer phone(s) ready" if phones else "❌ No phones connected",
@@ -4016,7 +4115,7 @@ class BootPage(PageBase):
                     "Go back to Android runtime and click  ✅ Use MuMuPlayer ARM64  to switch modes.\n\n"
                     f"Download MuMuPlayer ARM:  {MUMU_DOWNLOAD_URL}",
                 )
-                self._boot_btn.config(state="normal", text="▶  Start All Phones")
+                self._boot_btn.config(state="normal", text="Start all phones")
                 return
 
         self._boot_btn.config(state="disabled", text="Starting…")
@@ -4109,7 +4208,7 @@ class BootPage(PageBase):
             state["_emu_procs"] = [p for _, _, p, _ in procs]
             n = len(phones)
             self.after(0, lambda: (
-                self._boot_btn.config(state="normal", text="▶  Start All Phones"),
+                self._boot_btn.config(state="normal", text="Start all phones"),
                 self._stop_btn.config(
                     state="disabled" if not phones else "normal"),
                 self._overall_lbl.config(
@@ -4135,7 +4234,7 @@ class BootPage(PageBase):
                 pass
         state["_emu_procs"] = []
         state["phones"] = []
-        self._boot_btn.config(state="normal", text="▶  Start All Phones")
+        self._boot_btn.config(state="normal", text="Start all phones")
         self._stop_btn.config(state="disabled")
         self._overall_lbl.config(text="All phones stopped.", fg=T2)
         self._log_write("All phones stopped.\n")
@@ -4154,7 +4253,7 @@ class BootPage(PageBase):
                     self._log_write(f"  ✅ {p['name']}: Chrome ready\n")
                 except Exception as e:
                     self._log_write(f"  ⚠ {p['name']}: {e}\n")
-            self._chrome_btn.config(state="normal", text="🔧  Setup Chrome on All Phones")
+            self._chrome_btn.config(state="normal", text="Setup Chrome on all phones")
             self._log_write("Chrome setup done on all phones.\n")
         threading.Thread(target=go, daemon=True).start()
 
@@ -4201,7 +4300,7 @@ class AutomationPage(PageBase):
         tk.Button(
             seq_row, text="Edit default sequence",
             font=("Segoe UI", 10, "bold"),
-            bg=ACCENT, fg=BG, relief="flat", cursor="hand2",
+            bg=ACCENT, fg=ON_ACCENT, relief="flat", cursor="hand2",
             padx=SP["md"], pady=SP["sm"],
             command=self._edit_sequence,
         ).pack(side="left", padx=(0, SP["sm"]))
@@ -4373,7 +4472,7 @@ class PlayStorePage(PageBase):
                      justify="left", anchor="w").pack(fill="x", pady=(8, 0))
 
         tk.Button(inner, text="Open Google Play Console",
-                  font=("Segoe UI", 10, "bold"), bg=GREEN, fg=BG,
+                  font=("Segoe UI", 10, "bold"), bg=GREEN, fg=ON_ACCENT,
                   relief="flat", cursor="hand2", padx=14, pady=8,
                   command=lambda: webbrowser.open("https://play.google.com/console")).pack(
                       anchor="w", pady=10, padx=2)
@@ -4490,9 +4589,12 @@ class GroupsPage(PageBase):
         name_var.trace("w", lambda *_: group.update({"name": name_var.get()}))
 
         if len(state["groups"]) > 1:
-            tk.Button(hdr, text="Remove", font=FS, bg=RED, fg=BG,
-                      relief="flat", cursor="hand2", padx=8, pady=3,
-                      command=lambda i=idx: self._remove_group(i)).pack(side="right")
+            rm = tk.Button(hdr, text="Remove", font=FS, bg=RED, fg=ON_ACCENT,
+                           relief="flat", cursor="hand2", padx=8, pady=3, bd=0,
+                           highlightthickness=0,
+                           command=lambda i=idx: self._remove_group(i))
+            style_danger_button(rm)
+            rm.pack(side="right")
 
         tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=8)
 
@@ -4541,10 +4643,19 @@ class GroupsPage(PageBase):
                     cnt_lbl.config(text=f"{len(psteps_ref[0])} steps",
                                    fg=GREEN if psteps_ref[0] else YELLOW)
 
-                tk.Button(row, text="✏ Edit",
-                          font=FS, bg=ACCENT, fg=BG, relief="flat",
-                          cursor="hand2", command=edit_phone,
-                          padx=6, pady=2).pack(side="left", padx=(2, 0))
+                ed_img = load_icon("icon_edit", self.winfo_toplevel())
+                eb_kw = dict(
+                    text="Edit",
+                    font=FS, bg=ACCENT, fg=ON_ACCENT, relief="flat",
+                    cursor="hand2", command=edit_phone,
+                    padx=6, pady=2, bd=0, highlightthickness=0,
+                )
+                if ed_img:
+                    eb_kw["image"] = ed_img
+                    eb_kw["compound"] = "left"
+                eb = tk.Button(row, **eb_kw)
+                style_primary_button(eb)
+                eb.pack(side="left", padx=(2, 0))
 
                 # Toggle
                 var = tk.BooleanVar(value=serial in phone_map)
@@ -4576,11 +4687,20 @@ class GroupsPage(PageBase):
                         else:
                             group["phones"][s] = {"steps": list(msteps)}
                     self._rebuild()
-                    self._log_write(f"[{state['groups'][i]['name']}] Cloned to all phones ✓")
+                    self._log_write(f"[{state['groups'][i]['name']}] Cloned to all phones.")
 
-                tk.Button(clone_row, text="📋  Clone to All Phones (Phone 1 is master)",
-                          font=FS, bg=PURPLE, fg=BG, relief="flat", cursor="hand2",
-                          command=clone_all, padx=8, pady=4).pack(side="left")
+                cl_img = load_icon("icon_clone", self.winfo_toplevel())
+                cb_kw = dict(
+                    text="Clone to all phones (Phone 1 is master)",
+                    font=FS, bg=PURPLE, fg=ON_ACCENT, relief="flat", cursor="hand2",
+                    command=clone_all, padx=8, pady=4, bd=0, highlightthickness=0,
+                )
+                if cl_img:
+                    cb_kw["image"] = cl_img
+                    cb_kw["compound"] = "left"
+                cb = tk.Button(clone_row, **cb_kw)
+                cb.configure(activebackground="#8b5cf6", activeforeground=ON_ACCENT)
+                cb.pack(side="left")
 
         tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=(0, 8))
 
@@ -4673,7 +4793,7 @@ class AddStepDialog(tk.Toplevel):
         btn_row.pack(pady=14)
         tk.Button(btn_row, text="  OK  ",
                   font=("Segoe UI", 11, "bold"),
-                  bg=GREEN, fg=BG, relief="flat",
+                  bg=GREEN, fg=ON_ACCENT, relief="flat",
                   cursor="hand2", command=self._ok,
                   padx=16, pady=8).pack(side="left", padx=8)
         tk.Button(btn_row, text="Cancel", font=FB,
@@ -4779,16 +4899,19 @@ class LaunchPage(PageBase):
                      fill="x", pady=(2, 8))
         srv_row = tk.Frame(srv, bg=BG3)
         srv_row.pack(fill="x")
-        self._btn_srv_start = tk.Button(srv_row, text="▶  Start Server",
+        self._btn_srv_start = tk.Button(srv_row, text="Start server",
                                         font=("Segoe UI", 10, "bold"),
-                                        bg=GREEN, fg=BG, relief="flat",
-                                        cursor="hand2", command=self._start_server)
+                                        bg=GREEN, fg=ON_ACCENT, relief="flat",
+                                        cursor="hand2", command=self._start_server,
+                                        bd=0, highlightthickness=0)
+        self._btn_srv_start.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
         self._btn_srv_start.pack(side="left", padx=(0, 8))
-        self._btn_srv_stop = tk.Button(srv_row, text="■  Stop Server",
+        self._btn_srv_stop = tk.Button(srv_row, text="Stop server",
                                        font=("Segoe UI", 10, "bold"),
-                                       bg=RED, fg=BG, relief="flat",
+                                       bg=RED, fg=ON_ACCENT, relief="flat",
                                        cursor="hand2", command=self._stop_server,
-                                       state="disabled")
+                                       state="disabled", bd=0, highlightthickness=0)
+        style_danger_button(self._btn_srv_stop)
         self._btn_srv_stop.pack(side="left")
         self._srv_lbl = tk.Label(srv_row, text="Server not running",
                                   font=FS, bg=BG3, fg=T2)
@@ -4805,16 +4928,20 @@ class LaunchPage(PageBase):
                  font=FS, bg=BG3, fg=T2, anchor="w").pack(fill="x", pady=(2, 8))
         grp_row = tk.Frame(grp, bg=BG3)
         grp_row.pack(fill="x")
-        self._btn_run = tk.Button(grp_row, text="▶  Run All Groups",
+        self._btn_run = tk.Button(grp_row, text="Run all groups",
                                   font=("Segoe UI", 10, "bold"),
-                                  bg=GREEN, fg=BG, relief="flat",
-                                  cursor="hand2", command=self._run_groups)
+                                  bg=GREEN, fg=ON_ACCENT, relief="flat",
+                                  cursor="hand2", command=self._run_groups,
+                                  bd=0, highlightthickness=0)
+        self._btn_run.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
         self._btn_run.pack(side="left", padx=(0, 8))
-        self._btn_stop_grp = tk.Button(grp_row, text="■  Stop All Groups",
+        self._btn_stop_grp = tk.Button(grp_row, text="Stop all groups",
                                        font=("Segoe UI", 10, "bold"),
-                                       bg=RED, fg=BG, relief="flat",
+                                       bg=RED, fg=ON_ACCENT, relief="flat",
                                        cursor="hand2", state="disabled",
-                                       command=self._stop_groups)
+                                       command=self._stop_groups,
+                                       bd=0, highlightthickness=0)
+        style_danger_button(self._btn_stop_grp)
         self._btn_stop_grp.pack(side="left")
         self._run_lbl = tk.Label(grp_row, text="", font=FS, bg=BG3, fg=T2)
         self._run_lbl.pack(side="left", padx=10)
@@ -4839,10 +4966,12 @@ class LaunchPage(PageBase):
                  width=8).pack(side="left", padx=6)
         tk.Label(sched_row, text="per phone", font=FS, bg=BG3, fg=T2).pack(side="left")
         self._sched_btn = tk.Button(sched_row,
-                                   text="▶ Start Schedule",
+                                   text="Start schedule",
                                    font=("Segoe UI", 10, "bold"),
-                                   bg=PURPLE, fg=BG, relief="flat",
-                                   cursor="hand2", command=self._start_schedule)
+                                   bg=PURPLE, fg=ON_ACCENT, relief="flat",
+                                   cursor="hand2", command=self._start_schedule,
+                                   bd=0, highlightthickness=0)
+        self._sched_btn.configure(activebackground="#8b5cf6", activeforeground=ON_ACCENT)
         self._sched_btn.pack(side="left", padx=(8, 0))
         self._sched_lbl = tk.Label(sched_row, text="", font=FS, bg=BG3, fg=T2)
         self._sched_lbl.pack(side="left", padx=8)
@@ -4924,7 +5053,7 @@ class LaunchPage(PageBase):
             return
 
         self._btn_srv_start.config(state="disabled")
-        self._srv_lbl.config(text="⏳ Installing packages…", fg=YELLOW)
+        self._srv_lbl.config(text="Installing packages…", fg=YELLOW)
         self._log("Checking/installing websockets + psutil…")
 
         def _launch():
@@ -4945,14 +5074,14 @@ class LaunchPage(PageBase):
                 if pip.returncode != 0:
                     err = pip.stderr.strip() or pip.stdout.strip() or "pip failed"
                     self.after(0, lambda: (
-                        self._srv_lbl.config(text="❌ pip failed", fg=RED),
+                        self._srv_lbl.config(text="pip failed", fg=RED),
                         self._btn_srv_start.config(state="normal"),
                         self._log(f"pip error:\n{err}"),
                     ))
                     return
 
                 self.after(0, lambda: (
-                    self._srv_lbl.config(text="⏳ Starting…", fg=YELLOW),
+                    self._srv_lbl.config(text="Starting…", fg=YELLOW),
                     self._log("Packages OK — launching server…"),
                 ))
 
@@ -4981,7 +5110,7 @@ class LaunchPage(PageBase):
                 time.sleep(3)
                 if proc.poll() is None:
                     self.after(0, lambda: (
-                        self._srv_lbl.config(text="✅ Server running", fg=GREEN),
+                        self._srv_lbl.config(text="Server running", fg=GREEN),
                         self._btn_run.config(state="normal"),
                         self._log("Server is up! Click Run All Groups to start."),
                     ))
@@ -4991,14 +5120,14 @@ class LaunchPage(PageBase):
                     except Exception:
                         errtxt = "(no output captured)"
                     self.after(0, lambda et=errtxt: (
-                        self._srv_lbl.config(text="❌ Server crashed", fg=RED),
+                        self._srv_lbl.config(text="Server crashed", fg=RED),
                         self._btn_srv_start.config(state="normal"),
                         self._btn_srv_stop.config(state="disabled"),
                         self._log(f"Server crashed:\n{et}"),
                     ))
             except Exception as exc:
                 self.after(0, lambda e=exc: (
-                    self._srv_lbl.config(text="❌ Launch error", fg=RED),
+                    self._srv_lbl.config(text="Launch error", fg=RED),
                     self._btn_srv_start.config(state="normal"),
                     self._log(f"Launch error: {e}"),
                 ))
@@ -5131,6 +5260,8 @@ class CPharmWizard(tk.Tk):
         self.config(bg=BG)
         self.resizable(True, True)
 
+        self._hdr_icon_refs: list[tk.PhotoImage] = []
+        self._phase_diamonds: list[tk.Label] = []
         self._build_header()
         self._content = tk.Frame(self, bg=BG)
         self._content.pack(fill="both", expand=True, padx=24, pady=14)
@@ -5177,30 +5308,48 @@ class CPharmWizard(tk.Tk):
                 break
 
     def _build_header(self):
-        hdr = tk.Frame(self, bg=BG2, height=64, highlightthickness=1,
-                       highlightbackground=BORDER)
+        hdr = tk.Frame(self, bg=BG2, height=68, highlightthickness=1,
+                       highlightbackground=BORDER_STRONG)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
         title_fr = tk.Frame(hdr, bg=BG2)
         title_fr.pack(side="left", padx=SP["lg"], pady=SP["sm"])
         tk.Label(title_fr, text="CPharm",
-                 font=("Segoe UI", 14, "bold"),
+                 font=("Segoe UI", 15, "bold"),
                  bg=BG2, fg=T1).pack(anchor="w")
         tk.Label(title_fr, text="Phone farm setup",
-                 font=("Segoe UI", 9), bg=BG2, fg=T3).pack(anchor="w")
+                 font=FONT_CAPTION, bg=BG2, fg=T3).pack(anchor="w")
+
+        chev = load_icon("chevron_right", self)
+        m_on = load_icon("milestone_on", self)
+        m_off = load_icon("milestone_off", self)
+        for img in (chev, m_on, m_off):
+            if img:
+                self._hdr_icon_refs.append(img)
 
         phase_row = tk.Frame(hdr, bg=BG2)
         phase_row.pack(side="left", padx=(SP["md"], 0), pady=SP["sm"])
-        self._phase_lbls: list[tk.Label] = []
+        self._phase_lbls = []
+        self._phase_m_on = m_on
+        self._phase_m_off = m_off
         for i, label in enumerate(self.PHASE_LABELS):
-            if i:
-                tk.Label(phase_row, text="→", font=FS, bg=BG2, fg=T3).pack(
+            if i and chev:
+                tk.Label(phase_row, image=chev, bg=BG2).pack(side="left", padx=1)
+            elif i:
+                tk.Label(phase_row, text="/", font=FONT_CAPTION, bg=BG2, fg=T3).pack(
                     side="left", padx=2)
+            if m_off:
+                dm = tk.Label(phase_row, image=m_off, bg=BG2)
+            else:
+                dm = tk.Label(phase_row, text="·", font=FONT_CAPTION, bg=BG2, fg=T3)
+            dm.pack(side="left", padx=(0, 2))
+            self._phase_diamonds.append(dm)
             lb = tk.Label(
                 phase_row, text=label,
-                font=("Segoe UI", 9, "bold"), bg=BG2, fg=T3,
+                font=(FONT_CAPTION[0], FONT_CAPTION[1], "bold"),
+                bg=BG2, fg=T3,
             )
-            lb.pack(side="left", padx=3)
+            lb.pack(side="left", padx=(0, 6))
             self._phase_lbls.append(lb)
 
         self._step_lbl = tk.Label(hdr, text="", font=FS, bg=BG2, fg=T2)
@@ -5208,20 +5357,20 @@ class CPharmWizard(tk.Tk):
 
     def _build_footer(self):
         ftr = tk.Frame(self, bg=BG2, height=56, highlightthickness=1,
-                       highlightbackground=BORDER)
+                       highlightbackground=BORDER_STRONG)
         ftr.pack(fill="x")
         ftr.pack_propagate(False)
-        self._next_btn = tk.Button(ftr, text="Next  →",
+        self._next_btn = tk.Button(ftr, text="Next",
                                    font=("Segoe UI", 11, "bold"),
-                                   bg=ACCENT, fg=BG, relief="flat",
-                                   cursor="hand2", command=self._next,
+                                   command=self._next,
                                    padx=SP["lg"], pady=SP["sm"])
+        style_primary_button(self._next_btn)
         self._next_btn.pack(side="right", padx=SP["lg"], pady=SP["sm"])
-        self._back_btn = tk.Button(ftr, text="← Back",
+        self._back_btn = tk.Button(ftr, text="Back",
                                    font=("Segoe UI", 11),
-                                   bg=BG3, fg=T2, relief="flat",
-                                   cursor="hand2", command=self._back,
+                                   command=self._back,
                                    padx=SP["md"], pady=SP["sm"])
+        style_secondary_button(self._back_btn)
         self._back_btn.pack(side="right", padx=(0, SP["sm"]), pady=SP["sm"])
 
     def _on_mousewheel(self, event):
@@ -5244,14 +5393,19 @@ class CPharmWizard(tk.Tk):
         for i, lb in enumerate(self._phase_lbls):
             lb.config(
                 fg=ACCENT if i == pidx else T3,
-                font=("Segoe UI", 9, "bold") if i == pidx else ("Segoe UI", 9),
+                font=(FONT_CAPTION[0], FONT_CAPTION[1], "bold")
+                if i == pidx
+                else FONT_CAPTION,
             )
+        for i, dm in enumerate(self._phase_diamonds):
+            if self._phase_m_on and self._phase_m_off:
+                dm.config(image=self._phase_m_on if i == pidx else self._phase_m_off)
         total = len(self.PAGES)
         self._step_lbl.config(
             text=f"Step {idx + 1} of {total}  ·  {self.PAGE_NAMES[idx]}")
         self._back_btn.config(state="normal" if idx > 0 else "disabled")
         self._next_btn.config(
-            text="Finish ✓" if idx == total - 1 else "Next  →")
+            text="Finish" if idx == total - 1 else "Next")
         self._pages[idx].on_enter()
 
     def _next(self):

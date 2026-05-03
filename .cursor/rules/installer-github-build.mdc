@@ -16,3 +16,7 @@ When you change anything that affects **`CPharmSetup.exe`** or how it is shipped
 4. **Get the binary** from the run’s **Artifacts** (`CPharmSetup-exe-…`) or from **Releases**, depending on how the run was triggered.
 
 Do not assume a local `pyinstaller` run replaces the need to confirm the CI build when the goal is testing the same bits users get from GitHub.
+
+## Repo workflow (owner preference)
+
+**Push straight to `main`.** Do **not** create side branches whose only purpose is a PR (no “sync branch → open PR” loop). Commit locally, then **`git push origin main`** (or `master:main` if that’s how the repo tracks work). The owner tests **Releases / Actions artifacts** from `main`, not PRs.

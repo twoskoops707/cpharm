@@ -31,3 +31,6 @@ desktop.ini
 
 # Local scratch (do not commit)
 automation/Sequence Notes.xlsx
+
+# Root copy of built wizard (CI builds wizard/dist/)
+/CPharmSetup.exe

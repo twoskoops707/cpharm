@@ -6,20 +6,33 @@ on:
       - "**"
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build:
-    # GitHub-hosted windows-latest is x64 AMD64. PyInstaller output matches that runner's
-    # Python.exe architecture — typically x64. WoA (Snapdragon) users run that .exe under
-    # x64 emulation; a native ARM64 .exe would need a self-hosted windows-arm64 runner
-    # or a build on an ARM64 machine (see wizard/build.bat using local Python arch).
+  verify:
     runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Root smoke + compileall
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python automation/smoke_imports.py
+          python -m compileall -q automation wizard gui
+
+  # PyInstaller on windows-latest is x64; WoA runs that exe under emulation unless you build on ARM.
+  build:
+    needs: verify
+    runs-on: windows-latest
+    permissions:
+      contents: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5

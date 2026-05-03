@@ -6,18 +6,23 @@
 <title>App Tester — CPharm</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=IBM+Plex+Mono:wght@400;600&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --g:#00e676;--g2:#00c853;--g-dim:#00e67618;--g-glow:#00e67640;
-  --r:#f43f5e;--y:#f59e0b;--b:#3b82f6;--p:#a855f7;
-  --bg0:#070a0d;--bg1:#0c1118;--bg2:#111822;--bg3:#18222e;
-  --bd:#1e2d3d;--bd2:#263447;
-  --t0:#e2e8f0;--t1:#94a3b8;--t2:#475569;
-  --font-head:'Syne',sans-serif;
-  --font-mono:'IBM Plex Mono',monospace;
-  --font-body:'DM Sans',sans-serif;
+  /* Aligned with automation/dashboard.html */
+  --void:#05080d;--depth:#0a1628;--surface:#0f1c32;--surface-2:#152238;--surface-3:#1a2d4a;
+  --border:#243652;--border-bright:#3d5a80;
+  --text:#e8f0fa;--muted:#8fa3bf;--faint:#5c6d88;
+  --cyan:#22d3ee;--amber:#fbbf24;--rose:#fb7185;--mint:#34d399;
+  --g:var(--mint);--g2:#10b981;--g-dim:#34d39922;--g-glow:#34d39940;
+  --r:var(--rose);--y:var(--amber);--b:var(--cyan);--p:#818cf8;
+  --bg0:var(--void);--bg1:var(--depth);--bg2:var(--surface);--bg3:var(--surface-2);
+  --bd:var(--border);--bd2:var(--border-bright);
+  --t0:var(--text);--t1:var(--muted);--t2:var(--faint);
+  --font-head:'Familjen Grotesk',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,monospace;
+  --font-body:'Familjen Grotesk',system-ui,sans-serif;
   --rad:12px;--rad-sm:8px;
   --shadow:0 8px 32px #00000060;
 }
@@ -25,21 +30,24 @@ html{font-size:15px;scroll-behavior:smooth}
 body{background:var(--bg0);color:var(--t0);font-family:var(--font-body);min-height:100dvh;overflow-x:hidden}
 body::before{
   content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
-  opacity:.7;
+  background:
+    radial-gradient(ellipse 100% 70% at 0% 0%,#0c4a6e35,transparent 55%),
+    radial-gradient(ellipse 80% 50% at 100% 10%,#1e3a5f30,transparent 50%),
+    linear-gradient(180deg,var(--depth) 0%,var(--void) 45%,#030508 100%);
+  opacity:1;
 }
 #app{position:relative;z-index:1}
 
 header{
   position:sticky;top:0;z-index:100;
-  background:#070a0dcc;backdrop-filter:blur(20px) saturate(180%);
+  background:rgba(10,22,40,.92);backdrop-filter:blur(20px) saturate(180%);
   border-bottom:1px solid var(--bd);
   height:56px;padding:0 16px;
   display:flex;align-items:center;justify-content:space-between;
 }
 .logo{
-  font-family:var(--font-head);font-size:1rem;font-weight:800;
-  color:var(--g);letter-spacing:.04em;
+  font-family:var(--font-head);font-size:1rem;font-weight:700;
+  color:var(--cyan);letter-spacing:.04em;
   display:flex;align-items:center;gap:8px;
 }
 .logo-sub{font-size:.68rem;color:var(--t2);font-family:var(--font-mono);font-weight:400;letter-spacing:.08em}

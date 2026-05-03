@@ -13,30 +13,30 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
-# --- Tk wizard palette (web dashboard uses its own slate/cyan theme in automation/dashboard.html) ---
-BG = "#06030d"
-BG2 = "#0f0820"
-BG3 = "#180f2e"
-BG4 = "#221538"
-BORDER = "#4c3d6e"
-BORDER_STRONG = "#6b5a94"
+# --- Tk wizard palette (aligned with automation/dashboard.html slate / cyan / amber tokens) ---
+BG = "#05080d"
+BG2 = "#0a1628"
+BG3 = "#152238"
+BG4 = "#1a2d4a"
+BORDER = "#243652"
+BORDER_STRONG = "#3d5a80"
 
-ACCENT = "#f472b6"
-ACCENT_DIM = "#e879f9"
-ACCENT_GLOW = "#fda4d0"
-ACCENT_MUTED = "#3d1f4a"
+ACCENT = "#22d3ee"
+ACCENT_DIM = "#06b6d4"
+ACCENT_GLOW = "#67e8f9"
+ACCENT_MUTED = "#164e63"
 
-GREEN = "#4ade80"
-RED = "#f87171"
+GREEN = "#34d399"
+RED = "#fb7185"
 YELLOW = "#fbbf24"
-PURPLE = "#a78bfa"
+PURPLE = "#818cf8"
 
-T1 = "#faf5ff"
-T2 = "#c4b5fd"
-T3 = "#8b7aad"
+T1 = "#e8f0fa"
+T2 = "#8fa3bf"
+T3 = "#5c6d88"
 
-# Text on filled accent buttons
-ON_ACCENT = "#1a0526"
+# Text on filled cyan / indigo accent buttons
+ON_ACCENT = "#05080d"
 
 # spacing scale (px)
 SP = {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "card": 14}
@@ -218,11 +218,11 @@ def _style_scrollbars(root: tk.Misc) -> None:
     except tk.TclError:
         pass
 
-    # Dedicated scrollbar ramp — violet rail (matches Neon Ops).
-    sc_trough = "#0c0618"
-    sc_thumb = "#5b4a7a"
-    sc_thumb_hi = "#7c6a9e"
-    sc_thumb_press = ACCENT_DIM
+    # Scrollbar rail — matches dashboard grid / slate surfaces.
+    sc_trough = BG2
+    sc_thumb = BORDER
+    sc_thumb_hi = BORDER_STRONG
+    sc_thumb_press = ACCENT
 
     style.configure(
         CPharm_TSCROLL,

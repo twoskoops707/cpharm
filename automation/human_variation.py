@@ -22,6 +22,8 @@ STEP_GAP_MIN = 0.28
 STEP_GAP_MAX = 0.52
 # Pre-tap delay scaling
 PRE_WAIT_SPREAD = 0.06
+# Multi-phone stagger: scale base delay by ± this fraction (human mode only)
+STAGGER_JITTER_FRAC = 0.15
 
 
 def enabled() -> bool:
@@ -64,3 +66,19 @@ def effective_tap_jitter(step_jitter: int, rng: Optional[random.Random]) -> int:
 
 def step_gap_seconds(rng: random.Random) -> float:
     return rng.uniform(STEP_GAP_MIN, STEP_GAP_MAX)
+
+
+def stagger_seconds(base: float, rng: Optional[random.Random]) -> float:
+    """
+    Delay between devices when staggering launches/actions.
+
+    With human variation enabled, scales ``base`` by uniform(1−j, 1+j) where
+    j = :data:`STAGGER_JITTER_FRAC` so multi-phone traffic is less perfectly aligned.
+    """
+    if base <= 0:
+        return 0.0
+    b = float(base)
+    if rng is None or not enabled():
+        return b
+    lo, hi = 1.0 - STAGGER_JITTER_FRAC, 1.0 + STAGGER_JITTER_FRAC
+    return max(0.0, b * rng.uniform(lo, hi))

@@ -1,6 +1,9 @@
 """
 CPharm Dashboard — ADB-native backend.
 Works with any Android device: AVD emulators, BlueStacks, Genymotion, MEmu, NOX, real phones.
+
+Launch (Windows): double-click automation/run_dashboard.bat or start_dashboard.bat — both ``cd``
+to ``automation/`` first so ``dashboard.html`` / config paths resolve next to ``dashboard.py``.
 """
 
 import sys, io
@@ -671,7 +674,12 @@ async def handle_post(path: str, body: bytes) -> bytes:
         async def open_all():
             for i, p in enumerate(phones):
                 if i > 0 and stagger > 0:
-                    await asyncio.sleep(stagger)
+                    delay = (
+                        _hv.stagger_seconds(float(stagger), _hv.rng_for_run(p["serial"], i))
+                        if _hv.enabled()
+                        else float(stagger)
+                    )
+                    await asyncio.sleep(delay)
                 # Use Chrome package explicitly — avoids browser chooser and
                 # first-run ToS screens that swallow the URL on fresh emulators.
                 _adb(p["serial"], "shell", "am", "start",
@@ -883,7 +891,12 @@ async def handle_post(path: str, body: bytes) -> bytes:
                     if not _running_groups.get(name):
                         break
                     if i > 0 and stagger > 0:
-                        deadline = time.time() + stagger
+                        eff = (
+                            _hv.stagger_seconds(float(stagger), _hv.rng_for_run(serial, iteration * 10_000 + i))
+                            if _hv.enabled()
+                            else float(stagger)
+                        )
+                        deadline = time.time() + eff
                         while time.time() < deadline:
                             if not _running_groups.get(name):
                                 break
@@ -1033,7 +1046,12 @@ async def handle_post(path: str, body: bytes) -> bytes:
         def do_launch():
             for i, p in enumerate(targets):
                 if i > 0 and stagger > 0:
-                    time.sleep(stagger)
+                    d = (
+                        _hv.stagger_seconds(float(stagger), _hv.rng_for_run(p["serial"], i))
+                        if _hv.enabled()
+                        else float(stagger)
+                    )
+                    time.sleep(d)
                 _adb(p["serial"], "shell", "monkey", "-p", package,
                      "-c", "android.intent.category.LAUNCHER", "1")
                 asyncio.run_coroutine_threadsafe(

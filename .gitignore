@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+.env
+
+# PyInstaller — CLI builds emit a spec next to setup_wizard.py
+wizard/CPharmSetup.spec
+
+# APKs (too large for git)
+apks/*.apk
+
+# LDPlayer artifacts
+*.ldbk
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Local scratch (do not commit)
+automation/Sequence Notes.xlsx

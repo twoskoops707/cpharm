@@ -1,0 +1,9 @@
+[
+  {"type": "open_url", "url": "https://getdabflow.app"},
+  {"type": "wait", "seconds": 14},
+  {"type": "swipe", "x1": 540, "y1": 1650, "x2": 540, "y2": 900, "ms": 500},
+  {"type": "wait", "seconds": 4},
+  {"type": "tap", "x": 540, "y": 1880, "retries": 4, "jitter": 26, "pre_wait_ms": 900},
+  {"type": "wait", "seconds": 10},
+  {"type": "rotate_identity"}
+]

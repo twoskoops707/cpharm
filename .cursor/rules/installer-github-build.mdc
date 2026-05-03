@@ -1,0 +1,18 @@
+---
+description: After wizard/installer changes, trigger GitHub Actions for a new CPharmSetup.exe
+globs: wizard/**,.github/workflows/build-wizard.yml
+alwaysApply: false
+---
+
+# Installer / CPharmSetup.exe — GitHub build reminder
+
+When you change anything that affects **`CPharmSetup.exe`** or how it is shipped — including `wizard/**`, PyInstaller flags or bundled assets (`--add-data`, hidden imports, `build.bat` / spec inputs), or **`.github/workflows/build-wizard.yml`** — a **new Windows build for testing only comes from GitHub Actions** (`.github/workflows/build-wizard.yml`, PyInstaller on a Windows runner). **Local edits alone do not update GitHub artifacts or Releases.**
+
+**Remind the user** (or follow yourself) to get a fresh test build:
+
+1. **Commit** the change.
+2. **Push** to GitHub (or run **Actions → `build-wizard` → Run workflow** / `workflow_dispatch` if the repo allows it).
+3. **Verify** the workflow run completed successfully.
+4. **Get the binary** from the run’s **Artifacts** (`CPharmSetup-exe-…`) or from **Releases**, depending on how the run was triggered.
+
+Do not assume a local `pyinstaller` run replaces the need to confirm the CI build when the goal is testing the same bits users get from GitHub.

@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>CPharm · Control</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0a1628">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- UI is static HTML+fetch+WS (ARM64-friendly in Edge/Chrome). Host logic lives in dashboard.py. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --void:#05080d;
+  --depth:#0a1628;
+  --surface:#0f1c32;
+  --surface-2:#152238;
+  --surface-3:#1a2d4a;
+  --border:#243652;
+  --border-bright:#3d5a80;
+  --text:#e8f0fa;
+  --muted:#8fa3bf;
+  --faint:#5c6d88;
+  --cyan:#22d3ee;
+  --cyan-dim:#22d3ee22;
+  --amber:#fbbf24;
+  --rose:#fb7185;
+  --mint:#34d399;
+  --font-sans:'Familjen Grotesk',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,monospace;
+  --rad:10px;
+  --rad-sm:6px;
+  --ease:cubic-bezier(.4,0,.2,1);
+  --dur:.2s;
+  /* Legacy tokens referenced by inline JS (pip colors, renderGroups) */
+  --g:var(--mint);
+  --y:var(--amber);
+  --r:var(--rose);
+  --bg3:var(--surface-2);
+  --t1:var(--text);
+  --t2:var(--muted);
+  --bd:var(--border);
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:0.01ms!important;animation-iteration-count:1!important;transition-duration:0.01ms!important}
+}
+html{font-size:15px;scroll-behavior:smooth}
+body{
+  font-family:var(--font-sans);
+  color:var(--text);
+  min-height:100dvh;
+  overflow-x:hidden;
+  background:var(--void);
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse 100% 70% at 0% 0%,#0c4a6e35,transparent 55%),
+    radial-gradient(ellipse 80% 50% at 100% 10%,#1e3a5f30,transparent 50%),
+    linear-gradient(180deg,var(--depth) 0%,var(--void) 45%,#030508 100%);
+  opacity:1;
+}
+body::after{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(34,211,238,.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(34,211,238,.03) 1px,transparent 1px);
+  background-size:48px 48px;
+  mask-image:radial-gradient(ellipse 90% 70% at 50% 30%,#000 20%,transparent 75%);
+  opacity:.6;
+}
+
+#app{position:relative;z-index:1}
+
+.layout{
+  display:grid;
+  grid-template-columns:220px minmax(0,1fr);
+  min-height:100dvh;
+  max-width:1600px;
+  margin:0 auto;
+}
+
+.side-rail{
+  position:sticky;top:0;align-self:start;
+  min-height:100dvh;
+  padding:20px 14px 24px;
+  display:flex;flex-direction:column;gap:20px;
+  border-right:1px solid var(--border);
+  background:linear-gradient(180deg,rgba(15,28,50,.97) 0%,rgba(10,22,40,.92) 100%);
+  backdrop-filter:blur(20px);
+}
+.side-brand{
+  display:flex;align-items:center;gap:12px;padding:4px 8px 16px;
+  border-bottom:1px solid var(--border);
+}
+.side-mark{
+  width:36px;height:36px;border-radius:var(--rad-sm);
+  background:linear-gradient(135deg,var(--cyan) 0%,#0891b2 100%);
+  display:grid;place-items:center;
+  font-family:var(--font-mono);font-size:.65rem;font-weight:700;
+  color:var(--void);letter-spacing:.05em;
+  box-shadow:0 0 24px #22d3ee44;
+}
+.side-title{font-weight:700;font-size:1.05rem;letter-spacing:-.02em;line-height:1.15}
+.side-title span{display:block;font-size:.62rem;font-weight:500;color:var(--muted);letter-spacing:.18em;text-transform:uppercase;margin-top:3px}
+
+.side-nav{display:flex;flex-direction:column;gap:4px}
+.side-nav a{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 12px;border-radius:var(--rad-sm);
+  font-size:.78rem;font-weight:600;color:var(--muted);
+  text-decoration:none;border:1px solid transparent;
+  transition:color var(--dur) var(--ease),background var(--dur) var(--ease),border-color var(--dur) var(--ease);
+}
+.side-nav a::before{
+  content:'';width:6px;height:6px;border-radius:2px;background:var(--border);flex-shrink:0;
+  transition:background var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
+}
+.side-nav a:hover{color:var(--text);background:var(--cyan-dim);border-color:#22d3ee35}
+.side-nav a:hover::before{background:var(--cyan);box-shadow:0 0 10px var(--cyan)}
+body:has(#section-overview:target) .side-nav a[href="#section-overview"],
+body:has(#section-apps:target) .side-nav a[href="#section-apps"],
+body:has(#section-browser:target) .side-nav a[href="#section-browser"],
+body:has(#groups-section:target) .side-nav a[href="#groups-section"],
+body:has(#section-teach:target) .side-nav a[href="#section-teach"],
+body:has(#section-tor:target) .side-nav a[href="#section-tor"],
+body:has(#log-feed:target) .side-nav a[href="#log-feed"]{
+  color:var(--text);background:rgba(34,211,238,.12);border-color:#22d3ee44;
+}
+body:has(#section-overview:target) .side-nav a[href="#section-overview"]::before,
+body:has(#section-apps:target) .side-nav a[href="#section-apps"]::before,
+body:has(#section-browser:target) .side-nav a[href="#section-browser"]::before,
+body:has(#groups-section:target) .side-nav a[href="#groups-section"]::before,
+body:has(#section-teach:target) .side-nav a[href="#section-teach"]::before,
+body:has(#section-tor:target) .side-nav a[href="#section-tor"]::before,
+body:has(#log-feed:target) .side-nav a[href="#log-feed"]::before{
+  background:var(--cyan);box-shadow:0 0 12px var(--cyan);
+}
+
+.side-foot{
+  margin-top:auto;padding-top:16px;border-top:1px solid var(--border);
+  font-size:.65rem;color:var(--faint);line-height:1.5;font-family:var(--font-mono);
+}
+
+.stage{
+  display:flex;flex-direction:column;
+  min-width:0;
+  padding:0 18px 100px;
+}
+@media(min-width:901px){
+  .stage{padding:0 28px 100px}
+}
+
+.stage-head{
+  position:sticky;top:0;z-index:50;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  flex-wrap:wrap;
+  padding:18px 0 14px;
+  margin-bottom:4px;
+  background:linear-gradient(180deg,rgba(5,8,13,.94) 65%,transparent);
+  border-bottom:1px solid var(--border);
+  backdrop-filter:blur(12px);
+}
+.stage-head h1{
+  font-size:clamp(1.15rem,2.5vw,1.35rem);
+  font-weight:700;letter-spacing:-.03em;
+}
+.stage-head-right{display:flex;align-items:center;gap:10px}
+
+.ip-chip{
+  font-family:var(--font-mono);font-size:.68rem;color:var(--cyan);
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--rad-sm);padding:7px 12px;cursor:pointer;
+  transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
+}
+.ip-chip:hover{border-color:var(--cyan);box-shadow:0 0 20px #22d3ee22}
+.ws-dot{width:8px;height:8px;border-radius:50%;background:var(--faint);transition:background .3s}
+.ws-dot.connected{background:var(--mint);box-shadow:0 0 10px var(--mint)}
+.ws-dot.error{background:var(--rose)}
+
+#stats{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
+  background:var(--border);border-radius:var(--rad);overflow:hidden;
+  border:1px solid var(--border);
+}
+.stat{
+  background:var(--surface);padding:14px 16px;
+  display:flex;flex-direction:column;gap:6px;
+}
+.stat-n{
+  font-family:var(--font-mono);font-size:1.35rem;font-weight:600;line-height:1;
+  color:var(--text);transition:color .3s;
+}
+.stat-n.green{color:var(--mint)}
+.stat-n.yellow{color:var(--amber)}
+.stat-lbl{
+  font-size:.58rem;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.14em;font-family:var(--font-mono);
+}
+
+.panel{margin-bottom:20px}
+.panel-top{padding:8px 0 14px}
+.section-eyebrow{
+  display:block;font-family:var(--font-mono);font-size:.58rem;font-weight:600;
+  color:var(--cyan);text-transform:uppercase;letter-spacing:.2em;margin-bottom:6px;
+}
+.section-title{font-size:1.05rem;font-weight:700;letter-spacing:-.02em;color:var(--text)}
+
+.overview-hook{padding:8px 0 18px}
+
+#controls{
+  display:flex;gap:10px;flex-wrap:wrap;padding:16px 0 18px;
+  border-bottom:1px solid var(--border);
+}
+
+button{
+  font-family:var(--font-sans);font-size:.82rem;font-weight:600;
+  border:none;border-radius:var(--rad-sm);padding:10px 16px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;
+  transition:filter var(--dur) var(--ease),transform .15s var(--ease),box-shadow var(--dur) var(--ease);
+  white-space:nowrap;
+}
+button:active{transform:scale(.98)}
+button:disabled{opacity:.38;cursor:not-allowed;transform:none!important}
+.btn-g{
+  background:linear-gradient(145deg,#22d3ee,#0891b2);
+  color:#031018;
+  box-shadow:0 2px 16px #22d3ee33;
+}
+.btn-g:hover{filter:brightness(1.08);box-shadow:0 4px 24px #22d3ee44}
+.btn-r{background:var(--rose);color:#1a0a0d}
+.btn-r:hover{filter:brightness(1.06)}
+.btn-b{background:#3b82f6;color:#fff}
+.btn-b:hover{filter:brightness(1.08);box-shadow:0 0 20px #3b82f644}
+.btn-ghost{
+  background:var(--surface-2);color:var(--text);
+  border:1px solid var(--border);
+}
+.btn-ghost:hover{border-color:var(--border-bright);background:var(--surface-3)}
+.btn-sm{padding:7px 12px;font-size:.75rem;border-radius:6px}
+
+#connect-bar{
+  display:none;align-items:center;flex-wrap:wrap;gap:10px;
+  padding:14px 16px;margin-bottom:18px;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--rad);
+}
+#connect-bar #connect-addr{
+  flex:1;min-width:200px;
+  background:var(--depth)!important;border:1px solid var(--border)!important;
+  border-radius:var(--rad-sm);padding:10px 14px;color:var(--text);
+  font-family:var(--font-mono);font-size:.8rem;outline:none;
+  transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
+}
+#connect-bar #connect-addr:focus{
+  border-color:var(--cyan)!important;
+  box-shadow:0 0 0 3px #22d3ee22;
+}
+
+#grid{
+  padding:12px 0 8px;
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:12px;
+}
+.card{
+  background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--rad);
+  overflow:hidden;
+  animation:rise .35s var(--ease) both;
+  transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease),transform .18s var(--ease);
+}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.card.on{
+  border-color:#34d39966;
+  box-shadow:0 0 0 1px #34d39922,inset 0 1px 0 #34d39915;
+}
+.card:hover{border-color:var(--border-bright);transform:translateY(-2px)}
+.card-head{padding:14px;display:flex;align-items:center;gap:12px}
+.phone-icon{
+  width:36px;height:36px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--rad-sm);
+}
+.phone-icon svg{width:17px;height:17px;color:var(--muted);transition:color .3s}
+.card.on .phone-icon svg{color:var(--mint)}
+.card-info{flex:1;min-width:0}
+.card-name{
+  font-family:var(--font-mono);font-size:.84rem;font-weight:600;
+  color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.card-status{
+  font-size:.68rem;color:var(--muted);margin-top:3px;
+  font-family:var(--font-mono);display:flex;align-items:center;gap:6px;
+}
+.card.on .card-status{color:var(--mint)}
+.status-ring{width:6px;height:6px;border-radius:50%;background:var(--faint);flex-shrink:0}
+.card.on .status-ring{background:var(--mint);animation:ping 2s ease infinite}
+@keyframes ping{
+  0%{box-shadow:0 0 0 0 rgba(52,211,153,.5)}
+  70%{box-shadow:0 0 0 8px transparent}
+  100%{box-shadow:0 0 0 0 transparent}
+}
+.card-foot{
+  padding:0 14px 14px;display:flex;gap:8px;align-items:center;justify-content:space-between;
+}
+.app-chip{
+  font-family:var(--font-mono);font-size:.62rem;
+  background:var(--surface-2);color:var(--muted);border:1px solid var(--border);
+  border-radius:4px;padding:3px 8px;max-width:170px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.app-chip.has-app{background:#34d39918;color:var(--mint);border-color:#34d39940}
+
+.section{
+  padding:22px 0;border-bottom:1px solid var(--border);
+}
+.section:last-of-type{border-bottom:none}
+
+.glass-panel{
+  background:linear-gradient(165deg,var(--surface) 0%,var(--surface-2) 100%);
+  border:1px solid var(--border);border-radius:var(--rad);
+  padding:18px;
+  box-shadow:0 12px 40px #00000055;
+}
+
+#drop-zone{
+  border:2px dashed var(--border-bright);border-radius:var(--rad);
+  padding:28px;text-align:center;cursor:pointer;
+  background:var(--depth);
+  transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease);
+}
+#drop-zone:hover,.drag-over{border-color:var(--cyan)!important;background:var(--cyan-dim)!important}
+#drop-zone p{font-size:.88rem;color:var(--text);margin-bottom:6px}
+#drop-zone span{font-size:.72rem;color:var(--muted)}
+#apk-list{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+.apk-row{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--rad-sm);
+  padding:12px 14px;display:flex;align-items:center;gap:12px;
+}
+.apk-info{flex:1;min-width:0}
+.apk-name{font-family:var(--font-mono);font-size:.78rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.apk-meta{font-size:.65rem;color:var(--muted);margin-top:2px;font-family:var(--font-mono)}
+
+.progress-wrap{margin-top:10px;display:none}
+.progress-track{height:4px;background:var(--surface-3);border-radius:2px;overflow:hidden}
+.progress-fill{height:100%;background:linear-gradient(90deg,var(--cyan),var(--mint));border-radius:2px;width:0%;transition:width .4s ease}
+.progress-lbl{font-family:var(--font-mono);font-size:.65rem;color:var(--muted);margin-top:6px}
+
+.url-row{display:flex;gap:10px;align-items:stretch}
+.url-row input{
+  flex:1;background:var(--depth);border:1px solid var(--border);border-radius:var(--rad-sm);
+  padding:11px 14px;color:var(--text);font-family:var(--font-mono);font-size:.82rem;
+  outline:none;transition:border-color var(--dur) var(--ease);
+}
+.url-row input:focus{border-color:var(--cyan)}
+.url-row input::placeholder{color:var(--faint)}
+.stagger-row{margin-top:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.stagger-lbl{font-size:.72rem;color:var(--muted);font-family:var(--font-mono);white-space:nowrap}
+.stagger-opts{display:flex;gap:6px;flex-wrap:wrap}
+.stagger-opt{
+  font-family:var(--font-mono);font-size:.68rem;padding:6px 11px;border-radius:var(--rad-sm);
+  cursor:pointer;background:var(--surface-2);color:var(--muted);border:1px solid var(--border);
+  transition:all .15s;user-select:none;
+}
+.stagger-opt.active{background:#22d3ee18;color:var(--cyan);border-color:#22d3ee55}
+.stagger-custom{display:none;margin-top:10px;gap:10px;align-items:center}
+.stagger-custom input{
+  width:84px;background:var(--depth);border:1px solid var(--border);border-radius:6px;
+  padding:7px 10px;color:var(--text);font-family:var(--font-mono);font-size:.78rem;
+  outline:none;text-align:center;
+}
+.stagger-custom input:focus{border-color:var(--cyan)}
+
+.teach-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--rad);padding:18px;
+}
+.teach-steps{display:flex;gap:8px;margin-bottom:14px;counter-reset:step}
+.teach-step{
+  flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--rad-sm);
+  padding:12px 10px;text-align:center;position:relative;transition:all .2s;
+}
+.teach-step::before{
+  counter-increment:step;content:counter(step);
+  font-family:var(--font-mono);font-size:.58rem;color:var(--faint);display:block;margin-bottom:5px;
+}
+.teach-step-icon{font-size:1.15rem;display:block;margin-bottom:4px}
+.teach-step-lbl{font-size:.68rem;color:var(--muted);line-height:1.35}
+.teach-step.active{border-color:var(--rose);background:#fb718510}
+.teach-step.done{border-color:var(--mint);background:#34d39912}
+.rec-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--rose);margin-right:5px}
+.teach-controls{display:flex;gap:8px;flex-wrap:wrap}
+.delay-row{
+  margin-top:12px;display:flex;align-items:center;gap:8px;
+  font-size:.72rem;color:var(--muted);font-family:var(--font-mono);
+}
+.delay-row input{
+  width:72px;background:var(--depth);border:1px solid var(--border);border-radius:6px;
+  padding:6px 8px;color:var(--text);font-family:var(--font-mono);font-size:.78rem;
+  outline:none;text-align:center;
+}
+.delay-row input:focus{border-color:var(--cyan)}
+
+.tor-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--rad);padding:18px;
+}
+.tor-head{display:flex;align-items:flex-start;gap:14px}
+.tor-icon{
+  width:44px;height:44px;flex-shrink:0;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:12px;
+  display:flex;align-items:center;justify-content:center;font-size:1.35rem;
+}
+.tor-text h3{font-weight:600;font-size:.92rem;color:var(--text);margin-bottom:4px}
+.tor-text p{font-size:.78rem;color:var(--muted);line-height:1.65}
+.tor-status{margin-top:12px;display:flex;flex-direction:column;gap:4px;max-height:110px;overflow-y:auto}
+.tor-row{font-family:var(--font-mono);font-size:.65rem;color:var(--muted);padding:4px 0;border-bottom:1px solid var(--border)}
+.tor-row:last-child{border-bottom:none}
+
+#log-feed{
+  margin-top:8px;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--rad);
+  overflow:hidden;
+}
+.log-head{
+  padding:10px 14px;border-bottom:1px solid var(--border);
+  font-family:var(--font-mono);font-size:.62rem;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.12em;display:flex;justify-content:space-between;align-items:center;
+}
+.log-eyebrow{color:var(--cyan);letter-spacing:.18em}
+#log-lines{padding:10px 14px;max-height:140px;overflow-y:auto;display:flex;flex-direction:column-reverse;gap:3px}
+.log-line{font-family:var(--font-mono);font-size:.68rem;color:var(--muted);line-height:1.45;animation:fade .2s ease both}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.log-ts{color:var(--faint);margin-right:8px}
+.log-msg{color:var(--muted)}
+
+#empty{
+  display:none;padding:56px 16px;text-align:center;color:var(--muted);
+  flex-direction:column;align-items:center;gap:12px;
+  border:1px dashed var(--border);border-radius:var(--rad);background:var(--depth);
+  margin:12px 0 24px;
+}
+#empty svg{opacity:.35;width:52px;height:52px;color:var(--cyan)}
+#empty h3{font-size:1rem;color:var(--text)}
+#empty p{font-size:.8rem;line-height:1.65;max-width:320px}
+
+#toasts{
+  position:fixed;bottom:28px;left:50%;transform:translateX(-50%);
+  display:flex;flex-direction:column;gap:8px;z-index:500;pointer-events:none;
+  width:min(360px,calc(100vw - 32px));
+}
+.toast{
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--rad-sm);
+  padding:11px 15px;font-size:.82rem;color:var(--text);
+  display:flex;align-items:center;gap:10px;
+  box-shadow:0 12px 40px #00000088;
+  animation:toastIn .22s var(--ease) both;pointer-events:all;
+}
+@keyframes toastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.toast.ok{border-color:#34d39944}
+.toast.err{border-color:#fb718560}
+.toast-pip{width:7px;height:7px;border-radius:50%;background:var(--faint);flex-shrink:0}
+.toast.ok .toast-pip{background:var(--mint);box-shadow:0 0 8px var(--mint)}
+.toast.err .toast-pip{background:var(--rose)}
+
+#fab{
+  position:fixed;bottom:28px;right:26px;width:56px;height:56px;border-radius:50%;
+  background:linear-gradient(145deg,var(--cyan),#0891b2);
+  color:#031018;font-size:1.6rem;font-weight:300;line-height:1;
+  display:flex;align-items:center;justify-content:center;padding:0;
+  border:none;cursor:pointer;
+  box-shadow:0 0 0 1px #ffffff22 inset,0 10px 36px #22d3ee44,0 6px 20px #00000066;
+  transition:transform .2s var(--ease),box-shadow .2s var(--ease),filter .18s var(--ease);
+  z-index:200;
+}
+#fab:hover{
+  transform:scale(1.06) translateY(-2px);
+  filter:brightness(1.07);
+  box-shadow:0 0 0 1px #ffffff33 inset,0 14px 44px #22d3ee55,0 8px 24px #00000077;
+}
+
+#section-overview,#section-apps,#section-browser,#groups-section,#section-teach,#section-tor,#log-feed{scroll-margin-top:24px}
+
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border-bright);border-radius:3px}
+
+@media(max-width:900px){
+  .layout{grid-template-columns:1fr}
+  .side-rail{
+    position:fixed;bottom:0;left:0;right:0;top:auto;
+    min-height:auto;flex-direction:row;align-items:center;justify-content:space-between;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-right:none;border-top:1px solid var(--border);
+    z-index:400;
+    gap:8px;overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+  }
+  .side-brand{display:none}
+  .side-foot{display:none}
+  .side-nav{
+    flex-direction:row;flex:1;justify-content:space-between;gap:2px;
+    min-width:min-content;
+  }
+  .side-nav a{
+    flex-direction:column;gap:4px;padding:8px 6px;font-size:.62rem;text-align:center;
+    min-width:52px;
+  }
+  .side-nav a::before{display:none}
+  .stage{padding:0 14px 96px}
+  #fab{bottom:88px}
+  #section-overview,#section-apps,#section-browser,#groups-section,#section-teach,#section-tor,#log-feed{scroll-margin-bottom:88px}
+}
+@media(max-width:420px){
+  #stats{grid-template-columns:repeat(2,1fr)}
+  .stat-n{font-size:1.15rem}
+  #grid{grid-template-columns:1fr}
+}
+
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+</style>
+</head>
+<body>
+<div id="app">
+<div class="layout">
+
+<aside class="side-rail" aria-label="Primary">
+  <div class="side-brand">
+    <div class="side-mark">CP</div>
+    <div class="side-title">CPharm<span>Control surface</span></div>
+  </div>
+  <nav class="side-nav" aria-label="Dashboard sections">
+    <a href="#section-overview">Fleet</a>
+    <a href="#section-apps">Install</a>
+    <a href="#section-browser">Browser</a>
+    <a href="#groups-section">Groups</a>
+    <a href="#section-teach">Teach</a>
+    <a href="#section-tor">Identity</a>
+    <a href="#log-feed">Log</a>
+  </nav>
+  <div class="side-foot">Unattended-ready: keep the host process running; schedule via config / wizard.</div>
+</aside>
+
+<div class="stage">
+
+<header class="stage-head">
+  <h1>Operations</h1>
+  <div class="stage-head-right">
+    <div class="ip-chip" id="ip-chip">—.—.—.—</div>
+    <div class="ws-dot" id="ws-dot" title="Live link"></div>
+  </div>
+</header>
+
+<div id="section-overview">
+  <div class="overview-hook">
+    <span class="section-eyebrow">Live fleet</span>
+    <div class="section-title">Devices &amp; sessions</div>
+  </div>
+
+  <div id="stats">
+    <div class="stat"><span class="stat-n" id="s-total">—</span><span class="stat-lbl">Phones</span></div>
+    <div class="stat"><span class="stat-n green" id="s-on">—</span><span class="stat-lbl">On</span></div>
+    <div class="stat"><span class="stat-n" id="s-off">—</span><span class="stat-lbl">Off</span></div>
+    <div class="stat"><span class="stat-n yellow" id="s-ram">—</span><span class="stat-lbl">Memory</span></div>
+  </div>
+
+  <div id="controls">
+    <button class="btn-g" id="btn-start-all">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+      Scan for Devices
+    </button>
+    <button class="btn-r" id="btn-stop-all">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>
+      Stop All
+    </button>
+    <button class="btn-ghost" id="btn-connect" style="gap:6px">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      Connect Device
+    </button>
+    <a href="/playstore" style="text-decoration:none">
+      <button class="btn-ghost" style="gap:6px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        App Tester
+      </button>
+    </a>
+  </div>
+
+  <div id="connect-bar" class="connect-shell">
+    <input type="text" id="connect-addr" placeholder="192.168.x.x:5555  or  localhost:5555" autocomplete="off">
+    <button class="btn-g btn-sm" id="btn-connect-do">Connect</button>
+    <button class="btn-ghost btn-sm" id="btn-connect-cancel">Cancel</button>
+    <span style="font-size:.68rem;color:var(--muted);font-family:var(--font-mono)">BlueStacks · Waydroid · WiFi device · emulator</span>
+  </div>
+
+  <div id="grid"></div>
+  <div id="empty" style="display:flex">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <rect x="5" y="2" width="14" height="20" rx="2"/>
+      <line x1="12" y1="18" x2="12.01" y2="18"/>
+    </svg>
+    <h3>No phones yet</h3>
+    <p>Use <strong>Connect Device</strong> or <strong>Scan for Devices</strong> to attach phones.</p>
+  </div>
+</div><!-- section-overview -->
+
+<div class="section" id="section-apps">
+  <div class="panel-top">
+    <span class="section-eyebrow">Automation</span>
+    <div class="section-title">Install an app</div>
+  </div>
+  <div id="drop-zone">
+    <p>Drop your APK here</p>
+    <span>or tap to choose a file</span>
+  </div>
+  <input type="file" id="apk-input" accept=".apk" style="display:none">
+  <div id="apk-list"></div>
+  <div class="progress-wrap" id="install-progress">
+    <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-lbl" id="progress-lbl">Installing…</div>
+  </div>
+</div>
+
+<div class="section" id="section-browser">
+  <div class="panel-top">
+    <span class="section-eyebrow">Browser</span>
+    <div class="section-title">Open a site on every phone</div>
+  </div>
+  <div class="url-row">
+    <input type="url" id="url-input" placeholder="https://…" autocomplete="off" autocorrect="off" spellcheck="false">
+    <button class="btn-b" id="btn-open-url">Open</button>
+  </div>
+  <div class="stagger-row">
+    <span class="stagger-lbl">Delay between phones</span>
+    <div class="stagger-opts">
+      <div class="stagger-opt active" data-val="0">All at once</div>
+      <div class="stagger-opt" data-val="60">1 min</div>
+      <div class="stagger-opt" data-val="300">5 min</div>
+      <div class="stagger-opt" data-val="custom">Custom</div>
+    </div>
+  </div>
+  <div class="stagger-custom" id="stagger-custom">
+    <span class="stagger-lbl">Every</span>
+    <input type="number" id="custom-delay" value="10" min="1" max="3600">
+    <span class="stagger-lbl">minutes</span>
+  </div>
+  <div class="stagger-row" style="margin-top:.65rem;gap:.85rem;align-items:center">
+    <label style="display:flex;align-items:center;gap:.45rem;font-size:.78rem;color:var(--muted);cursor:pointer">
+      <input type="checkbox" id="auto-rotate-toggle" style="width:1rem;height:1rem">
+      Auto-rotate identity after session
+    </label>
+    <span id="dwell-wrap" style="display:none;align-items:center;gap:.45rem;font-size:.78rem;color:var(--muted)">
+      · dwell
+      <input type="number" id="dwell-secs" value="30" min="5" max="3600" style="width:4rem;padding:.25rem .45rem;background:var(--depth);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:.78rem">
+      sec then rotate
+    </span>
+  </div>
+</div>
+
+<div class="section" id="groups-section">
+  <div class="panel-top">
+    <span class="section-eyebrow">Orchestration</span>
+    <div class="section-title">Phone groups</div>
+  </div>
+  <div class="glass-panel">
+    <p style="font-size:.78rem;color:var(--muted);line-height:1.65;margin-bottom:12px">
+      Run different sequences on different phone sets in parallel.<br>
+      Define groups in the <strong>Setup Wizard</strong>, load here, then run.
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <button class="btn-b btn-sm" id="btn-groups-load">Load Groups Config</button>
+      <button class="btn-g" id="btn-groups-run" disabled>▶ Run All Groups</button>
+      <button class="btn-r btn-sm" id="btn-groups-stop" disabled>Stop All</button>
+    </div>
+    <div id="groups-list" style="display:flex;flex-direction:column;gap:8px"></div>
+    <div id="groups-empty" style="font-size:.74rem;color:var(--muted);margin-top:6px">
+      No groups loaded. Build groups in the wizard, then Load.
+    </div>
+  </div>
+</div>
+
+<div class="section" id="section-teach">
+  <div class="panel-top">
+    <span class="section-eyebrow">Recording</span>
+    <div class="section-title">Teach mode</div>
+  </div>
+  <div class="teach-card">
+    <div class="teach-steps">
+      <div class="teach-step" id="step-1">
+        <span class="teach-step-icon">📱</span>
+        <span class="teach-step-lbl">Open phone 1</span>
+      </div>
+      <div class="teach-step" id="step-2">
+        <span class="teach-step-icon">⏺</span>
+        <span class="teach-step-lbl">Record steps</span>
+      </div>
+      <div class="teach-step" id="step-3">
+        <span class="teach-step-icon">▶</span>
+        <span class="teach-step-lbl">Play everywhere</span>
+      </div>
+    </div>
+    <div class="teach-controls">
+      <button class="btn-r btn-sm" id="btn-record">
+        <span class="rec-dot" id="rec-dot"></span>Start Recording
+      </button>
+      <button class="btn-ghost btn-sm" id="btn-stop-rec" disabled>■ Stop</button>
+      <button class="btn-g btn-sm" id="btn-play-teach" disabled>▶ Play on All Phones</button>
+    </div>
+    <div class="delay-row">
+      <span>Wait</span>
+      <input type="number" id="teach-delay" value="60" min="0">
+      <span>seconds between phones</span>
+    </div>
+    <div id="teach-status" style="margin-top:10px;font-family:var(--font-mono);font-size:.68rem;color:var(--muted)"></div>
+  </div>
+</div>
+
+<div class="section" id="section-tor">
+  <div class="panel-top">
+    <span class="section-eyebrow">Identity</span>
+    <div class="section-title">Distinct exit IP per phone</div>
+  </div>
+  <div class="tor-card">
+    <div class="tor-head">
+      <div class="tor-icon">🌍</div>
+      <div class="tor-text">
+        <h3>Location diversity</h3>
+        <p>Each device can present a separate network path so sessions look independent. Runs via the host proxy stack.</p>
+      </div>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-ghost btn-sm" id="btn-tor">Set Up Now</button>
+      <button class="btn-ghost btn-sm" id="btn-tor-off">Turn Off</button>
+    </div>
+    <div class="tor-status" id="tor-status"></div>
+  </div>
+</div>
+
+<div id="log-feed">
+  <div class="log-head">
+    <span><span class="log-eyebrow">Stream</span> · Activity log</span>
+    <span id="log-clear" style="cursor:pointer;font-weight:600">Clear</span>
+  </div>
+  <div id="log-lines"></div>
+</div>
+
+</div><!-- stage -->
+</div><!-- layout -->
+</div><!-- app -->
+
+<button type="button" id="fab" title="Connect phone">+</button>
+<div id="toasts"></div>
+
+<script>
+'use strict';
+
+// ── Safety: escape any string before putting in DOM ────────────────
+function esc(str) {
+  return String(str)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
+
+// ── State ──────────────────────────────────────────────────────────
+let phones      = [];
+let staggerSecs = 0;
+let teachFile   = null;
+let apkFiles    = [];
+let installDone = 0;
+
+// ── WebSocket (port from /api/config — matches config.WS_PORT) ───────
+let WS_URL = '';
+let ws, wsRetry = 0;
+
+function connectWS() {
+  if (!WS_URL) return;
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    wsRetry = 0;
+    document.getElementById('ws-dot').className = 'ws-dot connected';
+  };
+  ws.onmessage = ({ data }) => {
+    const msg = JSON.parse(data);
+    if (msg.type === 'phones_update')    onPhonesUpdate(msg.phones);
+    if (msg.type === 'install_progress') onInstallProgress(msg);
+    if (msg.type === 'teach_status')     onTeachStatus(msg);
+    if (msg.type === 'log')              addLog(msg.msg);
+    if (msg.type === 'groups_status')    onWsMessage(msg);
+  };
+  ws.onclose = () => {
+    document.getElementById('ws-dot').className = 'ws-dot error';
+    setTimeout(connectWS, Math.min(1000 * 2 ** wsRetry++, 15000));
+  };
+  ws.onerror = () => ws.close();
+}
+
+// ── API ────────────────────────────────────────────────────────────
+async function api(path, method = 'GET', body = null) {
+  const opts = { method, headers: {} };
+  if (body) { opts.body = JSON.stringify(body); opts.headers['Content-Type'] = 'application/json'; }
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+// ── Phones ─────────────────────────────────────────────────────────
+function onPhonesUpdate(data) {
+  phones = data;
+  renderPhones();
+  updateStats();
+}
+
+function updateStats() {
+  const on = phones.filter(p => p.running).length;
+  setText('s-total', phones.length || '0');
+  setText('s-on', on);
+  setText('s-off', phones.length - on);
+  setText('s-ram', on ? (on * 1.5).toFixed(1) + 'G' : '0G');
+}
+
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+function renderPhones() {
+  const grid  = document.getElementById('grid');
+  const empty = document.getElementById('empty');
+  if (!phones.length) {
+    grid.style.display = 'none'; empty.style.display = 'flex'; return;
+  }
+  grid.style.display = ''; empty.style.display = 'none';
+
+  const cardId = s => 'card-' + s.replace(/[^a-zA-Z0-9]/g, '_');
+
+  // Remove cards that no longer exist
+  const existing = new Set(phones.map(p => cardId(p.serial)));
+  Array.from(grid.children).forEach(c => { if (!existing.has(c.id)) c.remove(); });
+
+  phones.forEach((p, i) => {
+    const cid = cardId(p.serial);
+    let card = document.getElementById(cid);
+    if (!card) {
+      card = document.createElement('div');
+      card.id = cid;
+      card.style.animationDelay = (i * 35) + 'ms';
+      grid.appendChild(card);
+    }
+
+    const hasApp = !!(p.app && p.app.package);
+    card.className = 'card' + (p.running ? ' on' : '');
+    card.textContent = '';
+
+    const head = document.createElement('div');
+    head.className = 'card-head';
+
+    const icon = document.createElement('div');
+    icon.className = 'phone-icon';
+    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18" stroke-width="2"/></svg>';
+
+    const info = document.createElement('div');
+    info.className = 'card-info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'card-name';
+    nameEl.textContent = p.name;
+    const statusEl = document.createElement('div');
+    statusEl.className = 'card-status';
+    const ring = document.createElement('div');
+    ring.className = 'status-ring';
+    statusEl.appendChild(ring);
+    const typeLabel = p.type === 'wifi' ? 'WiFi' : p.type === 'real' ? 'USB' : 'Emulator';
+    statusEl.append(' ' + (p.running ? 'Connected' : 'Offline') + ' · ' + typeLabel);
+    info.appendChild(nameEl);
+    info.appendChild(statusEl);
+
+    const actBtn = document.createElement('button');
+    actBtn.className = p.running ? 'btn-r btn-sm' : 'btn-ghost btn-sm';
+    actBtn.textContent = p.running ? 'Stop' : 'Offline';
+    actBtn.disabled = !p.running;
+    if (p.running) actBtn.addEventListener('click', () => stopPhone(p.serial));
+
+    head.appendChild(icon);
+    head.appendChild(info);
+    head.appendChild(actBtn);
+
+    const foot = document.createElement('div');
+    foot.className = 'card-foot';
+    const chip = document.createElement('div');
+    chip.className = 'app-chip' + (hasApp ? ' has-app' : '');
+    chip.textContent = hasApp
+      ? p.app.package.split('.').pop() + ' · v' + p.app.version
+      : 'No app installed';
+    chip.title = hasApp ? p.app.package : '';
+
+    const pip = document.createElement('div');
+    pip.id = 'pip-' + cid;
+    pip.style.cssText = 'width:7px;height:7px;border-radius:50%;background:var(--bd);flex-shrink:0;display:none';
+
+    foot.appendChild(chip);
+    foot.appendChild(pip);
+
+    card.appendChild(head);
+    card.appendChild(foot);
+  });
+}
+
+async function stopPhone(serial) {
+  try {
+    await api('/api/phone/stop', 'POST', { serial });
+    toast('Stopping ' + serial, 'ok');
+  } catch(e) { toast('Something went wrong', 'err'); }
+}
+
+async function connectDevice(addr) {
+  try {
+    const r = await api('/api/devices/connect', 'POST', { address: addr });
+    toast('Connected!', 'ok');
+  } catch(e) { toast('Could not connect', 'err'); }
+}
+
+// ── APK ─────────────────────────────────────────────────────────────
+async function loadServerApks() {
+  try {
+    const files = await api('/api/apks');
+    files.forEach(f => {
+      if (!apkFiles.find(a => a.name === f.name))
+        apkFiles.push({ name: f.name, size: f.size_mb * 1024 * 1024, uploaded: true });
+    });
+    renderApkList();
+  } catch(e) {}
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.name.endsWith('.apk')) queueApk(file);
+  else toast('Please drop an .apk file', 'err');
+}
+
+document.getElementById('apk-input').addEventListener('change', function() {
+  if (this.files[0]) queueApk(this.files[0]);
+  this.value = '';
+});
+
+function queueApk(file) {
+  if (apkFiles.find(f => f.name === file.name)) { toast('Already added', 'err'); return; }
+  apkFiles.push(file);
+  renderApkList();
+}
+
+function renderApkList() {
+  const el = document.getElementById('apk-list');
+  el.textContent = '';
+  apkFiles.forEach((f, i) => {
+    const row = document.createElement('div');
+    row.className = 'apk-row';
+
+    const emoji = document.createElement('span');
+    emoji.textContent = '📦';
+    emoji.style.fontSize = '1.1rem';
+
+    const info = document.createElement('div');
+    info.className = 'apk-info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'apk-name';
+    nameEl.textContent = f.name;
+    const meta = document.createElement('div');
+    meta.className = 'apk-meta';
+    meta.textContent = f.uploaded
+      ? (f.size / 1024 / 1024).toFixed(1) + ' MB · on server'
+      : (f.size / 1024 / 1024).toFixed(1) + ' MB · ready to upload';
+    info.appendChild(nameEl);
+    info.appendChild(meta);
+
+    const installBtn = document.createElement('button');
+    installBtn.className = 'btn-g btn-sm';
+    installBtn.textContent = 'Install All';
+    installBtn.addEventListener('click', () => installApk(i));
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'btn-ghost btn-sm';
+    removeBtn.textContent = '✕';
+    removeBtn.style.padding = '7px';
+    removeBtn.addEventListener('click', () => { apkFiles.splice(i, 1); renderApkList(); });
+
+    row.appendChild(emoji);
+    row.appendChild(info);
+    row.appendChild(installBtn);
+    row.appendChild(removeBtn);
+    el.appendChild(row);
+  });
+}
+
+async function uploadAndInstall(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const bytes = new Uint8Array(reader.result);
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      const b64 = btoa(bin);
+      try {
+        await api('/api/upload', 'POST', { name: file.name, data: b64 });
+        resolve();
+      } catch(e) { reject(e); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+async function installApk(i) {
+  const file = apkFiles[i];
+  if (!file) return;
+  const prog = document.getElementById('install-progress');
+  prog.style.display = 'block';
+  document.getElementById('progress-fill').style.width = '5%';
+  installDone = 0;
+
+  try {
+    if (!file.uploaded) {
+      setText('progress-lbl', 'Uploading ' + file.name + '…');
+      await uploadAndInstall(file);
+      file.uploaded = true;
+      renderApkList();
+    }
+    setText('progress-lbl', 'Installing ' + file.name + ' on all phones…');
+    await api('/api/install', 'POST', { apk: file.name });
+    toast('Installing ' + file.name, 'ok');
+  } catch(e) {
+    toast('Install failed', 'err');
+    prog.style.display = 'none';
+  }
+}
+
+function onInstallProgress(msg) {
+  const pipId = 'pip-card-' + (msg.serial || '').replace(/[^a-zA-Z0-9]/g, '_');
+  if (msg.status === 'done') {
+    installDone++;
+    const runningCount = phones.filter(p => p.running).length;
+    const pct = Math.round((installDone / Math.max(runningCount, 1)) * 100);
+    document.getElementById('progress-fill').style.width = pct + '%';
+    setText('progress-lbl', 'Installed on ' + installDone + ' of ' + runningCount + ' phones');
+    if (installDone >= runningCount) {
+      setTimeout(() => { document.getElementById('install-progress').style.display = 'none'; toast('App installed on all phones!', 'ok'); }, 800);
+    }
+    const pip = document.getElementById(pipId);
+    if (pip) { pip.style.display = 'block'; pip.style.background = 'var(--g)'; }
+  }
+  if (msg.status === 'installing') {
+    const pip = document.getElementById(pipId);
+    if (pip) { pip.style.display = 'block'; pip.style.background = 'var(--y)'; }
+  }
+}
+
+// ── URL launcher ────────────────────────────────────────────────────
+document.querySelectorAll('.stagger-opt').forEach(opt => {
+  opt.addEventListener('click', () => {
+    document.querySelectorAll('.stagger-opt').forEach(o => o.classList.remove('active'));
+    opt.classList.add('active');
+    const custom = document.getElementById('stagger-custom');
+    if (opt.dataset.val === 'custom') {
+      custom.style.display = 'flex'; staggerSecs = -1;
+    } else {
+      custom.style.display = 'none'; staggerSecs = +opt.dataset.val;
+    }
+  });
+});
+
+document.getElementById('auto-rotate-toggle').addEventListener('change', function() {
+  document.getElementById('dwell-wrap').style.display = this.checked ? 'flex' : 'none';
+});
+
+async function launchUrl() {
+  const url = document.getElementById('url-input').value.trim();
+  if (!url) { toast('Paste a web address first', 'err'); return; }
+  let secs = staggerSecs;
+  if (secs === -1) secs = (+document.getElementById('custom-delay').value || 5) * 60;
+  const autoRotate = document.getElementById('auto-rotate-toggle').checked;
+  const dwellSecs  = +document.getElementById('dwell-secs').value || 30;
+  try {
+    await api('/api/open_url', 'POST', { url, stagger_secs: secs, auto_rotate: autoRotate, dwell_secs: dwellSecs });
+    let msg = secs ? 'Opening on each phone, ' + secs + 's apart' : 'Opening on all phones';
+    if (autoRotate) msg += ' · identity rotates after ' + dwellSecs + 's';
+    toast(msg, 'ok');
+  } catch(e) { toast('Could not open URL', 'err'); }
+}
+
+// ── Teach ────────────────────────────────────────────────────────────
+async function teachRecord() {
+  try { await api('/api/teach/start', 'POST'); }
+  catch(e) { toast('Could not start recording', 'err'); }
+}
+async function teachStop() {
+  try { await api('/api/teach/stop', 'POST'); }
+  catch(e) { toast('Could not stop', 'err'); }
+}
+async function teachPlay() {
+  const delay = +document.getElementById('teach-delay').value || 60;
+  try { await api('/api/teach/play', 'POST', { delay_secs: delay }); toast('Playing on all phones…', 'ok'); }
+  catch(e) { toast('Could not play', 'err'); }
+}
+
+function onTeachStatus(msg) {
+  teachFile = msg.file;
+  const s1 = document.getElementById('step-1');
+  const s2 = document.getElementById('step-2');
+  const s3 = document.getElementById('step-3');
+  const btnRec  = document.getElementById('btn-record');
+  const btnStop = document.getElementById('btn-stop-rec');
+  const btnPlay = document.getElementById('btn-play-teach');
+  const dot     = document.getElementById('rec-dot');
+  const statusEl = document.getElementById('teach-status');
+
+  btnRec.disabled  = msg.state !== 'idle';
+  btnStop.disabled = msg.state !== 'recording';
+  btnPlay.disabled = msg.state !== 'idle' || !teachFile;
+
+  s1.className = 'teach-step' + (msg.state !== 'idle' ? ' done' : '');
+  s2.className = 'teach-step' + (msg.state === 'recording' ? ' active' : msg.state !== 'idle' ? ' done' : '');
+  s3.className = 'teach-step' + (msg.state === 'playing' ? ' active' : '');
+
+  dot.style.animation = msg.state === 'recording' ? 'blink .8s ease infinite' : 'none';
+  statusEl.textContent = msg.state === 'recording' ? '● Recording — do your steps on Phone 1'
+    : msg.state === 'playing' ? '▶ Playing on all phones…'
+    : teachFile ? 'Recording ready — tap Play on All Phones' : '';
+}
+
+// ── Tor ──────────────────────────────────────────────────────────────
+async function setupTor() {
+  const btn = document.getElementById('btn-tor');
+  btn.disabled = true;
+  btn.textContent = 'Setting up…';
+  try {
+    await api('/api/proxy/setup', 'POST');
+    toast('Setting up locations for each phone…', 'ok');
+  } catch(e) {
+    toast('Could not set up locations', 'err');
+    btn.disabled = false;
+    btn.textContent = 'Set Up Now';
+  }
+}
+
+// ── Log ───────────────────────────────────────────────────────────────
+function addLog(msg) {
+  const ts = new Date().toLocaleTimeString('en-US', { hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const el  = document.getElementById('log-lines');
+  const row = document.createElement('div');
+  row.className = 'log-line';
+  const tsSpan = document.createElement('span');
+  tsSpan.className = 'log-ts';
+  tsSpan.textContent = ts;
+  const msgSpan = document.createElement('span');
+  msgSpan.className = 'log-msg';
+  msgSpan.textContent = msg;
+  row.appendChild(tsSpan);
+  row.appendChild(msgSpan);
+  el.prepend(row);
+  if (el.children.length > 80) el.lastChild.remove();
+
+  // Mirror to Tor status if it's a location message
+  if (msg.toLowerCase().includes('phone') && msg.toLowerCase().includes('ready')) {
+    const torEl = document.getElementById('tor-status');
+    const torRow = document.createElement('div');
+    torRow.className = 'tor-row';
+    torRow.textContent = msg;
+    torEl.appendChild(torRow);
+  }
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────
+function toast(msg, type = '') {
+  const wrap = document.getElementById('toasts');
+  const el   = document.createElement('div');
+  el.className = 'toast ' + type;
+  const pip = document.createElement('div');
+  pip.className = 'toast-pip';
+  const txt = document.createElement('span');
+  txt.textContent = msg;
+  el.appendChild(pip);
+  el.appendChild(txt);
+  wrap.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+// ── IP ─────────────────────────────────────────────────────────────────
+async function initIp() {
+  const chip = document.getElementById('ip-chip');
+  try {
+    const r = await api('/api/ip');
+    const hp = r.httpPort ?? 8080;
+    chip.textContent = r.ip + ':' + hp;
+    chip.title = 'Tap to copy';
+    chip.addEventListener('click', () => {
+      navigator.clipboard?.writeText(r.url ?? `http://${r.ip}:${hp}`).then(() => toast('Address copied!', 'ok'));
+    });
+  } catch { chip.textContent = location.host; }
+}
+
+// ── Drop zone ──────────────────────────────────────────────────────────
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('click', () => document.getElementById('apk-input').click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', handleDrop);
+
+// ── Button wiring ──────────────────────────────────────────────────────
+document.getElementById('btn-start-all').addEventListener('click', () =>
+  api('/api/devices/refresh','POST').then(() => toast('Scanning for devices…','ok')).catch(() => toast('Error','err')));
+document.getElementById('btn-stop-all').addEventListener('click', () =>
+  api('/api/stop_all','POST').then(() => toast('Stopping all phones')).catch(() => toast('Error','err')));
+
+// Connect device bar
+document.getElementById('btn-connect').addEventListener('click', () => {
+  const bar = document.getElementById('connect-bar');
+  bar.style.display = bar.style.display === 'none' ? 'flex' : 'none';
+});
+document.getElementById('btn-connect-cancel').addEventListener('click', () => {
+  document.getElementById('connect-bar').style.display = 'none';
+});
+document.getElementById('btn-connect-do').addEventListener('click', async () => {
+  const addr = document.getElementById('connect-addr').value.trim();
+  if (!addr) return;
+  try {
+    const r = await api('/api/devices/connect', 'POST', { address: addr });
+    toast('Connected: ' + (r.result || addr), 'ok');
+    document.getElementById('connect-bar').style.display = 'none';
+    document.getElementById('connect-addr').value = '';
+  } catch(e) { toast('Could not connect', 'err'); }
+});
+document.getElementById('connect-addr').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('btn-connect-do').click();
+});
+// ── Groups ────────────────────────────────────────────────────────────────
+let loadedGroups = [];
+
+async function loadGroups() {
+  try {
+    const d = await api('/api/groups/load');
+    loadedGroups = d.groups || [];
+    renderGroups();
+    document.getElementById('btn-groups-run').disabled = loadedGroups.length === 0;
+    toast(`Loaded ${loadedGroups.length} group(s)`, 'ok');
+  } catch(e) { toast('No groups config found — run the Setup Wizard first', 'err'); }
+}
+
+function renderGroups() {
+  const list  = document.getElementById('groups-list');
+  const empty = document.getElementById('groups-empty');
+  list.innerHTML = '';
+  if (!loadedGroups.length) { empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  const COLORS = ['#58a6ff','#3fb950','#d29922','#f85149','#8b949e'];
+  loadedGroups.forEach((g, i) => {
+    const card = document.createElement('div');
+    card.style.cssText = `background:var(--bg3);border-left:3px solid ${COLORS[i%5]};border-radius:4px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:12px`;
+    const info = document.createElement('div');
+    info.innerHTML = `<span style="font-weight:700;color:var(--t1)">${esc(g.name)}</span>
+      <span style="font-size:.72rem;color:var(--t2);margin-left:10px">${(g.phones||[]).length} phone(s) · ${(g.steps||[]).length} steps · repeat ${g.repeat_forever?'forever':g.repeat+'×'} · stagger ${g.stagger_secs}s</span>`;
+    const stopBtn = document.createElement('button');
+    stopBtn.textContent = 'Stop';
+    stopBtn.className = 'btn-r btn-sm';
+    stopBtn.id = `grp-stop-${i}`;
+    stopBtn.disabled = true;
+    stopBtn.onclick = () => api('/api/groups/stop','POST',{name:g.name}).catch(()=>{});
+    card.appendChild(info);
+    card.appendChild(stopBtn);
+    list.appendChild(card);
+  });
+}
+
+async function runAllGroups() {
+  if (!loadedGroups.length) { toast('Load a groups config first','err'); return; }
+  try {
+    await api('/api/groups/run','POST',{groups: loadedGroups});
+    document.getElementById('btn-groups-run').disabled = true;
+    document.getElementById('btn-groups-stop').disabled = false;
+    loadedGroups.forEach((_,i) => {
+      const b = document.getElementById(`grp-stop-${i}`);
+      if (b) b.disabled = false;
+    });
+    toast(`Running ${loadedGroups.length} group(s) in parallel`, 'ok');
+  } catch(e) { toast('Could not start groups','err'); }
+}
+
+async function stopAllGroups() {
+  await api('/api/groups/stop','POST',{}).catch(()=>{});
+  document.getElementById('btn-groups-run').disabled = false;
+  document.getElementById('btn-groups-stop').disabled = true;
+  loadedGroups.forEach((_,i) => {
+    const b = document.getElementById(`grp-stop-${i}`);
+    if (b) b.disabled = true;
+  });
+  toast('Stopping all groups','ok');
+}
+
+function onWsMessage(msg) {
+  if (msg.type === 'groups_status') {
+    const running = msg.running || [];
+    loadedGroups.forEach((g,i) => {
+      const b = document.getElementById(`grp-stop-${i}`);
+      if (b) b.disabled = !running.includes(g.name);
+    });
+    if (!running.length) {
+      document.getElementById('btn-groups-run').disabled = false;
+      document.getElementById('btn-groups-stop').disabled = true;
+    }
+  }
+}
+
+document.getElementById('btn-groups-load').addEventListener('click', loadGroups);
+document.getElementById('btn-groups-run').addEventListener('click', runAllGroups);
+document.getElementById('btn-groups-stop').addEventListener('click', stopAllGroups);
+
+document.getElementById('btn-open-url').addEventListener('click', launchUrl);
+document.getElementById('btn-record').addEventListener('click', teachRecord);
+document.getElementById('btn-stop-rec').addEventListener('click', teachStop);
+document.getElementById('btn-play-teach').addEventListener('click', teachPlay);
+document.getElementById('btn-tor').addEventListener('click', setupTor);
+document.getElementById('btn-tor-off').addEventListener('click', async () => {
+  try {
+    await api('/api/proxy/teardown', 'POST');
+    document.getElementById('tor-status').textContent = '';
+    document.getElementById('btn-tor').disabled = false;
+    document.getElementById('btn-tor').textContent = 'Set Up Now';
+    toast('Turned off', 'ok');
+  } catch(e) { toast('Error turning off', 'err'); }
+});
+document.getElementById('log-clear').addEventListener('click', () =>
+  document.getElementById('log-lines').textContent = '');
+document.getElementById('fab').addEventListener('click', () => {
+  document.getElementById('connect-bar').style.display = 'flex';
+  document.getElementById('connect-addr').focus();
+});
+
+// ── PWA ────────────────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+// ── Boot ────────────────────────────────────────────────────────────────
+(async function boot() {
+  try {
+    const cfg = await api('/api/config');
+    WS_URL = `ws://${location.hostname}:${cfg.wsPort}`;
+  } catch {
+    WS_URL = `ws://${location.hostname}:8081`;
+  }
+  connectWS();
+  initIp();
+  loadServerApks();
+  api('/api/phones').then(d => { if (!phones.length) onPhonesUpdate(d); }).catch(() => {});
+})();
+</script>
+</body>
+</html>

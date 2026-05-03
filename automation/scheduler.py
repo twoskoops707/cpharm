@@ -86,6 +86,17 @@ def _broadcast_from_thread(msg: dict):
 
 
 def _sched_loop(serial: str, steps: list, hits_per_day: int):
+    if hits_per_day <= 0:
+        log.warning(
+            "[scheduler] %s: hits_per_day=%s — nothing to schedule, exiting",
+            _name(serial),
+            hits_per_day,
+        )
+        with _sched_lock:
+            RUNNING.pop(serial, None)
+            SCHEDULER_STEP_OVERRIDE.pop(serial, None)
+        return
+
     log.info("[scheduler] %s started (%s hits/day)", _name(serial), hits_per_day)
     while True:
         with _sched_lock:

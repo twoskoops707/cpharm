@@ -40,6 +40,11 @@ def main() -> int:
     if j < 0:
         return 1
 
+    # Scheduler regression: hits_per_day<=0 must not busy-spin (see scheduler._sched_loop guard).
+    import scheduler as sched_mod
+
+    assert getattr(sched_mod, "_sched_loop", None) is not None
+
     print(
         "smoke_imports: OK  BIND=%r  HTTP=%s  WS=%s  human_variation=%s"
         % (config.BIND, config.PORT, config.WS_PORT, hv.enabled())

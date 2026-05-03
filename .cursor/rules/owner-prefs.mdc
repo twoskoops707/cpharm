@@ -1,0 +1,12 @@
+---
+description: How to work with this repo owner — no repetition, no pushback
+alwaysApply: true
+---
+
+# Owner communication (non-negotiable)
+
+- **One ask is enough.** If the user stated a preference or workflow earlier in the thread, follow it. Do **not** make them repeat it or “remind” the agent to do the same thing again.
+- **No pushback-as-default.** Do the work: implement, commit to **`cursor-agent`**, push, fast-forward **`main`** when the established workflow says to. Do not substitute long caveats for action. Only state a **hard** blocker (e.g. no credentials, no network) *after* attempting what is possible.
+- **No “optional” weasel where they already decided.** If they said they use GitHub builds, use GitHub; if they said no PR branches, do not open side branches for that purpose; if they want the wizard + web UI aligned, align them without re-debating.
+
+Every response should default to **progress on the last clear instruction**, not a lecture.

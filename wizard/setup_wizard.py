@@ -41,6 +41,7 @@ from tkinter import ttk, messagebox, filedialog
 
 from wizard_theme import (
     ACCENT,
+    ACCENT_DIM,
     BG,
     BG2,
     BG3,

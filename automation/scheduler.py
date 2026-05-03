@@ -1,6 +1,11 @@
 """
 CPharm Scheduler — daily hit quota per phone with random fire-times.
-Per-phone: given hits_per_day, generates N fire-times spread randomly across 24h and executes the sequence.
+
+Per-phone: given ``hits_per_day``, generates ``N`` fire-times spread across the
+local day using a **stable** RNG per (serial, local day index, quota) so
+restarts do not reshuffle today's schedule. Between automation steps, gaps come
+from :mod:`human_variation` when enabled; after each scheduled run, a bounded
+random pause reduces perfectly periodic spacing.
 """
 import asyncio
 import datetime
@@ -40,9 +45,10 @@ def _name(serial: str) -> str:
         return serial
 
 
-def _gen_today(hits: int) -> list:
+def _gen_today(hits: int, rng: random.Random) -> list:
+    """Return sorted epoch fire-times from local midnight, spread via ``rng``."""
     mn = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-    offsets = sorted(random.uniform(0, 86400) for _ in range(hits))
+    offsets = sorted(rng.uniform(0, 86400) for _ in range(hits))
     return [mn + o for o in offsets]
 
 
@@ -71,7 +77,7 @@ def _run_steps(serial: str, steps: list, variation_cycle: int = 0):
         if rng is not None:
             _time.sleep(hv.step_gap_seconds(rng))
         else:
-            _time.sleep(random.uniform(0.35, 0.55))
+            _time.sleep(random.uniform(hv.FALLBACK_STEP_GAP_MIN, hv.FALLBACK_STEP_GAP_MAX))
 
 
 def _broadcast_from_thread(msg: dict):
@@ -93,7 +99,9 @@ def _sched_loop(serial: str, steps: list, hits_per_day: int):
         mn_today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
 
         if not times or (times and times[0] < mn_today):
-            new_times = _gen_today(hits_per_day)
+            day_index = int(mn_today // 86400)
+            sched_rng = hv.schedule_rng(serial, day_index, hits_per_day)
+            new_times = _gen_today(hits_per_day, sched_rng)
             with _sched_lock:
                 PHONE_SCHED[serial] = {"hits": hits_per_day, "times": new_times, "idx": 0}
             log.info("[scheduler] %s new day schedule: %s hits", _name(serial), len(new_times))
@@ -104,7 +112,8 @@ def _sched_loop(serial: str, steps: list, hits_per_day: int):
 
         if idx >= len(times):
             _broadcast_from_thread({"type": "scheduler_done_today", "serial": serial})
-            _time.sleep(random.uniform(60, 300))
+            srng = hv.schedule_rng(serial, int(mn_today // 86400), hits_per_day)
+            _time.sleep(srng.uniform(hv.POST_DAY_IDLE_MIN_SEC, hv.POST_DAY_IDLE_MAX_SEC))
             continue
 
         wait = times[idx] - now
@@ -122,7 +131,11 @@ def _sched_loop(serial: str, steps: list, hits_per_day: int):
         with _sched_lock:
             if serial in PHONE_SCHED:
                 PHONE_SCHED[serial]["idx"] = idx + 1
-        _time.sleep(1)
+        if hv.enabled():
+            _gap_rng = hv.rng_for_run(serial, day_o * 100_000 + idx)
+            _time.sleep(hv.inter_scheduled_hit_seconds(_gap_rng))
+        else:
+            _time.sleep(random.uniform(hv.INTER_SCHEDULED_HIT_MIN, hv.INTER_SCHEDULED_HIT_MAX))
 
     with _sched_lock:
         RUNNING.pop(serial, None)
@@ -149,9 +162,11 @@ async def handle_scheduler(path: str, body_bytes: bytes, method: str = "POST"):
             hits = max(0, min(int(data.get("hits_per_day", DEFAULT_HITS_PER_DAY)), 1440))
         except (TypeError, ValueError):
             return dashboard.json_err("hits_per_day must be an integer")
+        mn_local = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        day_index = int(mn_local // 86400)
         result = {}
         for s in serials:
-            times = _gen_today(hits)
+            times = _gen_today(hits, hv.schedule_rng(s, day_index, hits))
             with _sched_lock:
                 PHONE_SCHED[s] = {"hits": hits, "times": times, "idx": 0}
             result[s] = [datetime.datetime.fromtimestamp(t).strftime("%H:%M") for t in times[:12]]

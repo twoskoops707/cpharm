@@ -517,6 +517,12 @@ button:disabled{opacity:.38;cursor:not-allowed;transform:none!important}
 }
 
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+
+.stage-foot{
+  margin-top:28px;padding-top:16px;border-top:1px solid var(--border);
+  font-family:var(--font-mono);font-size:.62rem;color:var(--muted);
+  letter-spacing:.04em;line-height:1.5;
+}
 </style>
 </head>
 <body>
@@ -741,6 +747,8 @@ button:disabled{opacity:.38;cursor:not-allowed;transform:none!important}
   </div>
   <div id="log-lines"></div>
 </div>
+
+<footer class="stage-foot" id="stage-foot" aria-label="Host"><span id="host-meta">CPharm · …</span></footer>
 
 </div><!-- stage -->
 </div><!-- layout -->
@@ -1343,6 +1351,12 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
   try {
     const cfg = await api('/api/config');
     WS_URL = `ws://${location.hostname}:${cfg.wsPort}`;
+    const hm = document.getElementById('host-meta');
+    if (hm) {
+      const nm = cfg.appName || 'CPharm';
+      const bd = cfg.bind != null ? cfg.bind : '127.0.0.1';
+      hm.textContent = `${nm} · HTTP ${cfg.httpPort} · WS ${cfg.wsPort} · bind ${bd}`;
+    }
   } catch {
     WS_URL = `ws://${location.hostname}:8081`;
   }

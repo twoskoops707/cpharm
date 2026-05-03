@@ -1,8 +1,12 @@
 import os
 from pathlib import Path
 
-PORT    = 8080
-WS_PORT = 8081
+PORT = int(os.environ.get("CPHARM_PORT", "8080"))
+WS_PORT = int(os.environ.get("CPHARM_WS_PORT", str(PORT + 1)))
+
+# Listen address for HTTP + WebSocket (127.0.0.1 default). Use 0.0.0.0 for LAN phones — firewall permitting.
+_BIND_RAW = os.environ.get("CPHARM_BIND") or os.environ.get("CPHARM_HOST") or "127.0.0.1"
+BIND = _BIND_RAW.strip() or "127.0.0.1"
 APK_DIR = Path(__file__).parent.parent / "apks"
 REC_DIR = Path(__file__).parent / "recordings"
 TOR_DIR = Path(__file__).parent / "tor"

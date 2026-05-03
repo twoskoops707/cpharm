@@ -29,6 +29,7 @@ from wizard.wizard_theme import (
     BG4,
     BORDER,
     GREEN,
+    ON_ACCENT,
     RED,
     T1 as _WT1,
     T2 as _WT2,
@@ -67,13 +68,14 @@ BG1 = BG2
 BG2 = BG3
 BG3 = BG4
 BD  = BORDER
-T0  = _WT1
+T0  = _WT1  # wizard T1 — primary text on dark surfaces
 T1  = _WT2
 T2  = _WT3
 B_HOVER = ACCENT_DIM
 Y_HOVER = "#d97706"
 R_HOVER = "#ef4444"
 R_HOVER_DARK = "#b91c1c"
+# Text on saturated buttons (green/yellow): ON_ACCENT; on accent/red/blue fills: T0
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -391,7 +393,7 @@ class PhoneControlDialog(ctk.CTkToplevel):
         self._section(tab, "SCREEN")
         row3 = ctk.CTkFrame(tab, fg_color="transparent")
         row3.pack(pady=4)
-        self._abtn(row3, "📷 Screenshot", self._screenshot, fg=B, hover=B_HOVER, tc="#fff").pack(side="left", padx=4)
+        self._abtn(row3, "📷 Screenshot", self._screenshot, fg=B, hover=B_HOVER, tc=T0).pack(side="left", padx=4)
         self._abtn(row3, "🔒 Lock Screen", lambda: self._keyevent("Power"), fg=BG3).pack(side="left", padx=4)
         self._abtn(row3, "💡 Wake Screen",
                    lambda: (self._keyevent("Power"), time.sleep(0.3), self._swipe_cmd(300, 800, 300, 300)),
@@ -404,7 +406,7 @@ class PhoneControlDialog(ctk.CTkToplevel):
                                          font=ctk.CTkFont("Segoe UI", 12),
                                          placeholder_text="Text to type…", height=34)
         self._type_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        self._abtn(txt_f, "Send", self._send_text, fg=G, hover=G2, tc="#000", w=70).pack(side="left")
+        self._abtn(txt_f, "Send", self._send_text, fg=G, hover=G2, tc=ON_ACCENT, w=70).pack(side="left")
 
     # ─── Tap & Swipe tab ──────────────────────────────────────────────────────
     def _build_tap_swipe(self, tab):
@@ -419,7 +421,7 @@ class PhoneControlDialog(ctk.CTkToplevel):
         label(tf, "Y:", size=11, color=T1).pack(side="left", padx=(12,0))
         self._tap_y = self._coord_entry(tf)
         self._tap_y.pack(side="left", padx=4)
-        self._abtn(tf, "Tap ✦", self._do_tap, fg=G, hover=G2, tc="#000", w=80).pack(side="left", padx=(16,0))
+        self._abtn(tf, "Tap ✦", self._do_tap, fg=G, hover=G2, tc=ON_ACCENT, w=80).pack(side="left", padx=(16,0))
 
         self._section(tab, "SWIPE")
         sw_f = ctk.CTkFrame(tab, fg_color=BG2, corner_radius=8)
@@ -432,7 +434,7 @@ class PhoneControlDialog(ctk.CTkToplevel):
         label(swf, "→ To:", size=11, color=T1).pack(side="left", padx=(8,0))
         self._sw_x2 = self._coord_entry(swf); self._sw_x2.pack(side="left", padx=2)
         self._sw_y2 = self._coord_entry(swf); self._sw_y2.pack(side="left", padx=2)
-        self._abtn(swf, "Swipe", self._do_swipe, fg=B, hover=B_HOVER, tc="#fff", w=70).pack(side="left", padx=(12,0))
+        self._abtn(swf, "Swipe", self._do_swipe, fg=B, hover=B_HOVER, tc=T0, w=70).pack(side="left", padx=(12,0))
 
         self._section(tab, "SWIPE PRESETS")
         pre_f = ctk.CTkFrame(tab, fg_color="transparent")
@@ -456,7 +458,7 @@ class PhoneControlDialog(ctk.CTkToplevel):
         self._lp_y = self._coord_entry(lp_f); self._lp_y.pack(side="left", padx=4)
         label(lp_f, "ms:", size=11, color=T1).pack(side="left", padx=(8,0))
         self._lp_dur = self._coord_entry(lp_f, w=60, default="1000"); self._lp_dur.pack(side="left", padx=4)
-        self._abtn(lp_f, "Long Press", self._do_long_press, fg=Y, hover=Y_HOVER, tc="#000", w=90).pack(side="left", padx=(12,0))
+        self._abtn(lp_f, "Long Press", self._do_long_press, fg=Y, hover=Y_HOVER, tc=ON_ACCENT, w=90).pack(side="left", padx=(12,0))
 
     # ─── App Control tab ──────────────────────────────────────────────────────
     def _build_app_control(self, tab):
@@ -485,15 +487,15 @@ class PhoneControlDialog(ctk.CTkToplevel):
         self._section(tab, "APP ACTIONS")
         row1 = ctk.CTkFrame(tab, fg_color="transparent")
         row1.pack(pady=4)
-        self._abtn(row1, "▶ Launch App",   self._launch_app,  fg=G,   hover=G2,       tc="#000", w=110, bold=True).pack(side="left", padx=4)
-        self._abtn(row1, "⏹ Force Stop",   self._force_stop,  fg=R,   hover=R_HOVER, tc="#fff", w=110, bold=True).pack(side="left", padx=4)
+        self._abtn(row1, "▶ Launch App",   self._launch_app,  fg=G,   hover=G2,       tc=ON_ACCENT, w=110, bold=True).pack(side="left", padx=4)
+        self._abtn(row1, "⏹ Force Stop",   self._force_stop,  fg=R,   hover=R_HOVER, tc=T0, w=110, bold=True).pack(side="left", padx=4)
         self._abtn(row1, "↩ Restart App",  self._restart_app, fg=BG3, hover=BD,        tc=T0,    w=110).pack(side="left", padx=4)
 
         row2 = ctk.CTkFrame(tab, fg_color="transparent")
         row2.pack(pady=4)
-        self._abtn(row2, "🗑 Clear Cache",  self._clear_cache, fg=Y,   hover=Y_HOVER, tc="#000", w=120).pack(side="left", padx=4)
-        self._abtn(row2, "🗑 Clear Data",   self._clear_data,  fg=R,   hover=R_HOVER, tc="#fff", w=120).pack(side="left", padx=4)
-        self._abtn(row2, "🗑 Cache + Data", self._clear_all,   fg=R,   hover=R_HOVER_DARK, tc="#fff", w=120, bold=True).pack(side="left", padx=4)
+        self._abtn(row2, "🗑 Clear Cache",  self._clear_cache, fg=Y,   hover=Y_HOVER, tc=ON_ACCENT, w=120).pack(side="left", padx=4)
+        self._abtn(row2, "🗑 Clear Data",   self._clear_data,  fg=R,   hover=R_HOVER, tc=T0, w=120).pack(side="left", padx=4)
+        self._abtn(row2, "🗑 Cache + Data", self._clear_all,   fg=R,   hover=R_HOVER_DARK, tc=T0, w=120, bold=True).pack(side="left", padx=4)
 
         row3 = ctk.CTkFrame(tab, fg_color="transparent")
         row3.pack(pady=4)
@@ -506,7 +508,7 @@ class PhoneControlDialog(ctk.CTkToplevel):
         self._apk_lbl2 = label(apk_f, "no apk selected", size=10, color=T2, mono=True)
         self._apk_lbl2.pack(side="left", fill="x", expand=True)
         self._abtn(apk_f, "Browse", self._pick_apk2, fg=BG3, w=80).pack(side="right", padx=(8,0))
-        self._abtn(apk_f, "Install", self._install_apk2, fg=B, hover=B_HOVER, tc="#fff", w=80).pack(side="right", padx=4)
+        self._abtn(apk_f, "Install", self._install_apk2, fg=B, hover=B_HOVER, tc=T0, w=80).pack(side="right", padx=4)
         self._apk2_path = None
 
     # ─── System tab ──────────────────────────────────────────────────────────
@@ -514,16 +516,16 @@ class PhoneControlDialog(ctk.CTkToplevel):
         self._section(tab, "PHONE CONTROL")
         row1 = ctk.CTkFrame(tab, fg_color="transparent")
         row1.pack(pady=6)
-        self._abtn(row1, "↺ Restart Phone",  self._restart_phone, fg=Y,   hover=Y_HOVER, tc="#000", w=130, bold=True).pack(side="left", padx=4)
+        self._abtn(row1, "↺ Restart Phone",  self._restart_phone, fg=Y,   hover=Y_HOVER, tc=ON_ACCENT, w=130, bold=True).pack(side="left", padx=4)
         self._abtn(row1, "⚙ Settings",        lambda: self._am_start("android.settings.SETTINGS"), fg=BG3, w=110).pack(side="left", padx=4)
         self._abtn(row1, "🏠 Home Screen",     lambda: self._keyevent("Home"), fg=BG3, w=110).pack(side="left", padx=4)
 
         self._section(tab, "CONNECTIVITY")
         row2 = ctk.CTkFrame(tab, fg_color="transparent")
         row2.pack(pady=4)
-        self._abtn(row2, "WiFi ON",      lambda: self._run_cmd("svc wifi enable"),   fg=G,   hover=G2,       tc="#000", w=100).pack(side="left", padx=4)
+        self._abtn(row2, "WiFi ON",      lambda: self._run_cmd("svc wifi enable"),   fg=G,   hover=G2,       tc=ON_ACCENT, w=100).pack(side="left", padx=4)
         self._abtn(row2, "WiFi OFF",     lambda: self._run_cmd("svc wifi disable"),  fg=BG3, hover=BD,       tc=T0,    w=100).pack(side="left", padx=4)
-        self._abtn(row2, "Data ON",      lambda: self._run_cmd("svc data enable"),   fg=G,   hover=G2,       tc="#000", w=100).pack(side="left", padx=4)
+        self._abtn(row2, "Data ON",      lambda: self._run_cmd("svc data enable"),   fg=G,   hover=G2,       tc=ON_ACCENT, w=100).pack(side="left", padx=4)
         self._abtn(row2, "Data OFF",     lambda: self._run_cmd("svc data disable"),  fg=BG3, hover=BD,       tc=T0,    w=100).pack(side="left", padx=4)
 
         row3 = ctk.CTkFrame(tab, fg_color="transparent")
@@ -552,7 +554,7 @@ class PhoneControlDialog(ctk.CTkToplevel):
         self._section(tab, "RESET")
         row6 = ctk.CTkFrame(tab, fg_color="transparent")
         row6.pack(pady=4)
-        self._abtn(row6, "Clear ALL App Caches",  self._clear_all_caches,  fg=Y, hover=Y_HOVER, tc="#000", w=160).pack(side="left", padx=4)
+        self._abtn(row6, "Clear ALL App Caches",  self._clear_all_caches,  fg=Y, hover=Y_HOVER, tc=ON_ACCENT, w=160).pack(side="left", padx=4)
         self._abtn(row6, "Kill Background Apps",  self._kill_bg_apps,      fg=BG3, w=150).pack(side="left", padx=4)
 
     # ─── Sequences tab ────────────────────────────────────────────────────────
@@ -568,7 +570,7 @@ class PhoneControlDialog(ctk.CTkToplevel):
                      text_color=R).pack(side="left")
         btn(lf, "Open Live Recorder",
             lambda: LiveRecordDialog(self, self._phone),
-            fg=R, hover=R_HOVER, tc="#fff", width=160, height=32, bold=True).pack(side="right")
+            fg=R, hover=R_HOVER, tc=T0, width=160, height=32, bold=True).pack(side="right")
         ctk.CTkLabel(live_f,
                      text="  Watch mode: interact with the LDPlayer window and every tap,\n"
                           "  swipe, and button press is captured automatically.",
@@ -588,7 +590,7 @@ class PhoneControlDialog(ctk.CTkToplevel):
                                        placeholder_text="my_sequence", height=30, width=140)
         self._seq_name.pack(side="left", padx=8)
         self._rec_btn = btn(rf, "⏺ Start Recording", self._toggle_recording,
-                             fg=R, hover=R_HOVER, tc="#fff", width=150, height=30)
+                             fg=R, hover=R_HOVER, tc=T0, width=150, height=30)
         self._rec_btn.pack(side="left", padx=4)
         self._rec_count = label(rf, "0 steps", size=10, color=T2, mono=True)
         self._rec_count.pack(side="left", padx=8)
@@ -611,14 +613,14 @@ class PhoneControlDialog(ctk.CTkToplevel):
         label(steps_row2, "Y:", size=10, color=T1).pack(side="left")
         self._rsy = self._coord_entry(steps_row2); self._rsy.pack(side="left", padx=2)
         self._abtn(steps_row2, "+ Tap", lambda: self._record_step({"type": "tap", "x": self._rsx.get(), "y": self._rsy.get()}),
-                   fg=G, hover=G2, tc="#000", w=70).pack(side="left", padx=6)
+                   fg=G, hover=G2, tc=ON_ACCENT, w=70).pack(side="left", padx=6)
 
         steps_row3 = ctk.CTkFrame(quick_f, fg_color="transparent")
         steps_row3.pack(pady=2)
         label(steps_row3, "Wait (s):", size=10, color=T1).pack(side="left")
         self._rwait = self._coord_entry(steps_row3, w=60, default="1"); self._rwait.pack(side="left", padx=4)
         self._abtn(steps_row3, "+ Wait", lambda: self._record_step({"type": "wait", "seconds": self._rwait.get()}),
-                   fg=Y, hover=Y_HOVER, tc="#000", w=70).pack(side="left", padx=4)
+                   fg=Y, hover=Y_HOVER, tc=ON_ACCENT, w=70).pack(side="left", padx=4)
         self._abtn(steps_row3, "+ Clear Cache", lambda: self._record_step({"type": "clear_cache", "pkg": self._pkg.get()}),
                    fg=BG3, w=110).pack(side="left", padx=4)
         self._abtn(steps_row3, "+ Clear Data", lambda: self._record_step({"type": "clear_data", "pkg": self._pkg.get()}),
@@ -645,10 +647,10 @@ class PhoneControlDialog(ctk.CTkToplevel):
         seq_run_f = ctk.CTkFrame(tab, fg_color="transparent")
         seq_run_f.pack(pady=6)
         self._run_seq_btn = btn(seq_run_f, "▶ Run on This Phone", self._run_sequence,
-                                 fg=G, hover=G2, tc="#000", width=160, bold=True)
+                                 fg=G, hover=G2, tc=ON_ACCENT, width=160, bold=True)
         self._run_seq_btn.pack(side="left", padx=4)
         btn(seq_run_f, "▶▶ Run on ALL Phones", self._run_sequence_all,
-            fg=B, hover=B_HOVER, tc="#fff", width=160).pack(side="left", padx=4)
+            fg=B, hover=B_HOVER, tc=T0, width=160).pack(side="left", padx=4)
         btn(seq_run_f, "🗑 Delete", self._delete_sequence,
             fg=BG3, hover=BD, tc=R, width=80).pack(side="left", padx=4)
 
@@ -870,7 +872,7 @@ class PhoneControlDialog(ctk.CTkToplevel):
         if not self._seq_recording:
             self._seq_recording = True
             self._rec_steps = []
-            self._rec_btn.configure(text="⏹ Stop Recording", fg_color=Y, text_color="#000")
+            self._rec_btn.configure(text="⏹ Stop Recording", fg_color=Y, text_color=ON_ACCENT)
             self._out("Recording started — add steps above")
         else:
             self._seq_recording = False
@@ -882,7 +884,7 @@ class PhoneControlDialog(ctk.CTkToplevel):
                 self._seq_om_var.set(name)
                 self._out(f"✓ Saved '{name}' ({len(self._rec_steps)} steps)")
                 log(f"Sequence saved: '{name}' with {len(self._rec_steps)} steps")
-            self._rec_btn.configure(text="⏺ Start Recording", fg_color=R, text_color="#fff")
+            self._rec_btn.configure(text="⏺ Start Recording", fg_color=R, text_color=T0)
 
     def _record_step(self, step: dict):
         if not self._seq_recording:
@@ -997,14 +999,14 @@ class PhoneFrame(ctk.CTkFrame):
 
         # Screen
         sx, sy, sw, sh = 14, 30, W-28, H-70
-        screen_bg = BG0 if self._running else "#0a0e13"
+        screen_bg = BG0 if self._running else BG1
         c.create_rectangle(sx, sy, sx+sw, sy+sh, fill=screen_bg, outline=BD)
 
         if self._running:
-            c.create_rectangle(sx, sy, sx+sw, sy+14, fill="#0d1117", outline="")
+            c.create_rectangle(sx, sy, sx+sw, sy+14, fill=BG1, outline="")
             c.create_text(sx+sw-6, sy+7, text="●", fill=G, font=("Courier New", 7), anchor="e")
             c.create_rectangle(sx+4, sy+18, sx+sw-4, sy+sh-4,
-                                fill="#0c4a6e28", outline=f"{G}44")
+                                fill=f"{ACCENT}28", outline=f"{G}44")
             c.create_text(sx+sw//2, sy+sh//2-8, text="[ C·PHARM ]",
                           fill=G, font=("Courier New", 9, "bold"))
             c.create_text(sx+sw//2, sy+sh//2+8, text="RUNNING",
@@ -1083,7 +1085,7 @@ class MasterPanel(ctk.CTkFrame):
         btn(inner, "⚙  Apply", self._apply_master,
             fg=BG3, hover=BD, tc=T0, width=90).pack(side="left", padx=(0, 6))
         btn(inner, "▶  Launch Master", self._launch_master,
-            fg=G, hover=G2, tc="#000", width=148, bold=True).pack(side="left")
+            fg=G, hover=G2, tc=ON_ACCENT, width=148, bold=True).pack(side="left")
 
     def _build_settings(self, p):
         # ── DISPLAY ──
@@ -1351,15 +1353,15 @@ class FarmPanel(ctk.CTkFrame):
         self._clone_n.insert(0, "1")
         self._clone_n.pack(side="left", padx=6)
         btn(cf, "Clone ＋", self._clone_phones,
-            fg=G, hover=G2, tc="#000", width=84, bold=True).pack(side="left", padx=(0, 12))
+            fg=G, hover=G2, tc=ON_ACCENT, width=84, bold=True).pack(side="left", padx=(0, 12))
 
         separator_v = ctk.CTkFrame(cf, width=1, fg_color=BD, corner_radius=0)
         separator_v.pack(side="left", fill="y", padx=6)
 
         btn(cf, "▶ All", lambda: self._app._run_bg(self._app._start_all),
-            fg=G, hover=G2, tc="#000", width=68, bold=True).pack(side="left", padx=(6, 4))
+            fg=G, hover=G2, tc=ON_ACCENT, width=68, bold=True).pack(side="left", padx=(6, 4))
         btn(cf, "■ All", lambda: self._app._run_bg(self._app._stop_all),
-            fg=R, hover=R_HOVER, tc="#fff", width=66, bold=True).pack(side="left", padx=(0, 4))
+            fg=R, hover=R_HOVER, tc=T0, width=66, bold=True).pack(side="left", padx=(0, 4))
         btn(cf, "↺ Restart", lambda: self._app._run_bg(self._app._restart_all),
             fg=BG3, hover=BD, tc=T0, width=82).pack(side="left")
 
@@ -1485,13 +1487,13 @@ class FarmPanel(ctk.CTkFrame):
                               self._app._run_bg(lambda: self._app._toggle_phone(i, r)),
                           fg=R if running else G,
                           hover=R_HOVER if running else G2,
-                          tc="#fff" if running else "#000",
+                          tc=T0 if running else ON_ACCENT,
                           width=62, height=26, bold=True)
         toggle_btn.pack(side="left", padx=(0, 4))
         card._btn = toggle_btn
 
         btn(bf, "⊞ Control", lambda i=phone["index"], p=phone: self._open_control(p),
-            fg=B, hover=B_HOVER, tc="#fff", width=88, height=26, bold=True).pack(side="left", padx=(0, 4))
+            fg=B, hover=B_HOVER, tc=T0, width=88, height=26, bold=True).pack(side="left", padx=(0, 4))
 
         btn(bf, "⌘", lambda i=phone["index"]: self._app._run_bg(lambda: self._do_screenshot(i)),
             fg=BG3, hover=BD, tc=T1, width=30, height=26).pack(side="left", padx=(0, 4))
@@ -1522,7 +1524,7 @@ class FarmPanel(ctk.CTkFrame):
             text="Stop" if running else "Start",
             fg_color=R if running else G,
             hover_color=R_HOVER if running else G2,
-            text_color="#fff" if running else "#000",
+            text_color=T0 if running else ON_ACCENT,
             command=lambda i=phone["index"], r=running:
                 self._app._run_bg(lambda: self._app._toggle_phone(i, r))
         )
@@ -1631,7 +1633,7 @@ class CPharmApp(ctk.CTk):
     # ── UI ─────────────────────────────────────────────────────────────────────
     def _build_ui(self):
         # Top bar
-        bar = ctk.CTkFrame(self, fg_color="#050709", corner_radius=0, height=48)
+        bar = ctk.CTkFrame(self, fg_color=BG0, corner_radius=0, height=48)
         bar.pack(fill="x")
         bar.pack_propagate(False)
         label(bar, "  [ C·PHARM ]", size=14, weight="bold", color=G, mono=True).pack(side="left", pady=12)
@@ -1679,7 +1681,7 @@ class CPharmApp(ctk.CTk):
 
         # Status bar
         separator(self, BD).pack(fill="x")
-        foot = ctk.CTkFrame(self, fg_color="#050709", corner_radius=0, height=26)
+        foot = ctk.CTkFrame(self, fg_color=BG0, corner_radius=0, height=26)
         foot.pack(fill="x")
         foot.pack_propagate(False)
         self._status = label(foot, "Ready", size=10, color=T2, mono=True)
@@ -1970,7 +1972,7 @@ class LiveRecordDialog(ctk.CTkToplevel):
         btn_f = ctk.CTkFrame(self, fg_color="transparent")
         btn_f.pack(pady=8)
         self._start_btn = btn(btn_f, "▶  Start Recording", self._toggle_recording,
-                               fg=G, hover=G2, tc="#000", width=180, height=42, bold=True)
+                               fg=G, hover=G2, tc=ON_ACCENT, width=180, height=42, bold=True)
         self._start_btn.pack(side="left", padx=6)
         btn(btn_f, "✕  Cancel", self._on_close,
             fg=BG3, hover=BD, tc=T1, width=100, height=42).pack(side="left", padx=6)
@@ -2012,7 +2014,7 @@ class LiveRecordDialog(ctk.CTkToplevel):
 
         self._rec_dot.configure(text_color=R)
         self._start_btn.configure(text="⏹  Stop & Save",
-                                   fg_color=Y, hover_color=Y_HOVER, text_color="#000")
+                                   fg_color=Y, hover_color=Y_HOVER, text_color=ON_ACCENT)
         self._count_lbl.configure(text="0 actions recorded", text_color=G)
 
         # Start listeners
@@ -2041,7 +2043,7 @@ class LiveRecordDialog(ctk.CTkToplevel):
 
         self._rec_dot.configure(text_color=T2)
         self._start_btn.configure(text="▶  Start Recording",
-                                   fg_color=G, hover_color=G2, text_color="#000")
+                                   fg_color=G, hover_color=G2, text_color=ON_ACCENT)
 
         if not self._steps:
             self._set_status("Nothing recorded.", T2)
@@ -2294,7 +2296,7 @@ class SetupWizard(ctk.CTkToplevel):
         self._body_lbl.pack(padx=32, pady=16, fill="x")
 
         # Action link button (optional)
-        self._action_btn = btn(self, "", lambda: None, fg=B, hover=B_HOVER, tc="#fff",
+        self._action_btn = btn(self, "", lambda: None, fg=B, hover=B_HOVER, tc=T0,
                                 width=200, height=34)
         self._action_btn.pack(pady=(0, 8))
         self._action_btn.pack_forget()
@@ -2309,7 +2311,7 @@ class SetupWizard(ctk.CTkToplevel):
         self._back_btn = btn(nf, "← Back", self._back, fg=BG3, hover=BD, tc=T1, width=90)
         self._back_btn.pack(side="left")
 
-        self._next_btn = btn(nf, "Next →", self._next, fg=G, hover=G2, tc="#000",
+        self._next_btn = btn(nf, "Next →", self._next, fg=G, hover=G2, tc=ON_ACCENT,
                               width=110, bold=True)
         self._next_btn.pack(side="right")
 

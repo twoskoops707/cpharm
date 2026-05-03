@@ -183,7 +183,8 @@ def leave_review(
     time.sleep(1)
 
     if on_log:
-        on_log(f"{serial}: review submitted ({stars} star)")
+        label = "star" if stars == 1 else "stars"
+        on_log(f"{serial}: review submitted ({stars} {label})")
     return True
 
 
@@ -200,7 +201,8 @@ def run_full_sequence(
     """
     Run the full Play Store sequence on each phone, staggered by delay_secs.
     Sequence per phone: search -> open page -> install -> launch -> review.
-    phones: list of dicts with at least {"serial": str, "name": str, "running": bool}
+    phones: list of dicts with at least {"serial": str, "name": str, "running": bool}.
+    on_complete runs after all phones finish (including when none are running).
     """
     def run():
         running = [p for p in phones if p.get("running")]

@@ -46,6 +46,9 @@ from wizard_theme import (
     BG2,
     BG3,
     BG4,
+    BG_LOG_ROW,
+    BG_MUMU,
+    BLACK,
     BORDER,
     BORDER_STRONG,
     CPharm_TSCROLL,
@@ -58,9 +61,11 @@ from wizard_theme import (
     FONT_EYEBROW,
     FONT_H2,
     GREEN,
+    GREEN_ACTIVE,
     RADIUS,
     ON_ACCENT,
     PURPLE,
+    PURPLE_ACTIVE,
     RED,
     SP,
     T1,
@@ -462,7 +467,7 @@ class PerPhoneSequenceEditor(tk.Toplevel):
                           relief="flat", cursor="hand2",
                           padx=10, pady=6, bd=0, highlightthickness=0)
             if color == GREEN:
-                b.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+                b.configure(activebackground=GREEN_ACTIVE, activeforeground=ON_ACCENT)
             elif color == RED:
                 style_danger_button(b)
             else:
@@ -487,7 +492,7 @@ class PerPhoneSequenceEditor(tk.Toplevel):
                          bg=GREEN, fg=ON_ACCENT, relief="flat",
                          cursor="hand2", command=self.destroy,
                          padx=16, pady=8, bd=0, highlightthickness=0)
-        done.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+        done.configure(activebackground=GREEN_ACTIVE, activeforeground=ON_ACCENT)
         done.pack(side="right")
 
         self._refresh()
@@ -2756,16 +2761,16 @@ class PageBase(tk.Frame):
         elif color == RED:
             style_danger_button(b)
         elif color == GREEN:
-            b.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+            b.configure(activebackground=GREEN_ACTIVE, activeforeground=ON_ACCENT)
         elif color == PURPLE:
-            b.configure(activebackground="#8b5cf6", activeforeground=ON_ACCENT)
+            b.configure(activebackground=PURPLE_ACTIVE, activeforeground=ON_ACCENT)
         b.pack(side=side, padx=(0, 8))
         return b
 
     def code_row(self, parent, text):
-        row = tk.Frame(parent, bg="#000c1a", padx=10, pady=8)
+        row = tk.Frame(parent, bg=BG_LOG_ROW, padx=10, pady=8)
         row.pack(fill="x", pady=(4, 0))
-        tk.Label(row, text=text, font=FM, bg="#000c1a", fg=GREEN,
+        tk.Label(row, text=text, font=FM, bg=BG_LOG_ROW, fg=GREEN,
                  anchor="w").pack(side="left", fill="x", expand=True)
         tk.Button(row, text="Copy", font=FS, bg=BG3, fg=T1,
                   relief="flat", cursor="hand2", padx=8,
@@ -3048,7 +3053,7 @@ class PrerequisitesPage(PageBase):
             ib_kw["image"] = dl_icon
             ib_kw["compound"] = "left"
         self._install_btn = tk.Button(self, **ib_kw)
-        self._install_btn.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+        self._install_btn.configure(activebackground=GREEN_ACTIVE, activeforeground=ON_ACCENT)
         self._install_btn.pack(fill="x", pady=(0, 8))
 
         # ── progress ──────────────────────────────────────────────────────────
@@ -3184,7 +3189,7 @@ class PrerequisitesPage(PageBase):
             self,
             text="☕  Download Java for Windows ARM64  (opens browser)",
             font=("Segoe UI", 11, "bold"),
-            bg=YELLOW, fg="#000000",
+            bg=YELLOW, fg=BLACK,
             relief="flat", cursor="hand2",
             padx=16, pady=10,
             command=lambda: webbrowser.open(JAVA_DOWNLOAD_URL),
@@ -3637,7 +3642,7 @@ class AndroidStudioPage(PageBase):
             self,
             text="Install Android SDK",
             font=("Segoe UI", 14, "bold"),
-            bg=GREEN, fg="#000000",
+            bg=GREEN, fg=BLACK,
             relief="flat", cursor="hand2",
             padx=24, pady=14,
             command=self._auto_install,
@@ -3666,20 +3671,20 @@ class AndroidStudioPage(PageBase):
         if IS_WIN and "arm64" in _machine_arch():
             mumu_sep = tk.Frame(self, bg=BORDER, height=1)
             mumu_sep.pack(fill="x", pady=(8, 6))
-            mumu_card = tk.Frame(self, bg="#1a2a1a", padx=14, pady=12,
+            mumu_card = tk.Frame(self, bg=BG_MUMU, padx=14, pady=12,
                                  highlightthickness=1, highlightbackground=GREEN)
             mumu_card.pack(fill="x", pady=(0, 8))
             tk.Label(mumu_card,
                      text="ARM64 Windows: use MuMuPlayer instead of Android SDK",
-                     font=("Segoe UI", 11, "bold"), bg="#1a2a1a", fg=GREEN,
+                     font=("Segoe UI", 11, "bold"), bg=BG_MUMU, fg=GREEN,
                      anchor="w").pack(fill="x")
             tk.Label(mumu_card,
                      text="Google does NOT publish a Windows ARM64 emulator.\n"
                           "MuMuPlayer ARM is the only solution — native ARM64, multi-instance, full ADB.\n"
                           "Click below to skip the SDK entirely and use MuMuPlayer.",
-                     font=FS, bg="#1a2a1a", fg=T2,
+                     font=FS, bg=BG_MUMU, fg=T2,
                      anchor="w", justify="left").pack(fill="x", pady=(4, 8))
-            mumu_btn_row = tk.Frame(mumu_card, bg="#1a2a1a")
+            mumu_btn_row = tk.Frame(mumu_card, bg=BG_MUMU)
             mumu_btn_row.pack(fill="x")
             self._mumu_mode_btn = tk.Button(
                 mumu_btn_row,
@@ -3690,7 +3695,7 @@ class AndroidStudioPage(PageBase):
                 padx=16, pady=8, bd=0, highlightthickness=0,
                 command=self._activate_mumu_mode,
             )
-            self._mumu_mode_btn.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+            self._mumu_mode_btn.configure(activebackground=GREEN_ACTIVE, activeforeground=ON_ACCENT)
             self._mumu_mode_btn.pack(side="left", padx=(0, 10))
             tk.Button(mumu_btn_row,
                       text="Download MuMuPlayer ARM",
@@ -3706,7 +3711,7 @@ class AndroidStudioPage(PageBase):
                 command=self._browse_mumu_early,
             ).pack(side="left", padx=(6, 0))
             self._mumu_status_lbl = tk.Label(mumu_card, text="",
-                                             font=FS, bg="#1a2a1a", fg=GREEN)
+                                             font=FS, bg=BG_MUMU, fg=GREEN)
             self._mumu_status_lbl.pack(anchor="w", pady=(6, 0))
 
         # ── already installed / manual path ──────────────────────────────────
@@ -4078,7 +4083,7 @@ class AndroidStudioPage(PageBase):
             self,
             text="🛡  Allow Java through Windows Firewall  (click → approve UAC prompt)",
             font=("Segoe UI", 11, "bold"),
-            bg=YELLOW, fg="#000000",
+            bg=YELLOW, fg=BLACK,
             relief="flat", cursor="hand2",
             padx=16, pady=10,
             command=self._do_firewall,
@@ -4102,7 +4107,7 @@ class AndroidStudioPage(PageBase):
             self,
             text="☕  Download Java for Windows ARM64  (opens browser)",
             font=("Segoe UI", 11, "bold"),
-            bg=YELLOW, fg="#000000",
+            bg=YELLOW, fg=BLACK,
             relief="flat", cursor="hand2",
             padx=16, pady=10,
             command=lambda: webbrowser.open(JAVA_DOWNLOAD_URL),
@@ -4320,7 +4325,7 @@ class PhoneFarmPage(PageBase):
                                      bg=GREEN, fg=ON_ACCENT, relief="flat",
                                      cursor="hand2", command=self._create,
                                      padx=20, pady=10, bd=0, highlightthickness=0)
-        self._create_btn.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+        self._create_btn.configure(activebackground=GREEN_ACTIVE, activeforeground=ON_ACCENT)
         self._create_btn.pack(side="left", padx=(0, 10))
         top_pf = self.winfo_toplevel()
         trash = load_icon("icon_trash", top_pf)
@@ -4352,11 +4357,11 @@ class PhoneFarmPage(PageBase):
         sb.pack(side="right", fill="y")
 
         # MuMuPlayer info panel (hidden on non-MuMu machines at on_enter)
-        self._mumu_panel = tk.Frame(self, bg="#1a2a1a", padx=14, pady=12,
+        self._mumu_panel = tk.Frame(self, bg=BG_MUMU, padx=14, pady=12,
                                     highlightthickness=1, highlightbackground=GREEN)
         tk.Label(self._mumu_panel,
                  text="MuMuPlayer ARM64 mode",
-                 font=("Segoe UI", 12, "bold"), bg="#1a2a1a", fg=GREEN,
+                 font=("Segoe UI", 12, "bold"), bg=BG_MUMU, fg=GREEN,
                  anchor="w").pack(fill="x")
         tk.Label(self._mumu_panel,
                  text="Before you start\n"
@@ -4384,13 +4389,13 @@ class PhoneFarmPage(PageBase):
                       "  Each instance can be a different model or resolution; CPharm connects by ADB serial,\n"
                       "  so mixed farms are fine. Root / writable system may be off unless you enable them\n"
                       "  in MuMu settings per instance.",
-                 font=FS, bg="#1a2a1a", fg=T2,
+                 font=FS, bg=BG_MUMU, fg=T2,
                  anchor="w", justify="left").pack(fill="x", pady=(6, 10))
         tk.Label(
             self._mumu_panel,
             text="CPharm does not launch MuMuPlayer — open it yourself from the Start menu or taskbar.",
             font=("Segoe UI", 9, "italic"),
-            bg="#1a2a1a",
+            bg=BG_MUMU,
             fg=T3,
             anchor="w",
         ).pack(fill="x", pady=(0, 4))
@@ -4576,7 +4581,7 @@ class BootPage(PageBase):
                                   bg=GREEN, fg=ON_ACCENT, relief="flat",
                                   cursor="hand2", command=self._boot_all,
                                   bd=0, highlightthickness=0)
-        self._boot_btn.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+        self._boot_btn.configure(activebackground=GREEN_ACTIVE, activeforeground=ON_ACCENT)
         self._boot_btn.pack(side="left", padx=(0, 8))
         self._stop_btn = tk.Button(phone_row, text="Stop all",
                                   font=("Segoe UI", 10, "bold"),
@@ -5890,7 +5895,7 @@ class GroupsPage(PageBase):
                     cb_kw["image"] = cl_img
                     cb_kw["compound"] = "left"
                 cb = tk.Button(clone_row, **cb_kw)
-                cb.configure(activebackground="#8b5cf6", activeforeground=ON_ACCENT)
+                cb.configure(activebackground=PURPLE_ACTIVE, activeforeground=ON_ACCENT)
                 cb.pack(side="left")
 
         tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=(0, 8))
@@ -6119,7 +6124,7 @@ class LaunchPage(PageBase):
                                         bg=GREEN, fg=ON_ACCENT, relief="flat",
                                         cursor="hand2", command=self._start_server,
                                         bd=0, highlightthickness=0)
-        self._btn_srv_start.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+        self._btn_srv_start.configure(activebackground=GREEN_ACTIVE, activeforeground=ON_ACCENT)
         self._btn_srv_start.pack(side="left", padx=(0, 8))
         self._btn_srv_stop = tk.Button(srv_row, text="Stop server",
                                        font=("Segoe UI", 10, "bold"),
@@ -6148,7 +6153,7 @@ class LaunchPage(PageBase):
                                   bg=GREEN, fg=ON_ACCENT, relief="flat",
                                   cursor="hand2", command=self._run_groups,
                                   bd=0, highlightthickness=0)
-        self._btn_run.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+        self._btn_run.configure(activebackground=GREEN_ACTIVE, activeforeground=ON_ACCENT)
         self._btn_run.pack(side="left", padx=(0, 8))
         self._btn_stop_grp = tk.Button(grp_row, text="Stop all groups",
                                        font=("Segoe UI", 10, "bold"),
@@ -6187,7 +6192,7 @@ class LaunchPage(PageBase):
                                    bg=PURPLE, fg=ON_ACCENT, relief="flat",
                                    cursor="hand2", command=self._start_schedule,
                                    bd=0, highlightthickness=0)
-        self._sched_btn.configure(activebackground="#8b5cf6", activeforeground=ON_ACCENT)
+        self._sched_btn.configure(activebackground=PURPLE_ACTIVE, activeforeground=ON_ACCENT)
         self._sched_btn.pack(side="left", padx=(8, 0))
         self._sched_stop_btn = tk.Button(
             sched_row,
@@ -6280,7 +6285,7 @@ class LaunchPage(PageBase):
             bd=0,
             highlightthickness=0,
         )
-        self._btn_tor.configure(activebackground="#22c55e", activeforeground=ON_ACCENT)
+        self._btn_tor.configure(activebackground=GREEN_ACTIVE, activeforeground=ON_ACCENT)
         self._btn_tor.pack(side="left", padx=(0, 8))
         self._btn_tor_off = tk.Button(
             tor_row,

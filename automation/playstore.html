@@ -14,17 +14,23 @@
   --void:#05080d;--depth:#0a1628;--surface:#0f1c32;--surface-2:#152238;--surface-3:#1a2d4a;
   --border:#243652;--border-bright:#3d5a80;
   --text:#e8f0fa;--muted:#8fa3bf;--faint:#5c6d88;
-  --cyan:#22d3ee;--amber:#fbbf24;--rose:#fb7185;--mint:#34d399;
+  --cyan:#22d3ee;--cyan-dim:#22d3ee22;--amber:#fbbf24;--rose:#fb7185;--mint:#34d399;
   --g:var(--mint);--g2:#10b981;--g-dim:#34d39922;--g-glow:#34d39940;
-  --r:var(--rose);--y:var(--amber);--b:var(--cyan);--p:#818cf8;
+  --r:var(--rose);--y:var(--amber);--p:#818cf8;
   --bg0:var(--void);--bg1:var(--depth);--bg2:var(--surface);--bg3:var(--surface-2);
   --bd:var(--border);--bd2:var(--border-bright);
   --t0:var(--text);--t1:var(--muted);--t2:var(--faint);
-  --font-head:'Familjen Grotesk',system-ui,sans-serif;
+  --font-sans:'Familjen Grotesk',system-ui,sans-serif;
+  --font-head:var(--font-sans);
   --font-mono:'JetBrains Mono',ui-monospace,monospace;
-  --font-body:'Familjen Grotesk',system-ui,sans-serif;
-  --rad:12px;--rad-sm:8px;
+  --font-body:var(--font-sans);
+  --rad:10px;--rad-sm:6px;
+  --ease:cubic-bezier(.4,0,.2,1);
+  --dur:.2s;
   --shadow:0 8px 32px #00000060;
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:0.01ms!important;animation-iteration-count:1!important;transition-duration:0.01ms!important}
 }
 html{font-size:15px;scroll-behavior:smooth}
 body{background:var(--bg0);color:var(--t0);font-family:var(--font-body);min-height:100dvh;overflow-x:hidden}
@@ -35,6 +41,14 @@ body::before{
     radial-gradient(ellipse 80% 50% at 100% 10%,#1e3a5f30,transparent 50%),
     linear-gradient(180deg,var(--depth) 0%,var(--void) 45%,#030508 100%);
   opacity:1;
+}
+body::after{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(34,211,238,.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(34,211,238,.03) 1px,transparent 1px);
+  background-size:48px 48px;
+  mask-image:radial-gradient(ellipse 90% 70% at 50% 30%,#000 20%,transparent 75%);
+  opacity:.6;
 }
 #app{position:relative;z-index:1}
 
@@ -52,12 +66,14 @@ header{
 }
 .logo-sub{font-size:.68rem;color:var(--t2);font-family:var(--font-mono);font-weight:400;letter-spacing:.08em}
 .back-link{
-  font-family:var(--font-mono);font-size:.68rem;color:var(--t1);
+  font-family:var(--font-mono);font-size:.68rem;color:var(--cyan);
   text-decoration:none;background:var(--bg2);border:1px solid var(--bd);
-  border-radius:6px;padding:5px 10px;transition:all .15s;display:flex;align-items:center;gap:6px;
+  border-radius:var(--rad-sm);padding:7px 12px;
+  transition:color var(--dur) var(--ease),background var(--dur) var(--ease),border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
+  display:flex;align-items:center;gap:6px;
 }
-.back-link:hover{border-color:var(--g);color:var(--g)}
-.ws-dot{width:7px;height:7px;border-radius:50%;background:var(--t2);transition:background .3s}
+.back-link:hover{color:var(--text);background:var(--cyan-dim);border-color:#22d3ee35;box-shadow:0 0 20px #22d3ee22}
+.ws-dot{width:8px;height:8px;border-radius:50%;background:var(--faint);transition:background .3s}
 .ws-dot.connected{background:var(--g);box-shadow:0 0 6px var(--g)}
 .ws-dot.error{background:var(--r)}
 
@@ -77,7 +93,7 @@ header{
 .res-fill.warn{background:var(--y)}.res-fill.danger{background:var(--r)}
 .res-note{font-family:var(--font-mono);font-size:.62rem;color:var(--t2);margin-left:auto;align-self:center;text-align:right;line-height:1.5}
 #phone-limit-note{
-  width:100%;background:#f59e0b18;border:1px solid #f59e0b40;border-radius:var(--rad-sm);
+  width:100%;background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.35);border-radius:var(--rad-sm);
   padding:8px 12px;font-size:.72rem;color:var(--y);font-family:var(--font-mono);
   display:none;
 }
@@ -94,29 +110,36 @@ header{
 }
 
 button{
-  font-family:var(--font-body);font-size:.82rem;font-weight:600;
+  font-family:var(--font-sans);font-size:.82rem;font-weight:600;
   border:none;border-radius:var(--rad-sm);padding:10px 16px;cursor:pointer;
   display:inline-flex;align-items:center;gap:6px;
-  transition:filter .15s,transform .1s,box-shadow .15s;white-space:nowrap;
+  transition:filter var(--dur) var(--ease),transform .15s var(--ease),box-shadow var(--dur) var(--ease);
+  white-space:nowrap;
 }
-button:active{transform:scale(.96)}
-button:disabled{opacity:.35;cursor:not-allowed;transform:none!important}
-.btn-g{background:var(--g);color:#000}
-.btn-g:hover{filter:brightness(1.1);box-shadow:0 0 20px var(--g-glow)}
-.btn-r{background:var(--r);color:#fff}.btn-r:hover{filter:brightness(1.1)}
-.btn-b{background:var(--b);color:#fff}.btn-b:hover{filter:brightness(1.1);box-shadow:0 0 18px #3b82f640}
-.btn-p{background:var(--p);color:#fff}.btn-p:hover{filter:brightness(1.1)}
-.btn-ghost{background:var(--bg3);color:var(--t0);border:1px solid var(--bd)}
-.btn-ghost:hover{border-color:var(--t1)}
-.btn-y{background:var(--y);color:#000}.btn-y:hover{filter:brightness(1.1)}
-.btn-sm{padding:7px 12px;font-size:.75rem;border-radius:7px}
+button:active{transform:scale(.98)}
+button:disabled{opacity:.38;cursor:not-allowed;transform:none!important}
+.btn-g{
+  background:linear-gradient(145deg,#22d3ee,#0891b2);
+  color:#031018;
+  box-shadow:0 2px 16px #22d3ee33;
+}
+.btn-g:hover{filter:brightness(1.08);box-shadow:0 4px 24px #22d3ee44}
+.btn-r{background:var(--r);color:#1a0a0d}.btn-r:hover{filter:brightness(1.06)}
+.btn-b{background:#3b82f6;color:#fff}.btn-b:hover{filter:brightness(1.08);box-shadow:0 0 20px #3b82f644}
+.btn-p{background:var(--p);color:#fff}.btn-p:hover{filter:brightness(1.08)}
+.btn-ghost{background:var(--surface-2);color:var(--text);border:1px solid var(--border)}
+.btn-ghost:hover{border-color:var(--border-bright);background:var(--surface-3)}
+.btn-y{background:var(--y);color:#000}.btn-y:hover{filter:brightness(1.08)}
+.btn-sm{padding:7px 12px;font-size:.75rem;border-radius:6px}
 
 input[type=text],input[type=url],input[type=number],textarea{
   background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad-sm);
   padding:10px 12px;color:var(--t0);font-family:var(--font-mono);font-size:.82rem;
-  outline:none;transition:border-color .2s;width:100%;
+  outline:none;transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
+  width:100%;
 }
-input:focus,textarea:focus{border-color:var(--b)}
+input[type=checkbox]{accent-color:var(--cyan)}
+input:focus,textarea:focus{border-color:var(--cyan);box-shadow:0 0 0 3px #22d3ee22}
 input::placeholder,textarea::placeholder{color:var(--t2)}
 textarea{resize:vertical;min-height:72px;line-height:1.5}
 
@@ -129,18 +152,21 @@ textarea{resize:vertical;min-height:72px;line-height:1.5}
 .target-opt{
   font-family:var(--font-mono);font-size:.68rem;padding:4px 10px;border-radius:5px;
   cursor:pointer;background:var(--bg3);color:var(--t1);border:1px solid var(--bd);
-  transition:all .15s;user-select:none;
+  transition:color var(--dur) var(--ease),background var(--dur) var(--ease),border-color var(--dur) var(--ease);
+  user-select:none;
 }
-.target-opt.active{background:var(--g-dim);color:var(--g);border-color:#34d39940}
+.target-opt:hover:not(.active){color:var(--text);border-color:var(--border-bright);background:var(--surface-3)}
+.target-opt.active{background:var(--cyan-dim);color:var(--cyan);border-color:#22d3ee44}
 
 /* Quick actions grid */
 .qa-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:7px}
 .qa-btn{
   background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad-sm);
-  padding:10px 8px;text-align:center;cursor:pointer;transition:all .15s;
+  padding:10px 8px;text-align:center;cursor:pointer;
+  transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease),transform .18s var(--ease);
   display:flex;flex-direction:column;align-items:center;gap:4px;
 }
-.qa-btn:hover{border-color:var(--t1);background:var(--bg3)}
+.qa-btn:hover{border-color:var(--border-bright);background:var(--surface-3);transform:translateY(-1px)}
 .qa-btn:active{transform:scale(.97)}
 .qa-icon{font-size:1.2rem}
 .qa-lbl{font-family:var(--font-mono);font-size:.6rem;color:var(--t2)}
@@ -154,13 +180,16 @@ textarea{resize:vertical;min-height:72px;line-height:1.5}
   background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad);
   padding:12px;transition:border-color .2s;
 }
-.phone-card.active{border-color:#34d39933;box-shadow:0 0 0 1px #34d39918}
-.phone-card.busy{border-color:#f59e0b40}
+.phone-card.active{
+  border-color:#34d39966;
+  box-shadow:0 0 0 1px #34d39922,inset 0 1px 0 #34d39915;
+}
+.phone-card.busy{border-color:rgba(251,191,36,.45)}
 .pc-name{font-family:var(--font-mono);font-size:.78rem;color:var(--t0);font-weight:600}
 .pc-status{font-size:.65rem;color:var(--t2);margin-top:3px;font-family:var(--font-mono)}
 .pc-status.on{color:var(--g)}.pc-status.busy{color:var(--y)}
 .pc-bar{height:3px;background:var(--bg3);border-radius:2px;margin-top:8px}
-.pc-bar-fill{height:100%;border-radius:2px;background:var(--b);transition:width .4s}
+.pc-bar-fill{height:100%;border-radius:2px;background:var(--cyan);transition:width .4s}
 
 /* Stagger */
 .stagger-row{margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -169,9 +198,11 @@ textarea{resize:vertical;min-height:72px;line-height:1.5}
 .stagger-opt{
   font-family:var(--font-mono);font-size:.68rem;padding:4px 10px;border-radius:5px;
   cursor:pointer;background:var(--bg3);color:var(--t1);border:1px solid var(--bd);
-  transition:all .15s;user-select:none;
+  transition:color var(--dur) var(--ease),background var(--dur) var(--ease),border-color var(--dur) var(--ease);
+  user-select:none;
 }
-.stagger-opt.active{background:var(--g-dim);color:var(--g);border-color:#34d39940}
+.stagger-opt:hover:not(.active){color:var(--text);border-color:var(--border-bright);background:var(--surface-3)}
+.stagger-opt.active{background:var(--cyan-dim);color:var(--cyan);border-color:#22d3ee44}
 .stagger-custom{display:none;margin-top:8px;gap:8px;align-items:center;font-size:.72rem;color:var(--t2);font-family:var(--font-mono)}
 .stagger-custom input{width:70px!important}
 
@@ -182,6 +213,11 @@ textarea{resize:vertical;min-height:72px;line-height:1.5}
   font-family:var(--font-mono);font-size:.62rem;color:var(--t2);
   text-transform:uppercase;letter-spacing:.1em;display:flex;justify-content:space-between;
 }
+#log-clear{
+  color:var(--muted);
+  transition:color var(--dur) var(--ease);
+}
+#log-clear:hover{color:var(--cyan)}
 #log-lines{padding:8px 12px;max-height:140px;overflow-y:auto;display:flex;flex-direction:column-reverse;gap:2px}
 .log-line{font-family:var(--font-mono);font-size:.68rem;color:var(--t2);line-height:1.5;animation:fadeIn .2s ease both}
 .log-ts{color:var(--t2);margin-right:6px}
@@ -368,19 +404,19 @@ textarea{resize:vertical;min-height:72px;line-height:1.5}
   <div class="section-title">How to Use This Tool</div>
   <div style="background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rad);padding:14px;display:flex;flex-direction:column;gap:14px">
     <div>
-      <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--g);margin-bottom:5px">1. Launch App on Phones</div>
+      <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--cyan);margin-bottom:5px">1. Launch App on Phones</div>
       <p style="font-size:.75rem;color:var(--t1);line-height:1.6">Type your app's package name (like <span style="font-family:var(--font-mono);color:var(--t0)">com.yourname.app</span>) and tap Launch. The app opens on all phones at once or one by one if you pick a delay. You can find your package name in Android Studio or in your <span style="font-family:var(--font-mono);color:var(--t0)">build.gradle</span> file.</p>
     </div>
     <div>
-      <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--g);margin-bottom:5px">2. Type on Phones</div>
+      <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--cyan);margin-bottom:5px">2. Type on Phones</div>
       <p style="font-size:.75rem;color:var(--t1);line-height:1.6">Sends keyboard input to the phone. Use "Send to: All phones" to type the same thing everywhere, or pick a specific phone to type only on that one. The buttons (Enter, Back, Home, etc.) send a single key press.</p>
     </div>
     <div>
-      <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--g);margin-bottom:5px">3. Quick Actions</div>
+      <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--cyan);margin-bottom:5px">3. Quick Actions</div>
       <p style="font-size:.75rem;color:var(--t1);line-height:1.6">One-tap buttons for common things: take a screenshot, swipe the screen in any direction, lock/wake the phone, go home, clear recent apps. Screenshot files are saved to <span style="font-family:var(--font-mono);color:var(--t0)">/sdcard/</span> on each phone.</p>
     </div>
     <div>
-      <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--g);margin-bottom:5px">4. Test Loop</div>
+      <div style="font-family:var(--font-mono);font-size:.72rem;color:var(--cyan);margin-bottom:5px">4. Test Loop</div>
       <p style="font-size:.75rem;color:var(--t1);line-height:1.6">Phones automatically switch between a website and your app on a timer. This lets you test both at the same time — useful for checking how your app handles being interrupted by the browser, and for ad impression testing on your website.</p>
     </div>
     <div>

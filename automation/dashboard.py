@@ -4,6 +4,11 @@ Works with any Android device: AVD emulators, BlueStacks, Genymotion, MEmu, NOX,
 
 Launch (Windows): double-click automation/run_dashboard.bat or start_dashboard.bat — both ``cd``
 to ``automation/`` first so ``dashboard.html`` / config paths resolve next to ``dashboard.py``.
+
+Ports and default bind are set in ``config.py`` (``CPHARM_PORT``, ``CPHARM_WS_PORT``, ``CPHARM_BIND``). If
+``CPHARM_HOST`` is set, it overrides the bind address for HTTP/WebSocket and the ``bind`` field in ``/api/config``
+(otherwise ``BIND`` from config is used). For unattended Windows launches, ``CPHARM_UNATTENDED=1`` makes
+``start_dashboard.bat`` skip the final ``pause``.
 """
 
 import sys, io
@@ -20,6 +25,7 @@ import concurrent.futures
 import json
 import logging
 import mimetypes
+import os
 import re
 import socket
 import subprocess
@@ -38,12 +44,14 @@ from websockets.server import serve
 import tor_manager
 import teach as teach_mod
 import playstore as ps_mod
-from config import PORT, WS_PORT, APK_DIR, REC_DIR, EMULATOR_PORTS
+from config import PORT, WS_PORT, BIND, APK_DIR, REC_DIR, EMULATOR_PORTS
 from sequence_normalize import normalize_automation_steps
 import human_variation as _hv
 
 logging.basicConfig(level=logging.INFO, format="  %(message)s")
 log = logging.getLogger("cpharm")
+
+LISTEN_HOST = os.environ.get("CPHARM_HOST", "").strip() or BIND
 
 # Swipe/tap coordinates calibrated for 1280×720 — works for most emulators at default res
 _QUICK_ACTIONS = {
@@ -502,7 +510,15 @@ async def handle_get(path: str) -> bytes:
             }
         )
     if path == "/api/config":
-        return json_ok({"httpPort": PORT, "wsPort": WS_PORT, "port": PORT})
+        return json_ok(
+            {
+                "httpPort": PORT,
+                "wsPort": WS_PORT,
+                "port": PORT,
+                "bind": LISTEN_HOST,
+                "appName": "CPharm",
+            }
+        )
     if path == "/api/apks":
         APK_DIR.mkdir(exist_ok=True)
         files = [{"name": f.name, "size_mb": round(f.stat().st_size / 1024 / 1024, 1)}
@@ -1210,13 +1226,14 @@ async def main():
     log.info("Scanning for connected devices…")
     threading.Thread(target=auto_connect_emulators, daemon=True).start()
 
-    http_server = await asyncio.start_server(handle_http, "127.0.0.1", PORT)
-    ws_server   = await serve(ws_handler, "127.0.0.1", WS_PORT)
+    http_server = await asyncio.start_server(handle_http, LISTEN_HOST, PORT)
+    ws_server = await serve(ws_handler, LISTEN_HOST, WS_PORT)
 
     print("\n  ╔══════════════════════════════════════════╗")
     print("  ║   CPharm  •  ready                       ║")
     print("  ║                                          ║")
     print(f"  ║   On this PC:  http://localhost:{PORT}    ║")
+    print(f"  ║   Bind:        {LISTEN_HOST}:{PORT} (HTTP)  {LISTEN_HOST}:{WS_PORT} (WS)   ║")
     print(f"  ║   On phone:    http://{ip}:{PORT}   ║")
     print("  ║                                          ║")
     print("  ║   Press Ctrl+C to stop                   ║")

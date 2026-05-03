@@ -31,6 +31,13 @@ RED = "#fb7185"
 YELLOW = "#fbbf24"
 PURPLE = "#818cf8"
 
+# Pressed/active accents + surfaces still used by setup_wizard (parity with prior hex)
+GREEN_ACTIVE = "#22c55e"
+PURPLE_ACTIVE = "#8b5cf6"
+BG_LOG_ROW = "#000c1a"
+BG_MUMU = "#1a2a1a"
+BLACK = "#000000"
+
 T1 = "#e8f0fa"
 T2 = "#8fa3bf"
 T3 = "#5c6d88"
